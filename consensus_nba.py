@@ -18,6 +18,10 @@ from store import append_jsonl, copy_file, ensure_dir, sha256_json, write_json
 DEFAULT_INPUT_FILES = [
     "normalized_action_nba.json",
     "normalized_covers_nba.json",
+    "normalized_sportscapping_nba.json",
+    "normalized_betql_model_nba.json",
+    "normalized_betql_sharps_nba.json",
+    "normalized_betql_props_nba.json",
 ]
 
 HARD_DEBUG_META: Dict[str, Any] = {}
@@ -455,9 +459,9 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
         dk = day_key((event or {}).get("event_key"))
         away = (event or {}).get("away_team")
         home = (event or {}).get("home_team")
-        if not (dk and away and home and direction):
+        if not (dk and direction):
             continue
-        matchup = f"{str(away).upper()}@{str(home).upper()}"
+        matchup = f"{str(away).upper()}@{str(home).upper()}" if away and home else None
         stat_key = normalize_stat_key(stat_key)
         lines_val = market.get("line")
         odds_val = market.get("odds")
@@ -467,7 +471,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
         for atomic in mapping_atomic_stats(stat_key):
             if atomic not in ALLOWED_ATOMIC:
                 continue
-            identity = (dk, matchup, player_id, atomic, direction)
+            identity = (dk, player_id, atomic, direction)
             prop_groups.setdefault(identity, []).append(
                 {
                     "line": lines_val,
@@ -475,6 +479,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                     "source_id": source_id,
                     "expert": expert,
                     "url": url,
+                    "matchup": matchup,
                 }
             )
 
@@ -525,7 +530,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
 
     # Player prop hard consensus clustering (line tolerance <= 1.0)
     for identity, entries in prop_groups.items():
-        dk, matchup, player_id, atomic_stat, direction = identity
+        dk, player_id, atomic_stat, direction = identity
         # sort by line
         valid_entries = [e for e in entries if e.get("line") is not None]
         if not valid_entries:
@@ -552,6 +557,11 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
             if len(sources_set) < 2:
                 continue
             made_cluster = True
+            matchup = None
+            for e in cl:
+                if e.get("matchup"):
+                    matchup = e.get("matchup")
+                    break
             lines = sorted({float(e["line"]) for e in cl})
             line_min = lines[0]
             line_max = lines[-1]
@@ -836,7 +846,6 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
             continue
         identity = (
             group["day_key"],
-            group.get("matchup"),
             group["player_id"],
             group["atomic_stat"],
             group["direction"],
@@ -2058,7 +2067,6 @@ def main(
         if g.get("market_type") == "player_prop":
             identity = (
                 g.get("day_key"),
-                g.get("matchup"),
                 g.get("player_id"),
                 g.get("atomic_stat"),
                 g.get("direction") or g.get("side"),

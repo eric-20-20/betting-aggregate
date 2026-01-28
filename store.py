@@ -94,7 +94,7 @@ def write_json(path: str, obj) -> None:
     directory = os.path.dirname(path) or "."
     ensure_dir(directory)
     with tempfile.NamedTemporaryFile("w", delete=False, dir=directory, encoding="utf-8") as tmp:
-        json.dump(obj, tmp, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        json.dump(obj, tmp, ensure_ascii=False, sort_keys=True, indent=2)
         tmp.flush()
         os.fsync(tmp.fileno())
         tmp_path = tmp.name

@@ -34,7 +34,8 @@ def _build_event_keys(raw: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]
     event_key = f"NBA:{dt.year:04d}:{dt.month:02d}"
     if dt.day:
         event_key = f"{event_key}:{dt.day:02d}"
-    day_key = ":".join(event_key.split(":")[:3]) if len(event_key.split(":")) >= 3 else event_key
+    parts = event_key.split(":")
+    day_key = event_key if len(parts) >= 4 else event_key
     return event_key, day_key
 
 
@@ -229,10 +230,16 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         market_family = market_type
 
     event_key, day_key = _build_event_keys(raw)
+    matchup_key = None
+    if day_key and away_team and home_team:
+        event_key = f"{day_key}:{away_team}@{home_team}"
+        teams_sorted = sorted([away_team, home_team])
+        matchup_key = f"{day_key}:{teams_sorted[0]}-{teams_sorted[1]}"
     event = {
         "sport": "NBA",
         "event_key": event_key,
         "day_key": day_key,
+        "matchup_key": matchup_key,
         "away_team": away_team,
         "home_team": home_team,
         "event_start_time_utc": raw.get("event_start_time_utc"),

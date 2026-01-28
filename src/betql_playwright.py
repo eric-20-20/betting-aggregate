@@ -59,9 +59,12 @@ def wait_for_ready(page: Page, surface: str, timeout: int = 45000) -> None:
             page.wait_for_selector("button.games-table-column__rating-button", state="attached", timeout=timeout)
             page.wait_for_selector("div.games-table-column__team-cell, img[src*='/NBA/']", state="attached", timeout=timeout)
         elif surface == "sharps":
-            page.wait_for_selector("div.game-row, div.game-table-row", state="attached", timeout=timeout)
+            page.wait_for_selector("div.games-table-column__team-cell, img[src*='/NBA/']", state="attached", timeout=timeout)
+            page.wait_for_selector(".games-table-column__current-line-cell", state="attached", timeout=timeout)
         elif surface == "props":
-            page.wait_for_selector("div.player-prop-card, div.best-bets-card", state="attached", timeout=timeout)
+            page.wait_for_selector("div.carousel-track div.carousel-pane > button", state="attached", timeout=timeout)
+            page.wait_for_selector("div.team-player-props-head .team-name", state="attached", timeout=timeout)
+            page.wait_for_selector("div.player-props", state="attached", timeout=timeout)
         else:
             page.wait_for_selector("body", timeout=timeout)
     except Exception as exc:

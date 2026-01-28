@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from bs4 import BeautifulSoup
+from playwright.sync_api import Page
 
 from store import sha256_json
 
@@ -13,11 +13,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _clean(text: str) -> str:
-    return " ".join(text.split()).strip()
-
-
-def _common_fields(source_surface: str, canonical_url: str, observed: str) -> Dict[str, Any]:
+def _common_fields(source_surface: str, canonical_url: str, observed: str) -> Dict[str, object]:
     return {
         "source_id": "betql",
         "source_surface": source_surface,
@@ -35,116 +31,131 @@ def _common_fields(source_surface: str, canonical_url: str, observed: str) -> Di
     }
 
 
-def _parse_star_rating(container) -> Optional[int]:
-    if not container:
-        return None
-    svgs = container.select("svg") if hasattr(container, "select") else []
-    count = len(svgs)
-    if count == 0 and hasattr(container, "select"):
-        paths = container.select("svg path")
-        colored = [p for p in paths if "rgb(255, 204, 1)" in (p.get("fill") or "")]
-        count = len(colored)
-    if count == 0:
-        text = container.get_text(" ", strip=True) if hasattr(container, "get_text") else str(container)
-        m = re.search(r"(\d+)\s*stars?", text, re.IGNORECASE)
-        if m:
-            try:
-                count = int(m.group(1))
-            except ValueError:
-                count = 0
-    if count == 0:
-        return None
-    count = max(0, min(5, count))
-    return int(count)
+def _count_gold_stars(button_locator) -> Tuple[Optional[int], Optional[List[str]]]:
+    try:
+        fills: List[str] = button_locator.evaluate(
+            """(btn)=>{
+                const paths = btn.querySelectorAll('svg path');
+                const fills = [];
+                paths.forEach(p=>{
+                    const fill = getComputedStyle(p).fill || '';
+                    fills.push(fill);
+                });
+                return fills;
+            }"""
+        )
+        gold = sum(1 for f in fills if f.strip().lower() == "rgb(255, 204, 1)")
+        gold = max(0, min(5, gold))
+        return gold if gold or fills else None, fills
+    except Exception:
+        return None, None
 
 
-def _parse_pro_pct(container) -> Optional[float]:
-    text = container.get_text(" ", strip=True) if hasattr(container, "get_text") else str(container)
-    m = re.search(r"pro\s*betting[^0-9]*([\d\.]+)\s*%", text, re.IGNORECASE)
+def _parse_spread_pick(txt: str) -> Tuple[Optional[str], Optional[float]]:
+    txt = txt.replace("½", ".5")
+    m = re.search(r"([+-]\d+(?:\.\d+)?)", txt)
     if not m:
-        m = re.search(r"pro%\s*([\d\.]+)", text, re.IGNORECASE)
-    if m:
-        try:
-            return float(m.group(1))
-        except ValueError:
-            return None
-    return None
+        return None, None
+    try:
+        line = float(m.group(1))
+    except ValueError:
+        return None, None
+    side = None
+    if txt.strip().startswith("+") or txt.strip().startswith("-"):
+        side = "AWAY_OR_HOME"
+    return side, line
 
 
-def _parse_logo_team_codes(row) -> List[str]:
-    codes: List[str] = []
-    for img in row.select("img"):
-        src = img.get("src") or ""
-        m = re.search(r"/NBA/([A-Z]{2,3})", src)
+def _parse_total_pick(txt: str) -> Tuple[Optional[str], Optional[float]]:
+    txt = txt.replace("½", ".5")
+    m = re.search(r"(O|U)\s*([0-9]+(?:\.[0-9]+)?)", txt, re.IGNORECASE)
+    if not m:
+        return None, None
+    side = "OVER" if m.group(1).upper() == "O" else "UNDER"
+    try:
+        line = float(m.group(2))
+    except ValueError:
+        return None, None
+    return side, line
+
+
+def _team_from_container(container) -> Tuple[Optional[str], Optional[str]]:
+    abbr = None
+    name = None
+    try:
+        img = container.locator("img[aria-label$='Team Logo']").first
+        src = img.get_attribute("src") or img.get_attribute("data-src") or ""
+        m = re.search(r"/NBA/([A-Z]{2,3})\\.(?:png|webp)", src)
         if m:
-            codes.append(m.group(1))
-    return codes
+            abbr = m.group(1)
+    except Exception:
+        pass
+    try:
+        name = container.locator("p.games-table-column__team-name").first.inner_text().strip()
+    except Exception:
+        pass
+    return abbr, name
 
 
-def _parse_line_from_cell(row) -> Optional[float]:
-    cell = row.select_one("div.games-table-column__current-line-cell")
-    if not cell:
-        return None
-    txt = cell.get_text(" ", strip=True)
-    m = re.search(r"([+-]?\d+(?:\.\d+)?)", txt.replace("½", ".5"))
-    if m:
-        try:
-            return float(m.group(1))
-        except ValueError:
-            return None
-    return None
+def parse_teams_from_team_cell(team_cell_locator) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    away_abbr = home_abbr = away_name = home_name = None
+    try:
+        containers = team_cell_locator.locator("div.games-table-column__team-container")
+        if containers.count() >= 1:
+            away_abbr, away_name = _team_from_container(containers.nth(0))
+        if containers.count() >= 2:
+            home_abbr, home_name = _team_from_container(containers.nth(1))
+    except Exception:
+        pass
+    return away_abbr, home_abbr, away_name, home_name
 
 
-def _parse_odds(row) -> Optional[int]:
-    txt = row.get_text(" ", strip=True)
-    m = re.search(r"([+-]\d{2,4})", txt)
-    if m:
-        try:
-            return int(m.group(1))
-        except ValueError:
-            return None
-    return None
-
-
-def extract_model_rows(html: str, canonical_url: str) -> Dict[str, Any]:
-    soup = BeautifulSoup(html, "html.parser")
+def extract_spread_columns(page: Page, canonical_url: str, debug: bool = False) -> Tuple[List[Dict[str, object]], Dict[str, int]]:
     observed = _now_iso()
-    records: List[Dict[str, Any]] = []
-    candidates_text: List[str] = []
-    for row in soup.select("div.game-row, div.game-table-row, div.game-card"):
-        row_text = _clean(row.get_text(" ", strip=True))
-        candidates_text.append(row_text)
-        rating_el = row.select_one("button.games-table-column__rating-button")
-        rating_stars = _parse_star_rating(rating_el) if rating_el else None
-        pro_pct = None
-        # Scope pro % to column containing header text
-        pro_col = None
-        for col in row.select("div.games-table__column, div.games-table-column"):
-            if "Pro Betting" in col.get_text(" ", strip=True):
-                pro_col = col
-                break
-        if pro_col:
-            for pct_el in pro_col.select("p.games-table-column__line-text--bold"):
-                candidate = _parse_pro_pct(pct_el)
-                if candidate is not None:
-                    pro_pct = int(candidate)
-                    break
-        logos = _parse_logo_team_codes(row)
-        away = logos[0] if len(logos) >= 1 else None
-        home = logos[1] if len(logos) >= 2 else None
-        line_val = _parse_line_from_cell(row)
-        odds_val = _parse_odds(row)
-        matchup_hint = None
-        if away and home:
-            matchup_hint = f"{away} vs {home}"
+    records: List[Dict[str, object]] = []
+    rating_buttons = page.locator("button.games-table-column__rating-button")
+    spread_cells = page.locator(".games-table-column__current-line-cell")
+    matchups = page.locator("a.games-table-column__team-link")
+    team_cells = page.locator("div.games-table-column__team-cell")
+    pro_pcts = page.locator("p.games-table-column__line-text--bold")
+    n = min(rating_buttons.count(), spread_cells.count(), matchups.count(), pro_pcts.count(), team_cells.count())
+    debug = {"ratings": rating_buttons.count(), "rows": n}
 
-        base_block = f"rating_stars={rating_stars} pro_pct={pro_pct} {row_text}"
+    for i in range(n):
+        matchup_text = matchups.nth(i).inner_text().strip()
+        if "1st half" in matchup_text.lower() or "moneyline" in matchup_text.lower():
+            continue
 
-        base = _common_fields("nba_model_bets", canonical_url, observed)
+        rating_stars, fills = _count_gold_stars(rating_buttons.nth(i))
+        bolds = spread_cells.nth(i).locator("p.games-table-column__line-text--bold")
+        if bolds.count() == 0:
+            continue
+        pick_txt = bolds.nth(0).inner_text().strip()
+        side_hint, line_hint = _parse_spread_pick(pick_txt)
+
+        pct_txt = pro_pcts.nth(i).inner_text()
+        m_pct = re.search(r"(\d+)", pct_txt)
+        pro_pct = int(m_pct.group(1)) if m_pct else None
+        if pro_pct is not None and pro_pct > 100:
+            pro_pct = None
+        if pro_pct is not None and pro_pct > 100:
+            pro_pct = None
+
+        away_abbr, home_abbr, away_name, home_name = parse_teams_from_team_cell(team_cells.nth(i))
+        away = away_abbr or away_name
+        home = home_abbr or home_name
+        selection = away if pick_txt.startswith("+") else home if pick_txt.startswith("-") else None
+        matchup_hint = f"{away}@{home}" if away and home else None
+
+        base_block = f"rating_stars={rating_stars} pro_pct={pro_pct} {matchup_text} {pick_txt}"
+        if debug and fills is not None:
+            base_block += f" rating_rgb_fill={fills}"
+
+        base = _common_fields("betql_model_spread", canonical_url, observed)
         model_rec = {
             **base,
             "market_family": "spread",
-            "raw_pick_text": row_text,
+            "raw_pick_text": pick_txt,
             "raw_block": base_block,
             "raw_fingerprint": None,
             "source_updated_at_utc": None,
@@ -153,93 +164,152 @@ def extract_model_rows(html: str, canonical_url: str) -> Dict[str, Any]:
             "matchup_hint": matchup_hint,
             "rating_stars": rating_stars,
             "pro_pct": pro_pct,
-            "line_hint": line_val,
-            "odds_hint": odds_val,
+            "line_hint": line_hint,
+            "odds_hint": None,
             "away_team": away,
             "home_team": home,
+            "selection_hint": selection,
         }
         model_rec["raw_fingerprint"] = sha256_json({k: v for k, v in model_rec.items() if k != "raw_fingerprint"})
         records.append(model_rec)
 
-        if pro_pct is not None:
-            base2 = _common_fields("nba_model_pro_betting", canonical_url, observed)
-            sharp_rec = {
-                **base2,
-                "market_family": "spread",
-                "raw_pick_text": row_text,
-                "raw_block": base_block,
-                "raw_fingerprint": None,
-                "source_updated_at_utc": None,
-                "event_start_time_utc": None,
-                "expert_name": "BetQL Sharps",
-                "matchup_hint": matchup_hint,
-                "rating_stars": rating_stars,
-                "pro_pct": pro_pct,
-                "line_hint": line_val,
-                "odds_hint": odds_val,
-                "away_team": away,
-                "home_team": home,
-            }
-            sharp_rec["raw_fingerprint"] = sha256_json({k: v for k, v in sharp_rec.items() if k != "raw_fingerprint"})
-            records.append(sharp_rec)
-    return {"records": records, "candidates": candidates_text}
+    return records, debug
 
 
-def extract_sharp_rows(html: str, canonical_url: str) -> Dict[str, Any]:
-    # legacy; now covered by model rows pro_pct; keep for compatibility
-    soup = BeautifulSoup(html, "html.parser")
+def extract_totals_columns(page: Page, canonical_url: str, debug: bool = False) -> Tuple[List[Dict[str, object]], Dict[str, int]]:
     observed = _now_iso()
-    records: List[Dict[str, Any]] = []
-    candidates: List[str] = []
-    for row in soup.select("div.game-row, div.game-table-row, div.game-card"):
-        row_text = _clean(row.get_text(" ", strip=True))
-        candidates.append(row_text)
-        pct = _parse_pro_pct(row)
-        if pct is None:
+    records: List[Dict[str, object]] = []
+    rating_buttons = page.locator("button.games-table-column__rating-button")
+    total_cells = page.locator(".games-table-column__current-line-cell")
+    matchups = page.locator("a.games-table-column__team-link")
+    team_cells = page.locator("div.games-table-column__team-cell")
+    pro_pcts = page.locator("p.games-table-column__line-text--bold")
+    n = min(rating_buttons.count(), total_cells.count(), matchups.count(), pro_pcts.count(), team_cells.count())
+    debug = {"ratings": rating_buttons.count(), "rows": n}
+
+    for i in range(n):
+        matchup_text = matchups.nth(i).inner_text().strip()
+        if "1st half" in matchup_text.lower() or "moneyline" in matchup_text.lower():
             continue
-        matchup = row.select_one(".game, .matchup, .game-name")
-        raw_pick = row_text
-        base = _common_fields("nba_sharp_picks", canonical_url, observed)
-        rec = {
+
+        rating_stars, fills = _count_gold_stars(rating_buttons.nth(i))
+        bolds = total_cells.nth(i).locator("p.games-table-column__line-text--bold")
+        if bolds.count() == 0:
+            continue
+        pick_txt = bolds.nth(0).inner_text().strip()
+        side_hint, line_hint = _parse_total_pick(pick_txt)
+        if side_hint is None:
+            continue
+
+        pct_txt = pro_pcts.nth(i).inner_text()
+        m_pct = re.search(r"(\d+)", pct_txt)
+        pro_pct = int(m_pct.group(1)) if m_pct else None
+
+        away_abbr, home_abbr, away_name, home_name = parse_teams_from_team_cell(team_cells.nth(i))
+        away = away_abbr or away_name
+        home = home_abbr or home_name
+        matchup_hint = f"{away}@{home}" if away and home else None
+
+        base_block = f"rating_stars={rating_stars} pro_pct={pro_pct} {matchup_text} {pick_txt}"
+        if debug and fills is not None:
+            base_block += f" rating_rgb_fill={fills}"
+
+        base = _common_fields("betql_model_total", canonical_url, observed)
+        model_rec = {
             **base,
-            "market_family": "spread",
-            "raw_pick_text": raw_pick,
-            "raw_block": row_text,
+            "market_family": "total",
+            "raw_pick_text": pick_txt,
+            "raw_block": base_block,
             "raw_fingerprint": None,
             "source_updated_at_utc": None,
             "event_start_time_utc": None,
-            "expert_name": "BetQL Sharps",
-            "matchup_hint": matchup.get_text(" ", strip=True) if matchup else None,
-            "pro_pct": pct,
+            "expert_name": "BetQL Model",
+            "matchup_hint": matchup_hint,
+            "rating_stars": rating_stars,
+            "pro_pct": pro_pct,
+            "line_hint": line_hint,
+            "odds_hint": None,
+            "away_team": away,
+            "home_team": home,
+            "side_hint": side_hint,
         }
-        rec["raw_fingerprint"] = sha256_json({k: v for k, v in rec.items() if k != "raw_fingerprint"})
-        records.append(rec)
-    return {"records": records, "candidates": candidates}
+        model_rec["raw_fingerprint"] = sha256_json({k: v for k, v in model_rec.items() if k != "raw_fingerprint"})
+        records.append(model_rec)
+
+    return records, debug
 
 
-def extract_prop_cards(html: str, canonical_url: str) -> Dict[str, Any]:
-    soup = BeautifulSoup(html, "html.parser")
+def extract_sharp_spreads_totals(page: Page, canonical_url: str, debug: bool = False) -> Tuple[List[Dict[str, object]], Dict[str, int]]:
+    """
+    Sharp picks page: bold pick text carries the pro bet selection. No ratings; we only emit probet bets.
+    """
     observed = _now_iso()
-    records: List[Dict[str, Any]] = []
-    candidates: List[str] = []
-    for card in soup.select("div.player-prop-card, div.best-bets-card"):
-        title = _clean(card.get_text(" ", strip=True))
-        candidates.append(title)
-        rating_el = card.select_one("[class*='star'], .rating")
-        rating = _parse_star_rating(rating_el) if rating_el else None
-        base = _common_fields("nba_player_props", canonical_url, observed)
+    records: List[Dict[str, object]] = []
+
+    line_cells = page.locator(".games-table-column__current-line-cell")
+    matchups = page.locator("a.games-table-column__team-link")
+    team_cells = page.locator("div.games-table-column__team-cell")
+    pro_pcts = page.locator("p:has-text('%')")
+    n = min(line_cells.count(), matchups.count(), team_cells.count(), pro_pcts.count())
+    dbg = {"rows": n}
+
+    for i in range(n):
+        matchup_text = matchups.nth(i).inner_text().strip()
+        bolds = line_cells.nth(i).locator("p.games-table-column__line-text--bold")
+        if bolds.count() == 0:
+            continue
+        pick_txt = bolds.nth(0).inner_text().strip()
+        side_hint, line_hint = _parse_total_pick(pick_txt)
+        market_family = "total" if side_hint else "spread"
+        if market_family == "spread":
+            side_hint, line_hint = _parse_spread_pick(pick_txt)
+        if market_family not in {"spread", "total"}:
+            continue
+
+        pct_txt = pro_pcts.nth(i).inner_text()
+        m_pct = re.search(r"(\\d+)", pct_txt)
+        pro_pct = int(m_pct.group(1)) if m_pct else None
+        if pro_pct is not None and pro_pct > 100:
+            pro_pct = None
+
+        away_abbr, home_abbr, away_name, home_name = parse_teams_from_team_cell(team_cells.nth(i))
+        away = away_abbr or away_name
+        home = home_abbr or home_name
+        if not (away and home):
+            continue
+        matchup_hint = f"{away}@{home}"
+
+        selection = None
+        if market_family == "spread":
+            selection = away if pick_txt.startswith("+") else home if pick_txt.startswith("-") else None
+        else:
+            selection = side_hint
+
+        base = _common_fields(
+            "betql_sharp_spread" if market_family == "spread" else "betql_sharp_total",
+            canonical_url,
+            observed,
+        )
         rec = {
             **base,
-            "market_family": "player_prop",
-            "raw_pick_text": title,
-            "raw_block": title,
+            "market_family": market_family,
+            "raw_pick_text": pick_txt,
+            "raw_block": f"pro_pct={pro_pct} {matchup_text} {pick_txt}",
             "raw_fingerprint": None,
             "source_updated_at_utc": None,
             "event_start_time_utc": None,
-            "expert_name": "BetQL Props",
-            "matchup_hint": None,
-            "rating": rating,
+            "expert_name": "BetQL Pro Betting",
+            "matchup_hint": matchup_hint,
+            "rating_stars": None,
+            "pro_pct": pro_pct,
+            "line_hint": line_hint,
+            "odds_hint": None,
+            "away_team": away,
+            "home_team": home,
+            "selection_hint": selection,
+            "side_hint": side_hint if market_family == "total" else None,
         }
         rec["raw_fingerprint"] = sha256_json({k: v for k, v in rec.items() if k != "raw_fingerprint"})
         records.append(rec)
-    return {"records": records, "candidates": candidates}
+
+    return records, dbg

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
-import os
+import os, sys
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
 from store import data_store, write_json
 from utils import normalize_text
 
-ALLOWED_STANDARD = {"spread", "moneyline", "total"}
+ALLOWED_STANDARD = {"spread", "total"}
 
 
 def _parse_dt(val: Any) -> Optional[datetime]:
@@ -31,8 +35,8 @@ def _build_event_keys(raw: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]
     dt = _parse_dt(raw.get("event_start_time_utc")) or _parse_dt(raw.get("observed_at_utc"))
     if not dt:
         return None, None
-    event_key = f"NBA:{dt.year:04d}:{dt.month:02d}:{dt.day:02d}"
-    day_key = ":".join(event_key.split(":")[:3])
+    day_key = f"NBA:{dt.year:04d}:{dt.month:02d}:{dt.day:02d}"
+    event_key = day_key
     return event_key, day_key
 
 
@@ -78,6 +82,58 @@ def _parse_standard_pick(text: str) -> Tuple[Optional[str], Optional[float], Opt
     return selection, line, odds
 
 
+def _map_team(alias: Optional[str]) -> Optional[str]:
+    if not alias:
+        return None
+    codes = data_store.lookup_team_code(alias)
+    if len(codes) == 1:
+        return next(iter(codes))
+    fallback = {
+        "bucks": "MIL",
+        "76ers": "PHI",
+        "sixers": "PHI",
+        "knicks": "NYK",
+        "nets": "BKN",
+        "trail blazers": "POR",
+        "blazers": "POR",
+        "suns": "PHX",
+        "spurs": "SAS",
+        "warriors": "GSW",
+        "pelicans": "NOP",
+        "lakers": "LAL",
+        "clippers": "LAC",
+        "celtics": "BOS",
+        "heat": "MIA",
+        "bulls": "CHI",
+        "cavaliers": "CLE",
+        "cavs": "CLE",
+        "pistons": "DET",
+        "raptors": "TOR",
+        "mavericks": "DAL",
+        "wolves": "MIN",
+        "timberwolves": "MIN",
+        "thunder": "OKC",
+        "magic": "ORL",
+        "rockets": "HOU",
+        "jazz": "UTA",
+        "kings": "SAC",
+        "hawks": "ATL",
+        "hornets": "CHA",
+        "grizzlies": "MEM",
+        "nuggets": "DEN",
+        "pacers": "IND",
+        "wizards": "WAS",
+        "pelicans": "NOP",
+        "pelican": "NOP",
+    }
+    norm = normalize_text(alias)
+    if norm in fallback:
+        return fallback[norm]
+    if len(alias) <= 3:
+        return alias.upper()
+    return None
+
+
 def _parse_prop(text: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[float], Optional[int]]:
     cleaned = re.sub(r"^\s*\d+\s*stars?\s*", "", text, flags=re.IGNORECASE)
     odds = None
@@ -112,6 +168,13 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     event_key, day_key = _build_event_keys(raw)
     away, home, matchup = _parse_matchup_hint(raw.get("matchup_hint"))
+    away = _map_team(away or raw.get("away_team"))
+    home = _map_team(home or raw.get("home_team"))
+    matchup_key = None
+    if day_key and away and home:
+        event_key = f"{day_key}:{away}@{home}"
+        teams_sorted = sorted([away, home])
+        matchup_key = f"{day_key}:{teams_sorted[0]}-{teams_sorted[1]}"
 
     selection = None
     side = None
@@ -122,7 +185,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     inelig_reason = None
     eligible = True
 
-    if surface == "nba_player_props" or market_family == "player_prop":
+    if market_family == "player_prop":
         market_type = "player_prop"
         player_name, stat_key, direction, line, odds = _parse_prop(raw_pick_text)
         side = direction
@@ -135,25 +198,41 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         if rating_val is not None and rating_val < 4:
             eligible, inelig_reason = False, "rating_below_threshold"
     else:
-        selection, line, odds = _parse_standard_pick(raw_pick_text)
-        side = selection
-        if surface in {"nba_model_pro_betting", "nba_sharp_picks"}:
+        selection = raw.get("selection_hint")
+        if market_type == "total":
+            selection = raw.get("side_hint") or selection
+            line = raw.get("line_hint")
+            odds = raw.get("odds_hint")
+            side = selection
+        else:
+            if selection:
+                selection = _map_team(selection)
+            else:
+                selection, line, odds = _parse_standard_pick(raw_pick_text)
+                selection = _map_team(selection)
+            if line is None:
+                line = raw.get("line_hint")
+            side = selection
+        if surface in {"betql_probet_spread", "betql_probet_total", "betql_sharp_spread", "betql_sharp_total"}:
             pct = raw.get("pro_pct") or 0
             if pct < 10:
                 eligible, inelig_reason = False, "sharp_pct_below_threshold"
-        if surface == "nba_model_bets":
-            rating = raw.get("rating_stars") if raw.get("rating_stars") is not None else raw.get("rating")
+        if surface in {"betql_model_spread", "betql_model_total"}:
+            rating = raw.get("rating_stars")
             if rating is None:
                 eligible, inelig_reason = False, "missing_rating"
             elif rating < 4:
                 eligible, inelig_reason = False, "rating_below_threshold"
-        if selection is None:
+        if selection is None and market_type == "spread":
             eligible, inelig_reason = False, "unparsed_team"
+        if selection is None and market_type == "total":
+            eligible, inelig_reason = False, "unparsed_direction"
 
     event = {
         "sport": "NBA",
         "event_key": event_key,
         "day_key": day_key,
+        "matchup_key": matchup_key,
         "away_team": away,
         "home_team": home,
         "event_start_time_utc": raw.get("event_start_time_utc"),
@@ -192,6 +271,10 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     if market_type == "player_prop":
         if not (player_key and stat_key and side):
             eligible, inelig_reason = False, "missing_required_fields"
+    if market_type not in ALLOWED_STANDARD and market_type != "player_prop":
+        eligible, inelig_reason = False, "unsupported_market"
+    if market_type in {"spread", "total"} and (not away or not home):
+        eligible, inelig_reason = False, "unparsed_team"
     if not eligible and not inelig_reason:
         inelig_reason = "unsupported_market"
 
@@ -201,10 +284,19 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "event": event,
         "market": market,
         "provenance": provenance,
+        "bet_kind": (
+            "model"
+            if isinstance(surface, str) and "betql_model_" in surface
+            else (
+                "probet"
+                if isinstance(surface, str) and ("betql_probet_" in surface or "betql_sharp_" in surface)
+                else None
+            )
+        ),
     }
 
 
-def normalize_file(raw_path: str, out_path: str) -> List[Dict[str, Any]]:
+def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Dict[str, Any]]:
     if not os.path.exists(raw_path):
         write_json(out_path, [])
         return []
@@ -218,6 +310,27 @@ def normalize_file(raw_path: str, out_path: str) -> List[Dict[str, Any]]:
         for item in raw_records:
             if isinstance(item, dict):
                 normalized.append(normalize_raw_record(item))
+
+    # Backfill BetQL probet lines from matching model lines
+    model_lines: Dict[Tuple[str, str, str], float] = {}
+    for rec in normalized:
+        prov = rec.get("provenance") or {}
+        mk = rec.get("market") or {}
+        ev = rec.get("event") or {}
+        if prov.get("source_id") == "betql" and rec.get("bet_kind") == "model" and mk.get("line") is not None:
+            key = (ev.get("event_key"), mk.get("market_type"), mk.get("selection"))
+            model_lines[key] = mk.get("line")
+
+    for rec in normalized:
+        prov = rec.get("provenance") or {}
+        mk = rec.get("market") or {}
+        ev = rec.get("event") or {}
+        if prov.get("source_id") == "betql" and rec.get("bet_kind") == "probet" and mk.get("line") is None:
+            key = (ev.get("event_key"), mk.get("market_type"), mk.get("selection"))
+            if key in model_lines:
+                mk["line"] = model_lines[key]
+                if debug:
+                    print(f"[DEBUG] BetQL probet line backfilled: {key[0]} {key[1]} {key[2]} line={model_lines[key]}")
     write_json(out_path, normalized)
     return normalized
 

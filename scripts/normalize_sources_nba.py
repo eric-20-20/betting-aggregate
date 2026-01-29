@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from collections import Counter
 from pathlib import Path
 import sys
@@ -11,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 from src.normalizer_nba import normalize_file
 from src.normalizer_sportscapping_nba import normalize_file as normalize_sportscapping
 from src.normalizer_betql_nba import normalize_file as normalize_betql
+from src.normalizer_betql_nba import normalize_props_file as normalize_betql_props
 
 
 def summarize(records):
@@ -26,18 +28,21 @@ def summarize(records):
 
 
 def main(out_dir: Path, debug: bool = False) -> None:
-    raw_action = out_dir / "out" / "raw_action_nba.json"
-    raw_covers = out_dir / "out" / "raw_covers_nba.json"
-    raw_sportscapping = out_dir / "data" / "raw_sportscapping_nba.json"
-    raw_betql_spread = out_dir / "data" / "raw_betql_spread_nba.json"
-    raw_betql_total = out_dir / "data" / "raw_betql_total_nba.json"
-    raw_betql_sharp = out_dir / "data" / "raw_betql_sharp_nba.json"
-    norm_action = out_dir / "out" / "normalized_action_nba.json"
-    norm_covers = out_dir / "out" / "normalized_covers_nba.json"
-    norm_sportscapping = out_dir / "out" / "normalized_sportscapping_nba.json"
-    norm_betql_spread = out_dir / "out" / "normalized_betql_spread_nba.json"
-    norm_betql_total = out_dir / "out" / "normalized_betql_total_nba.json"
-    norm_betql_sharp = out_dir / "out" / "normalized_betql_sharp_nba.json"
+    base = Path(os.getenv("NBA_OUT_DIR", "out"))
+    raw_action = out_dir / base / "raw_action_nba.json"
+    raw_covers = out_dir / base / "raw_covers_nba.json"
+    raw_sportscapping = out_dir / base / "raw_sportscapping_nba.json"
+    raw_betql_spread = out_dir / base / "raw_betql_spread_nba.json"
+    raw_betql_total = out_dir / base / "raw_betql_total_nba.json"
+    raw_betql_sharp = out_dir / base / "raw_betql_sharp_nba.json"
+    raw_betql_prop = out_dir / base / "raw_betql_prop_nba.json"
+    norm_action = out_dir / base / "normalized_action_nba.json"
+    norm_covers = out_dir / base / "normalized_covers_nba.json"
+    norm_sportscapping = out_dir / base / "normalized_sportscapping_nba.json"
+    norm_betql_spread = out_dir / base / "normalized_betql_spread_nba.json"
+    norm_betql_total = out_dir / base / "normalized_betql_total_nba.json"
+    norm_betql_sharp = out_dir / base / "normalized_betql_sharp_nba.json"
+    norm_betql_prop = out_dir / base / "normalized_betql_prop_nba.json"
 
     action_records = normalize_file(str(raw_action), str(norm_action), debug=debug)
     covers_records = normalize_file(str(raw_covers), str(norm_covers), debug=debug)
@@ -45,6 +50,7 @@ def main(out_dir: Path, debug: bool = False) -> None:
     betql_spread_records = normalize_betql(str(raw_betql_spread), str(norm_betql_spread), debug=debug)
     betql_total_records = normalize_betql(str(raw_betql_total), str(norm_betql_total), debug=debug)
     betql_sharp_records = normalize_betql(str(raw_betql_sharp), str(norm_betql_sharp), debug=debug)
+    betql_prop_records = normalize_betql_props(str(raw_betql_prop), str(norm_betql_prop), debug=debug)
 
     # Merge sharp (probet) into main BetQL outputs by market
     from store import write_json
@@ -68,6 +74,12 @@ def main(out_dir: Path, debug: bool = False) -> None:
 
     print("BetQL Total")
     total, eligible, ineligible, reasons = summarize(betql_total_records)
+    print(f"  total={total} eligible={eligible} ineligible={ineligible}")
+    for reason, count in reasons.most_common():
+        print(f"    {reason}: {count}")
+
+    print("BetQL Props")
+    total, eligible, ineligible, reasons = summarize(betql_prop_records)
     print(f"  total={total} eligible={eligible} ineligible={ineligible}")
     for reason, count in reasons.most_common():
         print(f"    {reason}: {count}")

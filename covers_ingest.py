@@ -15,6 +15,7 @@ How to add new fixtures:
 import argparse
 import json
 import re
+import os
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Iterable, List, Optional, Tuple, Dict
@@ -35,6 +36,8 @@ from action_ingest import (
 from event_resolution import SCHEDULE, ScheduledGame, build_event_key, resolve_event
 from store import SPORT, data_store
 from utils import normalize_text
+
+OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
 
 SESSION = requests.Session()
 SESSION.headers.update(
@@ -525,9 +528,7 @@ def normalize_covers_pick(raw_pick: RawPickRecord, home_team: str, away_team: st
 
 
 def ensure_out_dir() -> None:
-    import os
-
-    os.makedirs("out", exist_ok=True)
+    os.makedirs(OUT_DIR, exist_ok=True)
 
 
 def write_json(path: str, payload: Iterable[dict]) -> None:
@@ -671,8 +672,8 @@ def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=N
 
     all_normalized = dedupe_normalized_bets(all_normalized)
     ensure_out_dir()
-    write_json("out/raw_covers_nba.json", all_raw)
-    write_json("out/normalized_covers_nba.json", all_normalized)
+    write_json(os.path.join(OUT_DIR, "raw_covers_nba.json"), all_raw)
+    write_json(os.path.join(OUT_DIR, "normalized_covers_nba.json"), all_normalized)
 
     eligible_records = [n for n in all_normalized if n.get("eligible_for_consensus")]
     unique_event_keys = {n.get("event", {}).get("event_key") for n in all_normalized if n.get("event")}
@@ -687,6 +688,7 @@ def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=N
             }
         )
     )
+    print(f"[INGEST] wrote NBA Covers outputs to OUT_DIR={OUT_DIR}")
 
 
 if __name__ == "__main__":

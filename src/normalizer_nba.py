@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from store import data_store, write_json
 from action_ingest import parse_standard_market
 from utils import normalize_text
+from src.player_aliases_nba import normalize_player_key
 
 
 def build_matchup_key(day_key: Optional[str], team_a: Optional[str], team_b: Optional[str]) -> Optional[str]:
@@ -303,6 +304,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         stat_key = _extract_stat_key(raw)
         player_name = _extract_player_name(pick_text)
         player_key = _resolve_player_key(player_name)
+        player_key = normalize_player_key(player_key)
         selection = _build_selection(player_key, stat_key, direction)
     else:
         unrealistic_line = False

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import logging
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -18,6 +19,7 @@ URL_TOTAL = "https://betql.co/nba/odds/totals-spread"
 
 
 def main(out_path: str, storage_state: str, debug: bool = False) -> None:
+    logger = logging.getLogger("betql.probe.totals")
     storage_state = require_storage_state(storage_state)
     with BetQLSession(storage_state, headless=True) as sess:
         page = sess.open(URL_TOTAL)
@@ -28,18 +30,36 @@ def main(out_path: str, storage_state: str, debug: bool = False) -> None:
     write_json(out_path, records)
     model_elig = sum(1 for r in records if r["source_surface"] == "betql_model_total" and (r.get("rating_stars") or 0) >= 4)
     pro_elig = sum(1 for r in records if r["source_surface"] == "betql_probet_total" and (r.get("pro_pct") or 0) >= 10)
-    print(f"totals: buttons={dbg.get('ratings',0)} rows={len(records)} model_elig={model_elig} pro_elig={pro_elig} -> {out_path}")
+    logger.info(
+        "totals: buttons=%s rows=%s model_elig=%s pro_elig=%s -> %s",
+        dbg.get('ratings',0),
+        len(records),
+        model_elig,
+        pro_elig,
+        out_path,
+    )
     if debug:
         hist = Counter(r.get("rating_stars") for r in records)
-        print(f"rating_hist={dict(hist)}")
+        logger.debug("rating_hist=%s", dict(hist))
         for i, row in enumerate(records[:3]):
-            print(f"[debug row {i}] rating={row.get('rating_stars')} pro_pct={row.get('pro_pct')} pick={row.get('raw_pick_text')}")
+            logger.debug(
+                "[debug row %s] rating=%s pro_pct=%s pick=%s",
+                i,
+                row.get('rating_stars'),
+                row.get('pro_pct'),
+                row.get('raw_pick_text'),
+            )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Probe BetQL NBA totals (O/U)")
-    parser.add_argument("--out", default="data/raw_betql_total_nba.json")
+    parser.add_argument("--out", default=os.path.join(os.getenv("NBA_OUT_DIR", "out"), "raw_betql_total_nba.json"))
     parser.add_argument("--storage", default="data/betql_storage_state.json")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
     main(args.out, args.storage, debug=args.debug)

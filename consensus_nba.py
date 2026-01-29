@@ -1,9 +1,11 @@
 import argparse
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -13,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 # - data/latest/ mirrors snapshot JSONs for quick reads.
 
 from mappings import atomic_stats as mapping_atomic_stats, normalize_stat_key
+from src.player_aliases_nba import normalize_player_key, generate_dynamic_alias_map, alias_cache_info, normalize_player_slug
 from store import append_jsonl, copy_file, ensure_dir, sha256_json, write_json
 
 DEFAULT_INPUT_FILES = [
@@ -21,6 +24,7 @@ DEFAULT_INPUT_FILES = [
     "normalized_sportscapping_nba.json",
     "normalized_betql_spread_nba.json",
     "normalized_betql_total_nba.json",
+    "normalized_betql_prop_nba.json",
 ]
 
 HARD_DEBUG_META: Dict[str, Any] = {}
@@ -31,23 +35,24 @@ def ensure_out_dir(out_dir: str) -> None:
 
 def load_records(out_dir: str) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
+    loaded = []
     for fname in DEFAULT_INPUT_FILES:
         path = os.path.join(out_dir, fname)
         if not os.path.exists(path):
             continue
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    records.extend(data)
-        except json.JSONDecodeError:
-            continue
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                records.extend(data)
+                loaded.append((fname, len(data)))
+    print(f"[DEBUG] load_records dir={out_dir} loaded={loaded}")
     return records
 
 
 def load_raw_records(out_dir: str) -> List[Dict[str, Any]]:
-    raw_paths = ["raw_action_nba.json", "raw_covers_nba.json"]
+    raw_paths = ["raw_action_nba.json", "raw_covers_nba.json", "raw_betql_prop_nba.json", "raw_betql_sharp_nba.json", "raw_betql_spread_nba.json", "raw_betql_total_nba.json", "raw_sportscapping_nba.json"]
     raw: List[Dict[str, Any]] = []
+    loaded = []
     for fname in raw_paths:
         path = os.path.join(out_dir, fname)
         if not os.path.exists(path):
@@ -57,8 +62,10 @@ def load_raw_records(out_dir: str) -> List[Dict[str, Any]]:
                 data = json.load(f)
                 if isinstance(data, list):
                     raw.extend(data)
+                    loaded.append((fname, len(data)))
         except json.JSONDecodeError:
             continue
+    print(f"[DEBUG] load_raw_records dir={out_dir} loaded={loaded}")
     return raw
 
 
@@ -129,16 +136,165 @@ def normalize_team_selection(selection: str | None) -> Optional[str]:
     return selection.lower().replace(" ", "_")
 
 
+def _normalize_prop_direction(side: Optional[str], selection: Optional[str]) -> Optional[str]:
+    for val in (side, selection):
+        if not val or not isinstance(val, str):
+            continue
+        low = val.lower()
+        if "under" in low:
+            return "UNDER"
+        if "over" in low:
+            return "OVER"
+        if "::" in val:
+            suffix = val.split("::")[-1].upper()
+            if suffix in {"OVER", "UNDER"}:
+                return suffix
+    return None
+
+
+def _canonical_prop_selection(player_key: Optional[str], stat_key: Optional[str], direction: Optional[str]) -> Optional[str]:
+    if not (player_key and stat_key and direction):
+        return None
+    pk = player_key
+    if isinstance(pk, str) and not pk.startswith("NBA:"):
+        pk = f"NBA:{pk}"
+    return f"{pk}::{stat_key}::{direction}"
+
+
+def _normalize_prop_stat_key(stat_raw: Optional[str]) -> Optional[str]:
+    if not stat_raw:
+        return None
+    val = str(stat_raw).lower().strip()
+    mapping = {
+        "pts": "points",
+        "points": "points",
+        "point": "points",
+        "reb": "rebounds",
+        "rebound": "rebounds",
+        "rebounds": "rebounds",
+        "ast": "assists",
+        "assist": "assists",
+        "assists": "assists",
+        "steals": "steals",
+        "stl": "steals",
+        "blocks": "blocks",
+        "blk": "blocks",
+        "turnovers": "turnovers",
+        "to": "turnovers",
+        "tov": "turnovers",
+        "pra": "pts_reb_ast",
+        "pts+reb+ast": "pts_reb_ast",
+        "points_rebounds_assists": "pts_reb_ast",
+        "points+rebounds+assists": "pts_reb_ast",
+        "points_rebounds": "pts_reb",
+        "pts+reb": "pts_reb",
+        "points_assists": "pts_ast",
+        "pts+ast": "pts_ast",
+        "rebounds_assists": "reb_ast",
+        "reb+ast": "reb_ast",
+        "ra": "reb_ast",
+        "stl+blk": "steals_blocks",
+        "threes_made": "threes",
+        "made_threes": "threes",
+        "made threes": "threes",
+        "three_pointers_made": "threes",
+        "three_pointers": "threes",
+        "three pointers": "threes",
+        "3pt": "threes",
+        "3ptm": "threes",
+        "3pm": "threes",
+        "3_pointers": "threes",
+        "3 pointers": "threes",
+    }
+    return mapping.get(val, val.replace(" ", "_"))
+
+
+def _assert_no_sets(obj: Any, path: str = "root") -> None:
+    """Debug helper: raise if any set is found in the structure."""
+    if isinstance(obj, set):
+        raise ValueError(f"set found at {path}")
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            _assert_no_sets(v, f"{path}.{k}")
+    elif isinstance(obj, list):
+        for idx, v in enumerate(obj):
+            _assert_no_sets(v, f"{path}[{idx}]")
+
+
+def betql_prop_to_standard_pick(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Adapt a normalized BetQL prop-picks record into the Action/Covers-shaped schema.
+    This does not perform any grouping or consensus logic.
+    """
+    stat_map = {
+        "player_points": "points",
+        "player_rebounds": "rebounds",
+        "player_assists": "assists",
+        "player_threes": "threes_made",
+    }
+    stat_key = stat_map.get(raw.get("market")) or None
+    direction = (raw.get("direction") or "").upper() or None
+    side = None
+    if direction == "OVER":
+        side = "player_over"
+    elif direction == "UNDER":
+        side = "player_under"
+
+    player_token = raw.get("player_name_norm") or raw.get("player_name_raw")
+    selection = None
+    if player_token and stat_key and direction:
+        selection = f"{player_token}::{stat_key}::{direction}"
+
+    provenance = {
+        "source_id": raw.get("source_id"),
+        "source_surface": raw.get("source_surface"),
+        "sport": raw.get("sport"),
+        "observed_at_utc": raw.get("observed_at_utc"),
+        "canonical_url": raw.get("canonical_url"),
+        "raw_fingerprint": raw.get("raw_fingerprint"),
+        "expert_name": "BetQL Model",
+        "rating_stars": raw.get("rating_stars"),
+    }
+
+    event = {
+        "away_team": raw.get("away_team"),
+        "home_team": raw.get("home_team"),
+        "event_key": None,
+        "day_key": None,
+        "matchup_key": None,
+        "event_start_time_utc": None,
+    }
+
+    market = {
+        "market_type": "player_prop",
+        "side": side,
+        "stat_key": stat_key,
+        "line": raw.get("line"),
+        "odds": raw.get("odds"),
+        "player_key": None,
+        "selection": selection,
+    }
+
+    return {
+        "provenance": provenance,
+        "event": event,
+        "market": market,
+        "eligible_for_consensus": True,
+    }
+
+
 def normalize_player_id(player_id: Optional[str]) -> Optional[str]:
     if not player_id or not isinstance(player_id, str):
         return None
     pid = player_id.lower()
     if pid.startswith("nba:"):
         pid = pid.split(":", 1)[1]
+    # strip punctuation/dots/apostrophes for looser matches (e.g., J.Brunson -> j brunson)
+    pid = re.sub(r"[\\.']", " ", pid)
     for suffix in ["_total_projection", "_projection", "_and"]:
         if pid.endswith(suffix):
             pid = pid[: -len(suffix)]
-    tokens = [t for t in pid.replace("-", "_").split("_") if t]
+    tokens = [t for t in re.split(r"[\\s_\\-]+", pid) if t]
     # strip trailing generational suffixes (jr/sr/ii/iii/iv/v)
     suffix_tokens = {"jr", "sr", "ii", "iii", "iv", "v"}
     while tokens and tokens[-1] in suffix_tokens:
@@ -171,6 +327,23 @@ def _format_line_cluster(lines: List[float], kind: str) -> str:
     median = uniq[len(uniq) // 2] if len(uniq) % 2 else (uniq[len(uniq) // 2 - 1] + uniq[len(uniq) // 2]) / 2
     return f"{disp} (median={fmt(median)} range=[{fmt(uniq[0])},{fmt(uniq[-1])}])"
 
+def _format_standard_conflict(conf: Dict[str, Any]) -> str:
+    mkt = conf.get("market_type")
+    sels = conf.get("selections") or []
+    lines_by_sel = conf.get("lines_by_selection") or {}
+    expert_by_sel = conf.get("experts_by_selection") or {}
+    sources = conf.get("sources") or []
+
+    parts = [f"{mkt} CONFLICT (sources={','.join(sources)}):"]
+    for sel in sels:
+        lines = lines_by_sel.get(sel, [])
+        if mkt == "spread":
+            parts.append(f" - {_format_spread_selection(sel, lines)} experts={expert_by_sel.get(sel, [])}")
+        elif mkt == "total":
+            parts.append(f" - {sel} {_format_line_cluster(lines, 'total')} experts={expert_by_sel.get(sel, [])}")
+        else:
+            parts.append(f" - {sel} experts={expert_by_sel.get(sel, [])}")
+    return "\n".join(parts)
 
 def _format_spread_selection(team: str, lines: List[float]) -> str:
     return f"{team} {_format_line_cluster(lines, 'spread')}"
@@ -246,7 +419,9 @@ def soft_conflict_rows(soft_groups: List[Dict[str, Any]]) -> List[Dict[str, Any]
     standard = [g for g in soft_groups if g.get("market_type") in {"spread", "moneyline", "total"}]
     bucket: Dict[Tuple[Any, Any], List[Dict[str, Any]]] = {}
     for g in standard:
-        key = (g.get("matchup_key") or g.get("event_key"), g.get("market_type"))
+        key = _standard_conflict_key(g)
+        if not key:
+            continue
         bucket.setdefault(key, []).append(g)
     for key, groups in bucket.items():
         sels = {}
@@ -264,15 +439,20 @@ def soft_conflict_rows(soft_groups: List[Dict[str, Any]]) -> List[Dict[str, Any]
             experts_set: Set[str] = set()
             for g in glist:
                 sources_union.update(g.get("sources") or [])
-                for exp in g.get("experts_raw") or []:
+                exp_list = g.get("experts_raw") or g.get("experts") or []
+                for exp in exp_list:
                     experts_set.add(str(exp))
-                if g.get("lines"):
-                    lines_by_selection.setdefault(sel, []).extend(g.get("lines"))
+                lines_val = g.get("lines")
+                if not lines_val and g.get("line") is not None:
+                    lines_val = [g.get("line")]
+                if lines_val:
+                    lines_by_selection.setdefault(sel, []).extend(lines_val)
             experts_by_selection[sel] = experts_set
         conflicts.append(
             {
                 "signal_type": "avoid_conflict",
                 "event_key": key[0],
+                "matchup_key": key[0],
                 "market_type": key[1],
                 "selection": f"{key[1]}_conflict",
                 "selections": sorted(sels.keys()),
@@ -329,16 +509,79 @@ def _parse_direction(side: Optional[str], selection: Optional[str]) -> Optional[
     return None
 
 
-def _normalize_matchup_key(event: Dict[str, Any]) -> Optional[str]:
+def _normalize_standard_direction(market_type: Optional[str], selection: Optional[str], side: Optional[str], event: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    if market_type == "total":
+        return (_parse_direction(side, selection) or "").upper() or None
+    team = _parse_team_from_selection(selection, event or {}) or _parse_team_from_selection(side, event or {})
+    return team.upper() if team else None
+
+
+def _event_group_key(event: Dict[str, Any]) -> Optional[str]:
+    if not event:
+        return None
+    matchup_key = event.get("matchup_key")
+    if matchup_key:
+        return matchup_key
     ev_key = event.get("event_key")
     dk = day_key(ev_key)
     away = event.get("away_team")
     home = event.get("home_team")
-    matchup_key = event.get("matchup_key")
-    if not matchup_key and dk and away and home:
+    if dk and away and home:
         t1, t2 = sorted([str(away).upper(), str(home).upper()])
-        matchup_key = f"{dk}:{t1}-{t2}"
-    return matchup_key or ev_key
+        return f"{dk}:{t1}-{t2}"
+    return ev_key
+
+
+def _normalize_standard_selection(market: Dict[str, Any], event: Dict[str, Any]) -> Optional[str]:
+    market_type = market.get("market_type")
+    if market_type == "total":
+        direction = _parse_direction(market.get("side"), market.get("selection"))
+        return direction.upper() if direction else None
+    team = _parse_team_from_selection(market.get("selection"), event) or _parse_team_from_selection(market.get("side"), event)
+    return team.upper() if team else None
+
+
+def _standard_line_tolerance(market_type: Optional[str], context: str = "directional") -> Optional[float]:
+    if not market_type:
+        return None
+    if context == "directional":
+        if market_type == "spread":
+            return 1.5
+        if market_type == "total":
+            return 2.0
+        return None
+    if context == "soft":
+        if market_type in {"spread", "total"}:
+            return 1.0
+        return 0.0
+    return None
+
+
+def _standard_conflict_key(group: Dict[str, Any]) -> Optional[Tuple[Any, str]]:
+    mkt = group.get("market_type")
+    if mkt not in {"spread", "moneyline", "total"}:
+        return None
+    key = group.get("matchup_key") or group.get("matchup") or group.get("event_key") or group.get("day_key")
+    if key is None:
+        return None
+    return (key, mkt)
+
+
+def _standard_canonical_key(rec: Dict[str, Any], group_tag: str = "") -> Optional[Tuple[str, str, str, str]]:
+    event = rec.get("event") or {}
+    market = rec.get("market") or {}
+    mkt = market.get("market_type")
+    if mkt not in {"spread", "moneyline", "total"}:
+        return None
+    matchup_key = _normalize_matchup_key(event)
+    direction = _normalize_standard_direction(mkt, market.get("selection"), market.get("side"), event)
+    if not (matchup_key and direction):
+        return None
+    return (matchup_key, mkt, direction, group_tag or "")
+
+
+def _normalize_matchup_key(event: Dict[str, Any]) -> Optional[str]:
+    return _event_group_key(event)
 
 
 def _bucket_line(line: Any) -> Optional[float]:
@@ -353,16 +596,11 @@ def _canonical_hard_key(event: Dict[str, Any], market: Dict[str, Any], provenanc
     if market_type not in {"moneyline", "spread", "total"}:
         return None
 
+    matchup_key = _event_group_key(event)
     ev_key = event.get("event_key")
     dk = day_key(ev_key)
     away = event.get("away_team")
     home = event.get("home_team")
-    matchup_key = event.get("matchup_key")
-    if not matchup_key and dk and away and home:
-        t1, t2 = sorted([str(away).upper(), str(home).upper()])
-        matchup_key = f"{dk}:{t1}-{t2}"
-    if not matchup_key:
-        matchup_key = ev_key
     if not (dk and away and home and matchup_key):
         return None
 
@@ -406,6 +644,64 @@ def _canonical_hard_key(event: Dict[str, Any], market: Dict[str, Any], provenanc
     return core_key, canonical_selection, line_bucket
 
 
+def _compute_match_key_player_prop(rec: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
+    event = rec.get("event") or {}
+    market = rec.get("market") or {}
+    prov = rec.get("provenance") or {}
+
+    away = event.get("away_team")
+    home = event.get("home_team")
+    matchup_hint = prov.get("matchup") or rec.get("matchup") or rec.get("matchup_hint")
+    matchup = None
+    day = event.get("day_key") or day_key(event.get("event_key")) or day_key(rec.get("event_key")) or rec.get("day_key")
+    if away and home:
+        matchup = f"{str(away).upper()}@{str(home).upper()}"
+    elif matchup_hint:
+        matchup = str(matchup_hint).upper()
+
+    selection = market.get("selection")
+    side = market.get("side")
+    direction = _parse_direction(side, selection)
+
+    player_token = market.get("player_key")
+    stat_token = market.get("stat_key")
+    line = market.get("line")
+
+    if not player_token and selection and "::" in selection:
+        parts = selection.split("::")
+        if len(parts) >= 2:
+            player_token = player_token or parts[0]
+            stat_token = stat_token or parts[1]
+        if len(parts) >= 3 and not direction:
+            direction = parts[2]
+
+    player_token_norm = None
+    if player_token:
+        tok = normalize_player_slug(str(player_token))
+        player_token_norm = tok
+    player_match = normalize_player_slug(player_token_norm) if player_token_norm else None
+
+    stat_token_norm = _normalize_prop_stat_key(stat_token) if stat_token else None
+    if not stat_token_norm and stat_token:
+        stat_token_norm = normalize_stat_key(stat_token)
+    if not (matchup and (player_match or player_token_norm) and stat_token_norm and direction):
+        return None
+    key_player = player_match or player_token_norm
+    key = f"{day}|{matchup}|{key_player}|{stat_token_norm}|{direction}"
+    meta = {
+        "day_key": day,
+        "event_key": event.get("event_key"),
+        "matchup_key": event.get("matchup_key") or matchup,
+        "matchup": matchup,
+        "player_id": player_token_norm,
+        "player_match_id": key_player,
+        "stat_key": stat_token_norm,
+        "direction": direction,
+        "line": line,
+    }
+    return key, meta
+
+
 def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[str, Any]]:
     groups: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
     prop_groups: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = {}
@@ -422,7 +718,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
         if parsed:
             core_key, canonical_selection, lb = parsed
             market_type = market.get("market_type")
-            selection = market.get("selection")
+            selection = _normalize_standard_direction(market_type, market.get("selection"), market.get("side"), event) or market.get("selection")
             side = market.get("side")
             line = market.get("line")
             odds = market.get("odds")
@@ -435,6 +731,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 {
                     "day_key": dk,
                     "event_key": event.get("event_key"),
+                    "matchup_key": group_matchup,
                     "matchup": group_matchup,
                     "home_team": home,
                     "away_team": away,
@@ -468,39 +765,52 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 group["sample_urls"].append(url)
             continue
 
-        # Player prop markets for hard consensus
+        # Player prop markets for hard consensus (group by match_key)
         if (market.get("market_type") != "player_prop"):
             continue
-        parsed_sel = parse_selection_from_record(rec)
-        if not parsed_sel:
+        match_key = None
+        mk_result = rec.get("match_key")
+        meta = {}
+        computed = _compute_match_key_player_prop(rec)
+        if computed:
+            match_key, meta = computed
+        elif mk_result:
+            match_key = mk_result
+        if meta:
+            rec["match_key"] = match_key
+            rec["match_key_meta"] = meta
+        if not match_key:
             continue
-        player_id, stat_key, direction = parsed_sel
-        dk = day_key((event or {}).get("event_key"))
-        away = (event or {}).get("away_team")
-        home = (event or {}).get("home_team")
-        if not (dk and direction):
-            continue
-        matchup = f"{str(away).upper()}@{str(home).upper()}" if away and home else None
-        stat_key = normalize_stat_key(stat_key)
         lines_val = market.get("line")
         odds_val = market.get("odds")
         source_id = prov.get("source_id")
         expert = expert_identity(prov)
         url = prov.get("canonical_url")
-        for atomic in mapping_atomic_stats(stat_key):
-            if atomic not in ALLOWED_ATOMIC:
-                continue
-            identity = (dk, player_id, atomic, direction)
-            prop_groups.setdefault(identity, []).append(
-                {
-                    "line": lines_val,
-                    "odds": odds_val,
-                    "source_id": source_id,
-                    "expert": expert,
-                    "url": url,
-                    "matchup": matchup,
-                }
-            )
+        stat_key = meta.get("stat_key") or _normalize_prop_stat_key(market.get("stat_key")) or normalize_stat_key(market.get("stat_key"))
+        direction = meta.get("direction") or _parse_direction(market.get("side"), market.get("selection"))
+        direction = direction.upper() if isinstance(direction, str) else direction
+        player_id = meta.get("player_id") or normalize_player_id(market.get("player_key") or market.get("selection"))
+        day = meta.get("day_key") or event.get("day_key") or day_key(event.get("event_key"))
+        matchup_key = meta.get("matchup_key") or event.get("matchup_key") or _normalize_matchup_key(event)
+        event_key = meta.get("event_key") or event.get("event_key")
+        prop_groups.setdefault(match_key, []).append(
+            {
+                "line": lines_val,
+                "odds": odds_val,
+                "source_id": source_id,
+                "expert": expert,
+                "url": url,
+                "stat_key": stat_key,
+                "direction": direction,
+                "away_team": (event or {}).get("away_team"),
+                "home_team": (event or {}).get("home_team"),
+                "player_id": player_id,
+                "day_key": day,
+                "matchup_key": matchup_key,
+                "event_key": event_key,
+                "selection": _canonical_prop_selection(f"NBA:{player_id}" if player_id and not str(player_id).startswith("NBA:") else player_id, stat_key, direction),
+            }
+        )
 
     results: List[Dict[str, Any]] = []
     for core, group in groups.items():
@@ -523,6 +833,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 "canonical_key": core,
                 "day_key": group["day_key"],
                 "event_key": group["event_key"],
+                "matchup_key": group.get("matchup_key"),
                 "matchup": group.get("matchup"),
                 "home_team": group.get("home_team"),
                 "away_team": group.get("away_team"),
@@ -547,10 +858,8 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
             }
         )
 
-    # Player prop hard consensus clustering (line tolerance <= 1.0)
-    for identity, entries in prop_groups.items():
-        dk, player_id, atomic_stat, direction = identity
-        # sort by line
+    # Player prop hard consensus clustering (line tolerance <= 1.0) grouped by match_key
+    for match_key, entries in prop_groups.items():
         valid_entries = [e for e in entries if e.get("line") is not None]
         if not valid_entries:
             continue
@@ -576,11 +885,14 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
             if len(sources_set) < 2:
                 continue
             made_cluster = True
-            matchup = None
-            for e in cl:
-                if e.get("matchup"):
-                    matchup = e.get("matchup")
-                    break
+            player_ids = [e.get("player_id") for e in cl if e.get("player_id")]
+            player_id = max(player_ids, key=len) if player_ids else None
+            atomic_stat = next((e.get("stat_key") for e in cl if e.get("stat_key")), None)
+            direction_val = next((e.get("direction") for e in cl if e.get("direction")), None)
+            direction_val = direction_val.upper() if isinstance(direction_val, str) else direction_val
+            day_meta = next((e.get("day_key") for e in cl if e.get("day_key")), None)
+            event_meta = next((e.get("event_key") for e in cl if e.get("event_key")), None)
+            matchup_meta = next((e.get("matchup_key") for e in cl if e.get("matchup_key")), None)
             lines = sorted({float(e["line"]) for e in cl})
             line_min = lines[0]
             line_max = lines[-1]
@@ -600,16 +912,25 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 if not src or e.get("line") is None:
                     continue
                 lines_by_source.setdefault(src, []).append(float(e["line"]))
+            canonical_selection = _canonical_prop_selection(
+                f"NBA:{player_id}" if player_id and not str(player_id).startswith("NBA:") else player_id,
+                atomic_stat,
+                direction_val,
+            )
+            selection_example = next((e.get("selection") for e in cl if e.get("selection")), canonical_selection)
+            tokens = match_key.split("|") if isinstance(match_key, str) else []
             results.append(
                 {
-                    "canonical_key": identity,
-                    "day_key": dk,
-                    "matchup": matchup,
+                    "canonical_key": match_key,
+                    "day_key": day_meta,
+                    "event_key": event_meta,
+                    "matchup_key": matchup_meta,
+                    "matchup": matchup_meta or (tokens[1] if len(tokens) > 1 else match_key),
                     "market_type": "player_prop",
                     "player_id": player_id,
                     "atomic_stat": atomic_stat,
-                    "direction": direction,
-                    "canonical_selection": f"{player_id}::{atomic_stat}::{direction}" if player_id and atomic_stat and direction else f"{player_id}::{atomic_stat}",
+                    "direction": direction_val,
+                    "canonical_selection": canonical_selection,
                     "line_bucket": None,
                     "lines": lines,
                     "line_median": line_median,
@@ -625,6 +946,9 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                     "experts_raw": sorted(f"{src}:{val}" for (src, val) in experts_set if src and val),
                     "count_total": len(cl),
                     "sample_urls": sample_urls,
+                    "match_key": match_key,
+                    "selection": canonical_selection or selection_example,
+                    "selection_example": selection_example,
                 }
             )
         if not made_cluster:
@@ -633,7 +957,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 lines_all = sorted({float(e["line"]) for e in valid_entries})
                 near_miss_props.append(
                     {
-                        "identity": identity,
+                        "identity": match_key,
                         "sources": sorted(sources_total),
                         "lines": lines_all,
                         "spread": max(lines_all) - min(lines_all) if lines_all else None,
@@ -745,33 +1069,33 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
         home = event.get("home_team")
         if not (dk and away and home):
             return
+        matchup_key = _event_group_key(event)
         matchup = f"{str(away).upper()}@{str(home).upper()}"
-        selection = market.get("selection")
-        side = market.get("side")
+        selection_norm = _normalize_standard_direction(mk_type, market.get("selection"), market.get("side"), {"away_team": away, "home_team": home})
         line = market.get("line")
-        team = _parse_team_from_selection(selection, {"away_team": away, "home_team": home}) or _parse_team_from_selection(
-            side, {"away_team": away, "home_team": home}
-        )
-        direction = _parse_direction(side, selection)
+        direction = _parse_direction(market.get("side"), market.get("selection"))
         if mk_type == "moneyline":
-            if not team:
+            if not selection_norm:
                 return
-            key = (dk, matchup, "moneyline", team.upper())
-            base_sel = team.upper()
+            key = (matchup_key, "moneyline", selection_norm)
+            base_sel = selection_norm
         elif mk_type == "spread":
-            if line is None or not team:
+            if line is None or not selection_norm:
                 return
-            key = (dk, matchup, "spread", team.upper())
-            base_sel = team.upper()
+            key = (matchup_key, "spread", selection_norm)
+            base_sel = selection_norm
         else:  # total
             if line is None or not direction:
                 return
-            key = (dk, matchup, "total", direction)
+            direction = direction.upper()
+            key = (matchup_key, "total", direction)
             base_sel = direction
         grp = standard_groups.setdefault(
             key,
             {
                 "day_key": dk,
+                "event_key": event.get("event_key"),
+                "matchup_key": matchup_key,
                 "matchup": matchup,
                 "market_type": mk_type,
                 "selection": base_sel,
@@ -923,12 +1247,13 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
         return all(tok.lower() in joined for tok in debug_soft_tokens)
 
     conflict_ids_local: Set[Tuple[Any, Any]] = set()
-    # detect conflicts within standard groups (different selections same day+market_type)
+    # detect conflicts within standard groups (different selections same matchup+market_type)
     sels_bucket: Dict[Tuple[Any, Any], Set[Any]] = {}
-    for key, grp in standard_groups.items():
-        dk = grp.get("day_key")
-        mkt = grp.get("market_type")
-        sels_bucket.setdefault((dk, mkt), set()).add(grp.get("selection"))
+    for grp in standard_groups.values():
+        conf_key = _standard_conflict_key(grp)
+        if not conf_key:
+            continue
+        sels_bucket.setdefault(conf_key, set()).add(grp.get("selection"))
     for key, sels in sels_bucket.items():
         if len(sels) >= 2:
             conflict_ids_local.add(key)
@@ -940,7 +1265,7 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
             continue
         if not (expert_strength >= 2 or grp["count_total"] >= 2):
             continue
-        tolerance = 1.0 if grp["market_type"] == "spread" else 1.0 if grp["market_type"] == "total" else 0.0
+        tolerance = _standard_line_tolerance(grp["market_type"], context="soft") or 0.0
         line_clusters = cluster_lines([float(l) for l in grp.get("lines", []) if isinstance(l, (int, float))], tolerance)
         for cl in line_clusters or [[]]:
             if grp["market_type"] != "moneyline" and not cl:
@@ -951,18 +1276,13 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
             if cl:
                 n = len(cl)
                 line_median = cl[n // 2] if n % 2 else (cl[n // 2 - 1] + cl[n // 2]) / 2
-            identity = (
-                grp["day_key"],
-                grp["matchup"],
-                grp["market_type"],
-                grp["selection"],
-                line_median,
-            )
+            identity = (grp.get("day_key"), grp.get("matchup_key") or grp.get("matchup"), grp["market_type"], grp["selection"], line_median)
             if hard_identities and identity in hard_identities:
                 continue
-            if (grp.get("day_key"), grp.get("market_type")) in conflict_ids_local:
+            conf_key = _standard_conflict_key(grp)
+            if conf_key in conflict_ids_local:
                 if matches_debug(key):
-                    print(f"[DEBUG soft-market] SUPPRESS due to conflict_id={(grp.get('day_key'), grp.get('market_type'))} selection={grp.get('selection')} lines={cl}")
+                    print(f"[DEBUG soft-market] SUPPRESS due to conflict_id={conf_key} selection={grp.get('selection')} lines={cl}")
                 continue
             if matches_debug(key):
                 debug_info.append(
@@ -971,6 +1291,8 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
             results.append(
                 {
                     "day_key": grp["day_key"],
+                    "event_key": grp.get("event_key"),
+                    "matchup_key": grp.get("matchup_key"),
                     "matchup": grp["matchup"],
                     "market_type": grp["market_type"],
                     "selection": grp["selection"],
@@ -1202,14 +1524,12 @@ def format_standard_hard_row(item: Dict[str, Any]) -> str:
 
 def format_standard_conflict_row(item: Dict[str, Any]) -> str:
     key_disp = item.get("matchup_key") or item.get("matchup") or item.get("event_key") or "N/A"
-    sels = item.get("selections", [])
-    return (
-        f"{key_disp} {item.get('market_type')} CONFLICT: {sels} "
-        f"sources={','.join(item.get('sources', []))} count={item.get('count_total')}"
-    )
+    return key_disp + "\n" + _format_standard_conflict(item)
 
 
-def compute_line_stats(supports: List[Dict[str, Any]], atomic_stat: Optional[str], direction: Optional[str]) -> Tuple[Optional[float], Optional[float], Optional[float], List[float]]:
+def compute_line_stats(
+    supports: List[Dict[str, Any]], atomic_stat: Optional[str], direction: Optional[str]
+) -> Tuple[Optional[float], Optional[float], Optional[float], List[float], List[float], List[float]]:
     lines: List[float] = []
     lines_atomic: List[float] = []
     lines_combo: List[float] = []
@@ -1376,42 +1696,6 @@ def build_unified_signals(
         weighted = atomic_ct * 1.0 + combo_ct * 0.65
         return atomic_ct, combo_ct, weighted
 
-    def selection_fields(player_id: Optional[str], atomic_stat: Optional[str], direction: Optional[str], supports: List[Dict[str, Any]]) -> Tuple[str, Optional[str], Optional[str]]:
-        sel_default = None
-        if player_id and atomic_stat and direction:
-            sel_default = f"{player_id}::{atomic_stat}::{direction}"
-        atomic_supports = [
-            sup for sup in supports if sup.get("atomic_stat") == atomic_stat and sup.get("evidence_type") != "combo"
-        ]
-        selection_example = None
-        if atomic_supports:
-            selection_example = atomic_supports[0].get("selection")
-            selection_source = "atomic"
-        elif supports:
-            selection_example = supports[0].get("selection")
-            selection_source = "combo"
-        else:
-            selection_source = None
-        selection_value = selection_example or sel_default or (supports[0].get("selection") if supports else None) or sel_default
-        return selection_value, selection_source, selection_example
-
-    def compute_evidence_counts(supports: List[Dict[str, Any]], atomic_stat: Optional[str]) -> Tuple[int, int, float]:
-        atomic_ids: Set[str] = set()
-        combo_ids: Set[str] = set()
-        for sup in supports:
-            if atomic_stat and sup.get("atomic_stat") != atomic_stat:
-                continue
-            evid = sup.get("evidence_type")
-            expert_id = sup.get("expert_handle") or sup.get("expert_name") or f"{sup.get('source_id')}:{sup.get('selection')}"
-            if evid == "atomic":
-                atomic_ids.add(expert_id)
-            elif evid == "combo":
-                combo_ids.add(expert_id)
-        atomic_ct = len(atomic_ids)
-        combo_ct = len(combo_ids)
-        weighted = atomic_ct * 1.0 + combo_ct * 0.65
-        return atomic_ct, combo_ct, weighted
-
     # Hard signals (non-atomic)
     for group in hard_groups:
         if group.get("source_strength", 0) < 2:
@@ -1433,14 +1717,15 @@ def build_unified_signals(
             odds_list = group.get("odds_list") or group.get("odds") or []
             best_odds = group.get("best_odds")
         else:
-            player_id, _, _ = parse_selection_from_record(
-                {
-                    "market": {"selection": group.get("selection"), "stat_key": group.get("stat_key"), "side": group.get("side")},
-                    "provenance": {},
-                    "event": {"event_key": group.get("event_key")},
-                }
-            ) or (None, None, None)
-            selection_val, selection_source, selection_example = selection_fields(player_id, None, group.get("side"), [])
+            player_id = None
+            atomic_stat = None
+            selection_val = group.get("canonical_selection") or group.get("selection")
+            selection_source = "hard_standard"
+            selection_example = group.get("selection")
+            direction = group.get("direction") or group.get("side")
+            if group.get("market_type") == "total":
+                direction = _parse_direction(group.get("side"), group.get("selection")) or group.get("direction")
+                direction = direction.upper() if direction else direction
             line_median = group.get("line")
             line_min = group.get("line")
             line_max = group.get("line")
@@ -1465,7 +1750,7 @@ def build_unified_signals(
                 "selection_source": selection_source,
                 "selection_example": selection_example or group.get("selection"),
                 "atomic_stat": atomic_stat if group.get("market_type") == "player_prop" else None,
-                "direction": direction if group.get("market_type") == "player_prop" else group.get("side"),
+                "direction": direction if group.get("market_type") == "player_prop" else direction or group.get("side"),
                 "line": line_median,
                 "line_median": line_median,
                 "line_min": line_min,
@@ -1664,72 +1949,48 @@ def detect_conflicts(
     conflicts: List[Dict[str, Any]] = []
 
     # moneyline / spread / total from hard groups
-    bucket_mls: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
-    bucket_spread: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
-    bucket_total: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+    bucket_std: Dict[Tuple[str, str], Dict[str, Set[str]]] = {}
+    meta_std: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
     for g in hard_groups:
-        if g.get("market_type") == "moneyline":
-            key = (g.get("matchup") or g.get("event_key"), "moneyline")
-            bucket_mls.setdefault(key, {})[g.get("selection")] = g
-        elif g.get("market_type") == "spread":
-            key = (g.get("matchup") or g.get("event_key"), "spread")
-            bucket_spread.setdefault(key, {})[g.get("selection")] = g
-        elif g.get("market_type") == "total":
-            key = (g.get("matchup") or g.get("event_key"), "total")
-            bucket_total.setdefault(key, {})[g.get("side")] = g
+        mkt = g.get("market_type")
+        if mkt not in {"moneyline", "spread", "total"}:
+            continue
+        conflict_key = _standard_conflict_key(g)
+        if not conflict_key:
+            continue
+        norm_sel = _normalize_standard_direction(mkt, g.get("selection"), g.get("side"), {"away_team": g.get("away_team"), "home_team": g.get("home_team")})
+        if not norm_sel and mkt == "total":
+            norm_sel = _parse_direction(g.get("side"), g.get("selection"))
+            norm_sel = norm_sel.upper() if norm_sel else None
+        if not norm_sel:
+            continue
+        bucket_std.setdefault(conflict_key, {}).setdefault(norm_sel, set()).update(g.get("sources") or [])
+        meta_std.setdefault(conflict_key, []).append(g)
 
-    for key, sel_map in bucket_mls.items():
-        if len(sel_map) >= 2:
-            groups = list(sel_map.values())
-            sources = sorted(set(s for g in groups for s in g.get("sources", [])))
-            conflicts.append(
-                {
-                    "signal_type": "avoid_conflict",
-                    "event_key": key[0],
-                    "matchup_key": key[0],
-                    "market_type": "moneyline",
-                    "selection": "moneyline_conflict",
-                    "selections": list(sel_map.keys()),
-                    "sources": sources,
-                    "count_total": sum(g.get("count_total", 0) for g in groups),
-                }
-            )
-    for key, sel_map in bucket_spread.items():
-        groups = list(sel_map.values())
-        sources = sorted(set(s for g in groups for s in g.get("sources", [])))
-        if len(sel_map) >= 2 and len(sources) >= 2:
-            conflicts.append(
-                {
-                    "signal_type": "avoid_conflict",
-                    "event_key": key[0],
-                    "matchup_key": key[0],
-                    "market_type": "spread",
-                    "selection": "spread_conflict",
-                    "selections": list(sel_map.keys()),
-                    "sources": sources,
-                    "count_total": sum(g.get("count_total", 0) for g in groups),
-                }
-            )
-            print(f"[DEBUG] spread group => AVOID (conflict) matchup_key={key[0]} selections={list(sel_map.keys())} sources={sources}")
-        elif len(sel_map) == 1 and len(sources) >= 2:
-            sel_only = next(iter(sel_map.keys()))
-            print(f"[DEBUG] spread group => HARD matchup_key={key[0]} selection={sel_only} sources={sources} count={sum(g.get('count_total',0) for g in groups)}")
-    for (evk, _), side_map in bucket_total.items():
-        if side_map.get("over") and side_map.get("under"):
-            groups = [side_map["over"], side_map["under"]]
-            sources = sorted(set(s for g in groups for s in g.get("sources", [])))
-            conflicts.append(
-                {
-                    "signal_type": "avoid_conflict",
-                    "event_key": evk,
-                    "matchup_key": evk,
-                    "market_type": "total",
-                    "selection": "total_conflict",
-                    "selections": ["over", "under"],
-                    "sources": sources,
-                    "count_total": sum(g.get("count_total", 0) for g in groups),
-                }
-            )
+    for key, sel_sources in bucket_std.items():
+        unique_dirs = list(sel_sources.keys())
+        sources_union = set()
+        for srcs in sel_sources.values():
+            sources_union.update(srcs)
+        if len(sources_union) < 2:
+            continue
+        if len(unique_dirs) == 1:
+            # Agreement across >=2 sources -> not a conflict
+            continue
+        groups = meta_std.get(key, [])
+        conflicts.append(
+            {
+                "signal_type": "avoid_conflict",
+                "event_key": key[0],
+                "matchup_key": key[0],
+                "market_type": key[1],
+                "selection": f"{key[1]}_conflict",
+                "selections": unique_dirs,
+                "sources": sorted(sources_union),
+                "count_total": sum(g.get("count_total", 0) for g in groups),
+            }
+        )
+        print(f"[DEBUG] {key[1]} group => AVOID (conflict) matchup_key={key[0]} selections={unique_dirs} sources={sorted(sources_union)}")
 
     # player props handled in build_unified (with supports), so skip here to avoid duplicates
     return conflicts
@@ -1740,6 +2001,7 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
     allowed_markets = {"spread", "total", "moneyline"}
     votes: Dict[Tuple[str, str], Dict[str, Set[str]]] = {}
     lines_by_key_sel: Dict[Tuple[str, str, str], List[float]] = {}
+    experts_by_key_sel: Dict[Tuple[str, str, str], Set[str]] = {}
     meta: Dict[Tuple[str, str], Dict[str, Any]] = {}
     sample_urls: Dict[Tuple[str, str], Set[str]] = {}
 
@@ -1762,14 +2024,9 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
         if not group_key:
             continue
 
-        selection_norm: Optional[str] = None
-        if mkt == "total":
-            selection_norm = _parse_direction(market.get("side"), market.get("selection"))
-        else:
-            selection_norm = _parse_team_from_selection(market.get("selection"), event) or _parse_team_from_selection(market.get("side"), event)
+        selection_norm: Optional[str] = _normalize_standard_selection(market, event)
         if not selection_norm:
             continue
-        selection_norm = selection_norm.upper()
         line_val = None
         try:
             if market.get("line") is not None:
@@ -1781,11 +2038,15 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
         votes.setdefault(key, {}).setdefault(src, set()).add(selection_norm)
         if line_val is not None:
             lines_by_key_sel.setdefault((group_key, mkt, selection_norm), []).append(line_val)
+        expert = prov.get("expert_name") or prov.get("expert_handle") or prov.get("expert_slug")
+        if expert:
+            experts_by_key_sel.setdefault((group_key, mkt, selection_norm), set()).add(str(expert))
         if key not in meta:
             meta[key] = {
                 "day_key": day_key(event_key),
                 "event_key": event_key,
                 "matchup": group_key,
+                "matchup_key": group_key,
                 "away_team": event.get("away_team"),
                 "home_team": event.get("home_team"),
             }
@@ -1808,7 +2069,7 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
 
         # line tolerance check for agreeing selection
         line_min = line_max = line_range = None
-        tol = 2.0 if mkt == "total" else 1.5 if mkt == "spread" else None
+        tol = _standard_line_tolerance(mkt, context="directional")
         if len(unique_sels) == 1:
             sel_only = next(iter(unique_sels))
             lines = lines_by_key_sel.get((group_key, mkt, sel_only), [])
@@ -1835,7 +2096,7 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
 
         count_total = sum(len(v) for v in src_map.values())
         meta_row = meta.get(key, {})
-        if len(unique_sels) == 1 and (tol is None or line_range is None or line_range <= tol):
+        if len(unique_sels) == 1:
             sel_only = next(iter(unique_sels))
             hard_results.append(
                 {
@@ -1843,6 +2104,7 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                     "day_key": meta_row.get("day_key"),
                     "event_key": meta_row.get("event_key") or group_key,
                     "matchup": meta_row.get("matchup") or group_key,
+                    "matchup_key": meta_row.get("matchup_key") or group_key,
                     "home_team": meta_row.get("home_team"),
                     "away_team": meta_row.get("away_team"),
                     "market_type": mkt,
@@ -1856,8 +2118,6 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                     "line_max": line_max,
                     "best_odds": None,
                     "sources": sorted(sources_with_votes),
-                    "sources_set": set(sources_with_votes),
-                    "experts_set": set(),
                     "count_total": count_total,
                     "source_strength": len(sources_with_votes),
                     "expert_strength": 0,
@@ -1875,6 +2135,12 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                     "selections": sorted(unique_sels),
                     "sources": sorted(sources_with_votes),
                     "count_total": count_total,
+                    "experts_by_selection": {
+                        sel: sorted(experts_by_key_sel.get((group_key, mkt, sel), set())) for sel in unique_sels
+                    },
+                    "lines_by_selection": {
+                        sel: sorted(set(lines_by_key_sel.get((group_key, mkt, sel), []))) for sel in unique_sels
+                    },
                 }
             )
 
@@ -2057,12 +2323,64 @@ def main(
     data_dir: str = "data",
     out_dir: str = "out",
 ) -> None:
+    # refresh dynamic alias map before loading records
+    generate_dynamic_alias_map(out_dir)
+    # Ensure output collections always exist to keep debug guards safe
+    hard_groups: List[Dict[str, Any]] = []
+    soft_groups: List[Dict[str, Any]] = []
+    within_groups: List[Dict[str, Any]] = []
+    unified_signals: List[Dict[str, Any]] = []
+    conflict_rows: List[Dict[str, Any]] = []
+    standard_conflicts_detected: List[Dict[str, Any]] = []
+    soft_conflicts: List[Dict[str, Any]] = []
+    std_avoid: List[Dict[str, Any]] = []
+
     records = load_records(out_dir)
     raw_records = load_raw_records(out_dir)
     eligible = [r for r in records if r.get("eligible_for_consensus")]
+    betql_prop_debug: List[Dict[str, Any]] = []
 
+    alias_sub_counts: Dict[str, int] = {}
     for rec in records:
         prov = rec.get("provenance") or {}
+        src = prov.get("source_id") or prov.get("source_surface")
+        market = rec.get("market") or {}
+        if market.get("market_type") == "player_prop":
+            # normalize player identity across sources
+            original_pk = market.get("player_key")
+            pk_normed = normalize_player_key(original_pk, out_dir=out_dir)
+            if pk_normed:
+                market["player_key"] = pk_normed
+                if original_pk and pk_normed != original_pk:
+                    alias_sub_counts[src or "unknown"] = alias_sub_counts.get(src or "unknown", 0) + 1
+            direction_norm = _normalize_prop_direction(market.get("side"), market.get("selection"))
+            stat_norm = _normalize_prop_stat_key(market.get("stat_key"))
+            player_key = market.get("player_key")
+            if not player_key:
+                sel = market.get("selection")
+                if sel and "::" in sel:
+                    player_key = sel.split("::")[0]
+            if player_key:
+                pk_norm = normalize_player_id(player_key)
+                player_key = normalize_player_key(player_key, out_dir=out_dir) or (f"NBA:{pk_norm}" if pk_norm else f"NBA:{player_key}")
+            canonical_sel = _canonical_prop_selection(player_key, stat_norm, direction_norm)
+            if canonical_sel:
+                market["selection"] = canonical_sel
+            if direction_norm:
+                market["side"] = direction_norm
+            if stat_norm:
+                market["stat_key"] = stat_norm
+            rec["market"] = market
+            if src == "betql" and len(betql_prop_debug) < 5:
+                betql_prop_debug.append(
+                    {
+                        "selection": market.get("selection"),
+                        "side": market.get("side"),
+                        "player_key": market.get("player_key"),
+                        "stat_key": market.get("stat_key"),
+                        "direction": direction_norm,
+                    }
+                )
         prov["expert_id"] = compute_expert_id_value(prov)
         rec["provenance"] = prov
         evid = compute_evidence_id(rec)
@@ -2103,13 +2421,10 @@ def main(
         market_counts[(src, mkt)] = market_counts.get((src, mkt), 0) + 1
         is_standard = mkt in {"spread", "total", "moneyline"}
         if is_standard:
-            matchup_key_val = ev.get("matchup_key")
-            if not matchup_key_val and dk and away and home:
-                t1, t2 = sorted([str(away).upper(), str(home).upper()])
-                matchup_key_val = f"{dk}:{t1}-{t2}"
-            group_key = matchup_key_val or ev_key
-            if group_key:
-                standard_group_keys[src].add(group_key)
+            canonical_key = _standard_canonical_key(rec) if rec else None
+            if canonical_key:
+                standard_group_keys[src].add(canonical_key)
+            matchup_key_val = _normalize_matchup_key(ev)
             if not matchup_key_val:
                 missing_matchup_by_source[src] += 1
             if len(standard_samples[src]) < 10:
@@ -2135,6 +2450,37 @@ def main(
     covers_matchups = by_source_matchups.get("covers", set())
     action_std_keys = standard_group_keys.get("action", set())
     covers_std_keys = standard_group_keys.get("covers", set())
+    prop_keys_by_source: Dict[str, Set[Tuple[Any, Any, Any]]] = {}
+    player_key_counts: Dict[str, Counter] = {}
+    stat_key_counts: Dict[str, Counter] = {}
+    malformed_player_keys: Dict[str, int] = {}
+    for rec in eligible:
+        mk = rec.get("market") or {}
+        if mk.get("market_type") != "player_prop":
+            continue
+        prov = rec.get("provenance") or {}
+        src = prov.get("source_id", "unknown")
+        ev = rec.get("event") or {}
+        dk = day_key(ev.get("event_key"))
+        matchup_k = _normalize_matchup_key(ev)
+        sel = mk.get("selection")
+        stat_norm = _normalize_prop_stat_key(mk.get("stat_key"))
+        dir_norm = _normalize_prop_direction(mk.get("side"), sel) or (sel.split("::")[-1].upper() if sel and "::" in sel else None)
+        player_norm = normalize_player_slug(mk.get("player_key") or (sel.split("::")[0] if sel else None))
+        sel_norm = _canonical_prop_selection(f"NBA:{player_norm}" if player_norm else None, stat_norm, dir_norm) or sel
+        prop_keys_by_source.setdefault(src, set()).add((dk, player_norm, stat_norm, dir_norm))
+        player_val = mk.get("player_key")
+        if player_val:
+            slug = str(player_val)
+            if slug.lower().startswith("nba:"):
+                slug = slug.split(":", 1)[1]
+            slug = re.sub(r"\s+", "_", slug)
+            player_key_counts.setdefault(src, Counter())[slug] += 1
+            if len(slug) < 4 or re.search(r"_[a-z]$", slug):
+                malformed_player_keys[src] = malformed_player_keys.get(src, 0) + 1
+        stat_val = mk.get("stat_key")
+        if stat_val:
+            stat_key_counts.setdefault(src, Counter())[stat_val] += 1
 
     print("CROSS-SOURCE OVERLAP AUDIT:")
     print(
@@ -2151,6 +2497,10 @@ def main(
     print(f"  standard group_key intersection size={len(action_std_keys & covers_std_keys)}")
 
     if debug:
+        if betql_prop_debug:
+            print("[DEBUG] BetQL prop normalization (first 5):")
+            for row in betql_prop_debug:
+                print(f"  {row}")
         print(f"[DEBUG standard audit] missing_matchup_key_by_source={missing_matchup_by_source}")
         for src in ["action", "covers", "betql", "sportscapping"]:
             samples = standard_samples.get(src, [])
@@ -2159,6 +2509,41 @@ def main(
             print(f"[DEBUG standard audit] source={src} samples (first {len(samples)}):")
             for row in samples:
                 print(f"    {row}")
+
+        if prop_keys_by_source:
+            print("[DEBUG] PROP OVERLAP AUDIT:")
+            for src in ["action", "covers", "betql", "sportscapping"]:
+                keys = list(prop_keys_by_source.get(src, []))[:10]
+                if keys:
+                    print(f"  {src}: {keys}")
+            action_props = prop_keys_by_source.get("action", set())
+            covers_props = prop_keys_by_source.get("covers", set())
+            betql_props = prop_keys_by_source.get("betql", set())
+            inter_ac = action_props & covers_props
+            inter_ab = action_props & betql_props
+            inter_cb = covers_props & betql_props
+            print(f"  action∩covers size={len(inter_ac)} samples={list(inter_ac)[:3]}")
+            print(f"  action∩betql size={len(inter_ab)} samples={list(inter_ab)[:3]}")
+            print(f"  covers∩betql size={len(inter_cb)} samples={list(inter_cb)[:3]}")
+            print(f"  malformed player_key counts={malformed_player_keys}")
+            if player_key_counts:
+                print("[DEBUG] top player_key slugs by source:")
+                for src, counter in player_key_counts.items():
+                    tops = counter.most_common(20)
+                    if tops:
+                        print(f"    {src}: {tops}")
+                print(f"[DEBUG] alias substitutions by source: {alias_sub_counts}")
+                print("[DEBUG] abbreviated slugs remaining (leading single initial):")
+                for src, counter in player_key_counts.items():
+                    leftovers = [slug for slug, _ in counter.most_common() if len(slug.split('_')[0]) == 1][:20]
+                    if leftovers:
+                        print(f"    {src}: {leftovers}")
+            if stat_key_counts:
+                print("[DEBUG] top stat_key values by source:")
+                for src, counter in stat_key_counts.items():
+                    tops = counter.most_common(20)
+                    if tops:
+                        print(f"    {src}: {tops}")
 
         watson_debug: List[Dict[str, Any]] = []
         for rec in eligible:
@@ -2328,20 +2713,36 @@ def main(
     if overlap_days:
         key_samples: Dict[str, List[Tuple[Any, ...]]] = {"action": [], "covers": []}
         keys_by_source: Dict[str, Set[Tuple[Any, ...]]] = {"action": set(), "covers": set()}
+        def _canonical_base(key: Any) -> Any:
+            if isinstance(key, tuple) and len(key) >= 3:
+                return key[:3]
+            return key
+
         for g in hard_groups:
             if g.get("day_key") not in overlap_days:
                 continue
+            base_key = _canonical_base(g.get("canonical_key"))
             for src in g.get("sources", []):
                 if src in key_samples and len(key_samples[src]) < 10:
-                    key_samples[src].append(g.get("canonical_key"))
+                    key_samples[src].append(base_key)
                 if src in keys_by_source:
-                    keys_by_source[src].add(g.get("canonical_key"))
+                    keys_by_source[src].add(base_key)
         print("[DEBUG] canonical hard keys on overlapping day_keys (top 10 per source):")
         for src, arr in key_samples.items():
             print(f"  {src}: {arr}")
         intersection = keys_by_source.get("action", set()) & keys_by_source.get("covers", set())
         print(f"[DEBUG] canonical key intersection count={len(intersection)} samples={list(intersection)[:5]}")
     ensure_dir(out_dir)
+    if debug:
+        guard_items = {
+            "hard_groups": hard_groups,
+            "soft_groups": soft_groups,
+            "within_groups": within_groups,
+            "unified_signals": unified_signals,
+            "conflict_rows": conflict_rows,
+        }
+        for label, obj in guard_items.items():
+            _assert_no_sets(obj, label)
     with open(os.path.join(out_dir, "consensus_nba_hard.json"), "w", encoding="utf-8") as f:
         json.dump(hard_groups, f, ensure_ascii=False, indent=2)
     with open(os.path.join(out_dir, "consensus_nba_soft.json"), "w", encoding="utf-8") as f:
@@ -2350,11 +2751,18 @@ def main(
         json.dump(within_groups, f, ensure_ascii=False, indent=2)
 
     unified_signals = build_unified_signals(hard_groups, soft_groups, within_groups)
-    conflicts_extra = detect_conflicts(hard_groups, soft_groups, within_groups)
+    prop_conflict_count = sum(
+        1
+        for sig in unified_signals
+        if sig.get("signal_type") == "avoid_conflict" and sig.get("market_type") == "player_prop"
+    )
+
+    standard_conflicts_detected = detect_conflicts(hard_groups, soft_groups, within_groups)
+    standard_conflicts = list(standard_conflicts_detected)
     if std_avoid:
-        conflicts_extra.extend(std_avoid)
-    if conflicts_extra:
-        unified_signals.extend(conflicts_extra)
+        standard_conflicts.extend(std_avoid)
+    if standard_conflicts:
+        unified_signals.extend(standard_conflicts)
         unified_signals.sort(key=lambda s: s.get("score", 0) if s.get("score") is not None else 0, reverse=True)
     unified_before = len(unified_signals)
     signals_pre_dedupe = list(unified_signals)
@@ -2371,11 +2779,12 @@ def main(
 
     hard_filtered = [g for g in hard_groups if g.get("source_strength", 0) >= 2]
     soft_filtered = [g for g in soft_groups if g.get("expert_strength", 0) >= 2 or g.get("count_total", 0) >= 2]
-    conflict_rows_raw = detect_conflicts(hard_groups, soft_groups, within_groups)
+    conflict_rows_raw = list(standard_conflicts)
     conflict_rows_raw.extend([s for s in unified_signals if s.get("signal_type") == "avoid_conflict"])
     conflict_rows_raw.extend(soft_conflicts)
     conflict_rows = dedupe_signals(conflict_rows_raw)
 
+    soft_std_before = [s for s in soft_groups if s.get("market_type") in {"spread", "moneyline", "total"}]
     # Build conflict identities for standard markets (event_key, market_type)
     conflict_ids: Set[Tuple[Any, Any]] = set()
     for row in conflict_rows:
@@ -2383,14 +2792,18 @@ def main(
             continue
         mkt = row.get("market_type")
         if mkt in {"spread", "moneyline", "total"}:
-            conflict_ids.add((row.get("event_key"), mkt))
+            key = _standard_conflict_key(row)
+            if key:
+                conflict_ids.add(key)
 
     # Also detect conflicts within soft standard signals (multiple selections same event_key+market_type)
     soft_std = [s for s in soft_groups if s.get("market_type") in {"spread", "moneyline", "total"}]
     bucket: Dict[Tuple[Any, Any], Set[Any]] = {}
     conflict_ids_local: Set[Tuple[Any, Any]] = set()
     for s in soft_std:
-        key = (s.get("event_key"), s.get("market_type"))
+        key = _standard_conflict_key(s)
+        if not key:
+            continue
         bucket.setdefault(key, set()).add(s.get("selection"))
     for key, sels in bucket.items():
         if len(sels) >= 2:
@@ -2399,12 +2812,28 @@ def main(
 
     filtered_soft_groups: List[Dict[str, Any]] = []
     for s in soft_groups:
-        if s.get("market_type") in {"spread", "moneyline", "total"} and (s.get("event_key"), s.get("market_type")) in conflict_ids:
+        conf_key = _standard_conflict_key(s)
+        if s.get("market_type") in {"spread", "moneyline", "total"} and conf_key in conflict_ids:
             if debug and (not debug_soft_tokens or all(tok.lower() in str(s).lower() for tok in debug_soft_tokens)):
-                print(f"[SOFT SUPPRESSED] due to conflict_id={(s.get('event_key'), s.get('market_type'))} selection={s.get('selection')} lines={s.get('lines')}")
+                print(f"[SOFT SUPPRESSED] due to conflict_id={conf_key} selection={s.get('selection')} lines={s.get('lines')}")
             continue
         filtered_soft_groups.append(s)
+    soft_std_after = [s for s in filtered_soft_groups if s.get("market_type") in {"spread", "moneyline", "total"}]
+    soft_std_suppressed = len(soft_std_before) - len(soft_std_after)
     soft_groups = filtered_soft_groups
+
+    standard_conflict_count = len([c for c in standard_conflicts_detected if c.get("market_type") in {"spread", "moneyline", "total"}])
+    soft_standard_conflict_count = len(soft_conflicts)
+    std_avoid_count = len(std_avoid)
+
+    if debug:
+        print(
+            f"[DEBUG conflict summary] standard={standard_conflict_count} soft_standard={soft_standard_conflict_count} "
+            f"prop_over_under={prop_conflict_count} std_avoid={std_avoid_count}"
+        )
+        print(
+            f"[DEBUG conflict summary] soft standard suppressed by conflicts: {soft_std_suppressed} of {len(soft_std_before)} (keyed per matchup)"
+        )
 
     print_section("HARD CONSENSUS (>=2 sources):", hard_filtered, format_hard_row)
     std_hard_filtered = std_hard  # already requires >=2 sources
@@ -2431,7 +2860,17 @@ def main(
             for nm in near_miss_props[:5]:
                 print(f"  {nm['identity']} sources={nm['sources']} lines={nm['lines']} spread={nm['spread']}")
     print_section("SOFT CONSENSUS (>=2 experts, player props):", soft_filtered, format_soft_row)
-    print_section("CONFLICTS / AVOIDS:", conflict_rows, format_conflict_row)
+
+    # Filter out standard-market avoid conflicts already shown above
+    conflict_rows_filtered = [
+        r
+        for r in conflict_rows
+        if not (
+            r.get("signal_type") == "avoid_conflict"
+            and (r.get("market_type") in {"spread", "moneyline", "total"})
+        )
+    ]
+    print_section("CONFLICTS / AVOIDS:", conflict_rows_filtered, format_conflict_row)
 
     # Tracking writes
     if track:

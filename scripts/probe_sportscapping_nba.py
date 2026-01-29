@@ -246,7 +246,7 @@ def main(url: str, out_path: str) -> None:
 def cli() -> None:
     parser = argparse.ArgumentParser(description="Probe Sportscapping free NBA picks")
     parser.add_argument("--url", default=DEFAULT_URL, help="Page URL to fetch")
-    parser.add_argument("--out", default="data/raw_sportscapping_nba.json", help="Output JSON path")
+    parser.add_argument("--out", default=os.path.join(os.getenv("NBA_OUT_DIR", "out"), "raw_sportscapping_nba.json"), help="Output JSON path")
     args = parser.parse_args()
     main(args.url, args.out)
 

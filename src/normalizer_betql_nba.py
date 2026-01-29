@@ -5,6 +5,8 @@ import os, sys
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from betql_utils import extract_player_name_from_text, slugify_player_name
+from src.player_aliases_nba import normalize_player_key
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -14,6 +16,45 @@ from store import data_store, write_json
 from utils import normalize_text
 
 ALLOWED_STANDARD = {"spread", "total"}
+MIN_PROP_STARS = 4
+AMBIGUOUS_SLUGS = {"m_bridge", "m_bridges"}
+
+PROP_STAT_MAP = {
+    "points": "points",
+    "point": "points",
+    "rebounds": "rebounds",
+    "rebound": "rebounds",
+    "reb": "rebounds",
+    "assists": "assists",
+    "assist": "assists",
+    "ast": "assists",
+    "threes": "threes",
+    "made threes": "threes",
+    "threes made": "threes",
+    "3-pointers made": "threes",
+    "3 pointers made": "threes",
+    "three_pointers": "threes",
+    "three pointers": "threes",
+    "3pt": "threes",
+    "3ptm": "threes",
+    "3pm": "threes",
+    "pts+reb+ast": "pts_reb_ast",
+    "points_rebounds_assists": "pts_reb_ast",
+    "pra": "pts_reb_ast",
+    "points_rebounds": "pts_reb",
+    "pts+reb": "pts_reb",
+    "points_assists": "pts_ast",
+    "pts+ast": "pts_ast",
+    "rebounds_assists": "reb_ast",
+    "reb+ast": "reb_ast",
+    "ra": "reb_ast",
+    "steals": "steals",
+    "stl": "steals",
+    "blocks": "blocks",
+    "blk": "blocks",
+    "turnovers": "turnovers",
+    "to": "turnovers",
+}
 
 
 def _parse_dt(val: Any) -> Optional[datetime]:
@@ -141,26 +182,263 @@ def _parse_prop(text: str) -> Tuple[Optional[str], Optional[str], Optional[str],
     if m_odds:
         odds = int(m_odds.group(1))
     line = None
-    m_line = re.search(r"(\d+(?:\.\d+)?)\s*(?:points|rebound|rebounds|assists|threes|pts|reb|ast)", cleaned, re.IGNORECASE)
+    m_line = re.search(r"(\d+(?:\.\d+)?)", cleaned)
     if m_line:
-        line = float(m_line.group(1))
+        try:
+            line = float(m_line.group(1))
+        except ValueError:
+            line = None
     direction = None
     m_dir = re.search(r"\b(over|under)\b", cleaned, re.IGNORECASE)
     if m_dir:
         direction = m_dir.group(1).upper()
     stat_key = None
-    for key in ["points", "rebounds", "assists", "threes", "pts", "reb", "ast", "pra", "pts+reb+ast"]:
+    for key in [
+        "points",
+        "rebounds",
+        "assists",
+        "threes",
+        "pts",
+        "reb",
+        "ast",
+        "pra",
+        "pts+reb+ast",
+        "points_rebounds_assists",
+        "points_rebounds",
+        "points_assists",
+        "rebounds_assists",
+    ]:
         if key in normalize_text(cleaned):
             stat_key = key
             break
-    player_name = None
-    player_match = re.match(r"([A-Za-z][A-Za-z\.\s'-]+)", cleaned)
-    if player_match:
-        player_name = player_match.group(1).strip()
+    player_name = extract_player_name_from_text(cleaned)
     return player_name, stat_key, direction, line, odds
 
 
+def _stat_from_raw(stat_raw: Optional[str]) -> Optional[str]:
+    if not stat_raw:
+        return None
+    canonical = {"points", "rebounds", "assists", "threes", "steals", "blocks", "turnovers", "pts_reb", "pts_ast", "reb_ast", "pts_reb_ast"}
+    raw_lower = str(stat_raw).lower()
+    if raw_lower in canonical:
+        return raw_lower
+    key = normalize_text(stat_raw).replace(" ", "_")
+    if key in PROP_STAT_MAP:
+        return PROP_STAT_MAP[key]
+    for token, mapped in PROP_STAT_MAP.items():
+        if token in key:
+            return mapped
+    return None
+
+
+def normalize_betql_prop_record(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize BetQL prop picks into Action/Covers schema envelope.
+    """
+    rating_val = raw.get("rating_stars") if raw.get("rating_stars") is not None else raw.get("rating")
+    direction = (raw.get("direction") or "").upper() or None
+    line = raw.get("line")
+    try:
+        line = float(line) if line is not None else None
+    except (TypeError, ValueError):
+        line = None
+    odds = raw.get("odds")
+    try:
+        odds = int(odds) if odds is not None else None
+    except (TypeError, ValueError):
+        odds = None
+
+    stat_key = _stat_from_raw(raw.get("stat_raw") or raw.get("stat"))
+    player_name = raw.get("player_name") or raw.get("player_name_raw")
+
+    # fallback parse
+    if not (player_name and stat_key and direction and line is not None):
+        parsed_player, parsed_stat, parsed_dir, parsed_line, parsed_odds = _parse_prop(raw.get("raw_pick_text") or raw.get("raw_block") or "")
+        player_name = player_name or parsed_player
+        stat_key = stat_key or parsed_stat
+        direction = direction or parsed_dir
+        line = line if line is not None else parsed_line
+        odds = odds if odds is not None else parsed_odds
+
+    stat_key = _stat_from_raw(stat_key)
+    player_slug = slugify_player_name(player_name)
+    if player_slug in AMBIGUOUS_SLUGS:
+        player_slug = None
+    player_key = normalize_player_key(f"NBA:{player_slug}" if player_slug else None)
+    away_team = raw.get("away_team")
+    home_team = raw.get("home_team")
+
+    ineligibility_reason = None
+    eligible = True
+
+    if not away_team or not home_team:
+        eligible, ineligibility_reason = False, "unparsed_team"
+
+    if not player_key:
+        eligible, ineligibility_reason = False, ineligibility_reason or "unparsed_player"
+
+    if not stat_key:
+        eligible, ineligibility_reason = False, ineligibility_reason or "unparsed_stat"
+    if not direction:
+        eligible, ineligibility_reason = False, ineligibility_reason or "unparsed_direction"
+    if line is None:
+        eligible, ineligibility_reason = False, ineligibility_reason or "unparsed_line"
+    if rating_val is None:
+        eligible, ineligibility_reason = False, ineligibility_reason or "missing_rating"
+    elif rating_val < MIN_PROP_STARS:
+        eligible, ineligibility_reason = False, ineligibility_reason or "rating_below_threshold"
+    if player_slug is None:
+        eligible, ineligibility_reason = False, ineligibility_reason or "ambiguous_player"
+
+    observed_dt = _parse_dt(raw.get("observed_at_utc"))
+    event_dt = _parse_dt(raw.get("event_start_time_utc")) or observed_dt
+    day_key = None
+    event_key = None
+    matchup_key = None
+    if event_dt:
+        day_key = f"NBA:{event_dt.year:04d}:{event_dt.month:02d}:{event_dt.day:02d}"
+    if day_key and away_team and home_team:
+        event_key = f"{day_key}:{away_team}@{home_team}"
+        teams_sorted = sorted([away_team, home_team])
+        matchup_key = f"{day_key}:{teams_sorted[0]}-{teams_sorted[1]}"
+    matchup_hint = raw.get("matchup_hint")
+    if not matchup_key and day_key and matchup_hint and "@" in str(matchup_hint):
+        parts = str(matchup_hint).split("@")
+        if len(parts) == 2:
+            a, h = parts[0].upper(), parts[1].upper()
+            matchup_key = f"{day_key}:{'-'.join(sorted([a, h]))}"
+
+    selection = None
+    side = None
+    if player_slug and stat_key and direction:
+        full_player_key = normalize_player_key(f"NBA:{player_slug}")
+        selection = f"{full_player_key}::{stat_key}::{direction}"
+        side = "player_over" if direction == "OVER" else "player_under" if direction == "UNDER" else direction
+
+    provenance = {
+        "source_id": "betql",
+        "source_surface": raw.get("source_surface") or "betql_prop_picks",
+        "sport": "NBA",
+        "observed_at_utc": raw.get("observed_at_utc"),
+        "canonical_url": raw.get("canonical_url"),
+        "raw_fingerprint": raw.get("raw_fingerprint"),
+        "raw_pick_text": raw.get("raw_pick_text"),
+        "raw_block": raw.get("raw_block"),
+        "matchup_hint": raw.get("matchup_hint"),
+        "expert_name": raw.get("expert_name") or "BetQL Model",
+        "rating_stars": rating_val,
+    }
+
+    event = {
+        "sport": "NBA",
+        "event_key": event_key,
+        "day_key": day_key,
+        "matchup_key": matchup_key,
+        "away_team": away_team,
+        "home_team": home_team,
+        "event_start_time_utc": raw.get("event_start_time_utc"),
+    }
+
+    market = {
+        "market_type": "player_prop",
+        "side": side,
+        "stat_key": stat_key,
+        "line": line,
+        "odds": odds,
+        "player_key": player_key,
+        "selection": selection,
+    }
+
+    eligibility = {"eligible_for_consensus": eligible, "ineligibility_reason": ineligibility_reason}
+
+    # Prop grouping aid
+    match_key = None
+    if day_key and matchup_key and player_slug and stat_key and direction:
+        match_key = f"{day_key}|{matchup_key}|{player_slug}|{stat_key}|{direction}"
+
+    return {
+        "provenance": provenance,
+        "event": event,
+        "market": market,
+        "match_key": match_key,
+        "eligible_for_consensus": eligible,
+        "ineligibility_reason": ineligibility_reason,
+        "eligibility": eligibility,
+    }
+
+
+def normalize_props_file(raw_path: str, out_path: str, debug: bool = False) -> List[Dict[str, Any]]:
+    if not os.path.exists(raw_path):
+        write_json(out_path, [])
+        return []
+    try:
+        with open(raw_path, "r", encoding="utf-8") as f:
+            raw_records = json.load(f)
+    except json.JSONDecodeError:
+        raw_records = []
+
+    normalized: List[Dict[str, Any]] = []
+    ineligible_reasons: Dict[str, int] = {}
+    if isinstance(raw_records, list):
+        for item in raw_records:
+            if isinstance(item, dict):
+                rec = normalize_betql_prop_record(item)
+                if rec.get("eligible_for_consensus"):
+                    normalized.append(rec)
+                else:
+                    reason = rec.get("ineligibility_reason") or rec.get("eligibility", {}).get("ineligibility_reason") or "unknown"
+                    ineligible_reasons[reason] = ineligible_reasons.get(reason, 0) + 1
+
+    # Deduplicate by (day_key, player_key, stat_key, direction)
+    deduped: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+    removed = 0
+    for rec in normalized:
+        ev = rec.get("event") or {}
+        mk = rec.get("market") or {}
+        dk = ev.get("day_key")
+        key = (dk, mk.get("player_key"), mk.get("stat_key"), mk.get("selection").split("::")[-1] if mk.get("selection") else mk.get("side"))
+        if key in deduped:
+            removed += 1
+            existing = deduped[key]
+            # keep better odds if present (higher absolute value)
+            ex_odds = (existing.get("market") or {}).get("odds")
+            new_odds = mk.get("odds")
+            if ex_odds is None and new_odds is not None:
+                existing["market"]["odds"] = new_odds
+            elif ex_odds is not None and new_odds is not None:
+                if abs(new_odds) > abs(ex_odds):
+                    existing["market"]["odds"] = new_odds
+            # keep line if missing
+            if (existing.get("market") or {}).get("line") is None and mk.get("line") is not None:
+                existing["market"]["line"] = mk.get("line")
+            continue
+        deduped[key] = rec
+
+    normalized = list(deduped.values())
+    write_json(out_path, normalized)
+    if debug:
+        total = len(raw_records) if isinstance(raw_records, list) else 0
+        elig = len(normalized)
+        inelig_total = sum(ineligible_reasons.values())
+        print(f"[DEBUG] BetQL props total={total} eligible={elig} ineligible={inelig_total} removed_dupes={removed}")
+        if ineligible_reasons:
+            print(f"[DEBUG] BetQL prop ineligibility reasons: {ineligible_reasons}")
+    return normalized
+
+
 def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
+    # Safe defaults to avoid unbound locals across market branches
+    player_slug: Optional[str] = None
+    player_key: Optional[str] = None
+    stat_key: Optional[str] = None
+    direction: Optional[str] = None
+    selection: Optional[str] = None
+    side: Optional[str] = None
+    line: Optional[float] = None
+    odds: Optional[int] = None
+    inelig_reason: Optional[str] = None
+    eligible = True
+
     surface = raw.get("source_surface")
     raw_pick_text = raw.get("raw_pick_text") or ""
     market_family = raw.get("market_family") or "unknown"
@@ -176,27 +454,26 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         teams_sorted = sorted([away, home])
         matchup_key = f"{day_key}:{teams_sorted[0]}-{teams_sorted[1]}"
 
-    selection = None
-    side = None
-    line = None
-    odds = None
-    player_key = None
-    stat_key = None
-    inelig_reason = None
-    eligible = True
-
     if market_family == "player_prop":
         market_type = "player_prop"
         player_name, stat_key, direction, line, odds = _parse_prop(raw_pick_text)
         side = direction
-        if player_name:
-            existing = data_store.lookup_player_key(player_name)
-            player_key = existing or data_store.add_player(full_name=player_name, alias_text=player_name, is_verified=False)
-        else:
+        player_slug = slugify_player_name(player_name)
+        if player_slug in AMBIGUOUS_SLUGS:
+            player_slug = None
+        player_key = normalize_player_key(f"NBA:{player_slug}" if player_slug else None)
+        if not player_key:
             eligible, inelig_reason = False, "unparsed_player"
         rating_val = raw.get("rating_stars") if raw.get("rating_stars") is not None else raw.get("rating")
-        if rating_val is not None and rating_val < 4:
+        if rating_val is None:
+            eligible, inelig_reason = False, "missing_rating"
+        elif rating_val < MIN_PROP_STARS:
             eligible, inelig_reason = False, "rating_below_threshold"
+        stat_key = _stat_from_raw(stat_key)
+        direction = direction.upper() if isinstance(direction, str) else direction
+        if player_slug and stat_key and direction and player_key:
+            selection = f"{player_key}::{stat_key}::{direction}"
+            side = "player_over" if direction == "OVER" else "player_under" if direction == "UNDER" else direction
     else:
         selection = raw.get("selection_hint")
         if market_type == "total":
@@ -306,10 +583,15 @@ def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Di
     except json.JSONDecodeError:
         raw_records = []
     normalized: List[Dict[str, Any]] = []
+    skipped = 0
     if isinstance(raw_records, list):
         for item in raw_records:
             if isinstance(item, dict):
-                normalized.append(normalize_raw_record(item))
+                rec = normalize_raw_record(item)
+                if rec:
+                    normalized.append(rec)
+                else:
+                    skipped += 1
 
     # Backfill BetQL probet lines from matching model lines
     model_lines: Dict[Tuple[str, str, str], float] = {}
@@ -332,6 +614,8 @@ def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Di
                 if debug:
                     print(f"[DEBUG] BetQL probet line backfilled: {key[0]} {key[1]} {key[2]} line={model_lines[key]}")
     write_json(out_path, normalized)
+    if debug and skipped:
+        print(f"[DEBUG] normalize_file skipped={skipped} records (unknown/invalid shape)")
     return normalized
 
 

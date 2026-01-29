@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,6 +11,7 @@ from store import data_store, write_json
 from utils import normalize_text
 
 ALLOWED_MARKETS = {"spread", "moneyline", "total"}
+logger = logging.getLogger(__name__)
 
 
 def _parse_dt(val: Any) -> Optional[datetime]:
@@ -167,7 +169,16 @@ def _extract_total(text: str) -> Tuple[Optional[str], Optional[float]]:
     return direction, line
 
 
-def _eligibility(market_type: str, selection: Optional[str], line: Optional[float], direction: Optional[str]) -> Tuple[bool, Optional[str]]:
+def _eligibility(
+    market_type: str,
+    selection: Optional[str],
+    line: Optional[float],
+    direction: Optional[str],
+    away_team: Optional[str],
+    home_team: Optional[str],
+) -> Tuple[bool, Optional[str]]:
+    if not away_team or not home_team:
+        return False, "missing_team_abbrevs"
     if market_type not in ALLOWED_MARKETS:
         return False, "unsupported_market"
     if market_type == "total":
@@ -195,8 +206,10 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     stat_key = None
     player_key = None
 
-    away_team = raw.get("away_team")
-    home_team = raw.get("home_team")
+    away_team_raw = raw.get("away_team")
+    home_team_raw = raw.get("home_team")
+    away_team = away_team_raw
+    home_team = home_team_raw
     matchup = None
     matchup_error = None
     parsed_away, parsed_home, match_err, matchup_str = _parse_matchup_hint(raw)
@@ -243,6 +256,8 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "away_team": away_team,
         "home_team": home_team,
         "event_start_time_utc": raw.get("event_start_time_utc"),
+        "away_team_raw": away_team_raw,
+        "home_team_raw": home_team_raw,
     }
 
     market = {
@@ -272,8 +287,10 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "source_updated_at_utc",
     ]
     provenance = {k: raw.get(k) for k in provenance_fields}
+    provenance["source_id"] = provenance.get("source_id") or "sportscapping"
+    provenance["sport"] = "NBA"
 
-    eligible, reason = _eligibility(market_type, selection, line, side if market_type == "total" else None)
+    eligible, reason = _eligibility(market_type, selection, line, side if market_type == "total" else None, away_team, home_team)
     if matchup_error and market_type in {"spread", "moneyline", "total"}:
         eligible = False
         reason = matchup_error
@@ -282,6 +299,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "eligible_for_consensus": eligible,
         "ineligibility_reason": reason,
+        "eligibility": {"is_eligible": eligible, "reason": reason},
         "event": event,
         "market": market,
         "provenance": provenance,

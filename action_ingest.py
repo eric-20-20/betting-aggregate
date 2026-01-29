@@ -663,7 +663,7 @@ def normalize_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, stat
 
 
 def ensure_out_dir() -> None:
-    os.makedirs("out", exist_ok=True)
+    os.makedirs(OUT_DIR, exist_ok=True)
 
 
 def json_default(o):
@@ -764,14 +764,16 @@ def ingest_action_nba_games(schedule=None) -> None:
 
     all_normalized = dedupe_normalized_bets(all_normalized)
     ensure_out_dir()
-    write_json("out/raw_action_nba.json", (asdict(r) for r in all_raw))
-    write_json("out/normalized_action_nba.json", all_normalized)
+    write_json(os.path.join(OUT_DIR, "raw_action_nba.json"), (asdict(r) for r in all_raw))
+    write_json(os.path.join(OUT_DIR, "normalized_action_nba.json"), all_normalized)
     print(
         f"[DEBUG] cards_found={stats['cards_found']} raw_picks_total={stats['raw_picks_total']} "
         f"normalized_total={stats['normalized_total']} normalized_eligible={stats['normalized_eligible']} "
         f"team_not_in_game_rejected={stats.get('team_not_in_game', 0)}"
     )
+    print(f"[INGEST] wrote NBA Action outputs to OUT_DIR={OUT_DIR}")
 
 
 if __name__ == "__main__":
     ingest_action_nba_games()
+OUT_DIR = os.getenv("NBA_OUT_DIR", "out")

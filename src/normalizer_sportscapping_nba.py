@@ -177,17 +177,23 @@ def _eligibility(
     away_team: Optional[str],
     home_team: Optional[str],
 ) -> Tuple[bool, Optional[str]]:
-    if not away_team or not home_team:
-        return False, "missing_team_abbrevs"
     if market_type not in ALLOWED_MARKETS:
         return False, "unsupported_market"
+    if market_type == "spread":
+        if not away_team or not home_team:
+            return False, "missing_team_abbrevs"
+        if not selection:
+            return False, "unparsed_team"
+        if line is None:
+            return False, "unparsed_line"
+        return True, None
     if market_type == "total":
         if not direction:
             return False, "unparsed_direction"
         if line is None:
             return False, "unparsed_line"
         return True, None
-    if market_type in {"spread", "moneyline"}:
+    if market_type == "moneyline":
         if not selection:
             return False, "unparsed_team"
         return True, None
@@ -291,7 +297,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     provenance["sport"] = "NBA"
 
     eligible, reason = _eligibility(market_type, selection, line, side if market_type == "total" else None, away_team, home_team)
-    if matchup_error and market_type in {"spread", "moneyline", "total"}:
+    if matchup_error and market_type == "spread":
         eligible = False
         reason = matchup_error
     market["matchup"] = matchup

@@ -9,9 +9,15 @@ from datetime import datetime, date, timezone
 from typing import Iterable, List, Optional, Tuple
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
+from pathlib import Path
+
+OUT_DIR = str(Path(os.getenv("NBA_OUT_DIR", "out")))
 
 import requests
 from bs4 import BeautifulSoup
+def ensure_out_dir():
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 try:
     from playwright.sync_api import sync_playwright

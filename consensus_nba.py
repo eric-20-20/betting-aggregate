@@ -28,6 +28,7 @@ DEFAULT_INPUT_FILES = [
 ]
 
 HARD_DEBUG_META: Dict[str, Any] = {}
+SUPPORT_FIX_COUNTERS: Counter = Counter()
 
 def ensure_out_dir(out_dir: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
@@ -155,10 +156,79 @@ def _normalize_prop_direction(side: Optional[str], selection: Optional[str]) -> 
 def _canonical_prop_selection(player_key: Optional[str], stat_key: Optional[str], direction: Optional[str]) -> Optional[str]:
     if not (player_key and stat_key and direction):
         return None
-    pk = player_key
-    if isinstance(pk, str) and not pk.startswith("NBA:"):
-        pk = f"NBA:{pk}"
-    return f"{pk}::{stat_key}::{direction}"
+    pk_raw = str(player_key).strip()
+    if not pk_raw:
+        return None
+    pk = pk_raw
+    if pk_raw.lower().startswith("nba:"):
+        pk = pk_raw.split(":", 1)[1]
+    if not pk:
+        return None
+    return f"NBA:{pk}::{stat_key}::{direction}"
+
+
+def canonicalize_prop_row(row: Dict[str, Any], counters: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+    """
+    Mutates and returns row. Ensures NBA: prefix for player_prop selection and related fields,
+    including nested supports.
+    """
+    if not isinstance(row, dict):
+        return row
+    if row.get("market_type") != "player_prop":
+        return row
+
+    def _prefix_slug(val: Optional[str]) -> Optional[str]:
+        if not val or not isinstance(val, str):
+            return val
+        txt = val.strip()
+        if txt.lower().startswith("nba:"):
+            return f"NBA:{txt.split(':', 1)[1]}"
+        return f"NBA:{txt}"
+
+    def _bump(key: str) -> None:
+        if counters is None:
+            return
+        counters[key] = counters.get(key, 0) + 1
+
+    def _fix_selection(field: str) -> None:
+        val = row.get(field)
+        if not val or not isinstance(val, str):
+            return
+        if val.startswith("NBA:"):
+            return
+        if "::" not in val:
+            return
+        player_part, remainder = val.split("::", 1)
+        if not player_part:
+            return
+        row[field] = f"NBA:{player_part}::{remainder}"
+        _bump("fixed_missing_nba_prefix_selection")
+
+    for key in ("selection", "selection_example", "canonical_selection"):
+        _fix_selection(key)
+
+    if row.get("player_id"):
+        pid = row.get("player_id")
+        if isinstance(pid, str) and not pid.lower().startswith("nba:"):
+            row["player_id"] = _prefix_slug(pid)
+            _bump("fixed_missing_nba_prefix_player_id")
+
+    supports = row.get("supports")
+    if isinstance(supports, list):
+        for sup in supports:
+            if not isinstance(sup, dict):
+                continue
+            sval = sup.get("selection")
+            if isinstance(sval, str) and not sval.startswith("NBA:") and "::" in sval:
+                player_part, remainder = sval.split("::", 1)
+                if player_part:
+                    sup["selection"] = f"NBA:{player_part}::{remainder}"
+                    _bump("fixed_missing_nba_prefix_support_selection")
+            dpid = sup.get("display_player_id")
+            if isinstance(dpid, str) and not dpid.lower().startswith("nba:") and dpid.strip():
+                sup["display_player_id"] = _prefix_slug(dpid.strip())
+                _bump("fixed_missing_nba_prefix_display_player_id")
+    return row
 
 
 def _normalize_prop_stat_key(stat_raw: Optional[str]) -> Optional[str]:
@@ -294,7 +364,7 @@ def normalize_player_id(player_id: Optional[str]) -> Optional[str]:
     for suffix in ["_total_projection", "_projection", "_and"]:
         if pid.endswith(suffix):
             pid = pid[: -len(suffix)]
-    tokens = [t for t in re.split(r"[\\s_\\-]+", pid) if t]
+    tokens = [t for t in re.split("[\\s_\\-]+", pid) if t]
     # strip trailing generational suffixes (jr/sr/ii/iii/iv/v)
     suffix_tokens = {"jr", "sr", "ii", "iii", "iv", "v"}
     while tokens and tokens[-1] in suffix_tokens:
@@ -352,6 +422,32 @@ def _format_spread_selection(team: str, lines: List[float]) -> str:
 def _format_total_selection(direction: str, lines: List[float]) -> str:
     dir_up = direction.upper() if isinstance(direction, str) else direction
     return f"{dir_up} {_format_line_cluster(lines, 'total')}"
+
+
+def _infer_source_from_url(url: Optional[str]) -> Optional[str]:
+    if not isinstance(url, str):
+        return None
+    low = url.lower()
+    if "betql" in low:
+        return "betql"
+    if "covers.com" in low:
+        return "covers"
+    if "actionnetwork" in low:
+        return "actionnetwork"
+    return None
+
+
+def _fix_support_provenance(supports: List[Dict[str, Any]]) -> None:
+    for sup in supports:
+        url = sup.get("canonical_url") or sup.get("url")
+        expected = _infer_source_from_url(url)
+        sid = sup.get("source_id")
+        if expected and sid and sid != expected:
+            sup["source_id"] = expected
+            SUPPORT_FIX_COUNTERS["supports_source_fixed"] += 1
+        elif expected and not sid:
+            sup["source_id"] = expected
+            SUPPORT_FIX_COUNTERS["supports_source_inferred"] += 1
 
 
 def dedupe_signals(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -636,7 +732,7 @@ def _canonical_hard_key(event: Dict[str, Any], market: Dict[str, Any], provenanc
         direction = _parse_direction(side, selection)
         if not direction:
             return None
-        canonical_selection = "GAME_TOTAL"
+        canonical_selection = direction
         core_key = (matchup_key, "total", direction, bet_kind)
 
     if not core_key:
@@ -654,6 +750,10 @@ def _compute_match_key_player_prop(rec: Dict[str, Any]) -> Optional[Tuple[str, D
     matchup_hint = prov.get("matchup") or rec.get("matchup") or rec.get("matchup_hint")
     matchup = None
     day = event.get("day_key") or day_key(event.get("event_key")) or day_key(rec.get("event_key")) or rec.get("day_key")
+    if isinstance(day, str) and day.count(":") >= 2:
+        parts = day.split(":")
+        if len(parts) >= 3:
+            day = ":".join(parts[:3])
     if away and home:
         matchup = f"{str(away).upper()}@{str(home).upper()}"
     elif matchup_hint:
@@ -676,18 +776,19 @@ def _compute_match_key_player_prop(rec: Dict[str, Any]) -> Optional[Tuple[str, D
             direction = parts[2]
 
     player_token_norm = None
+    player_match = None
     if player_token:
-        tok = normalize_player_slug(str(player_token))
-        player_token_norm = tok
-    player_match = normalize_player_slug(player_token_norm) if player_token_norm else None
+        player_token_norm = normalize_player_id(str(player_token)) or normalize_player_slug(str(player_token))
+        player_match = normalize_player_slug(player_token_norm) if player_token_norm else None
 
     stat_token_norm = _normalize_prop_stat_key(stat_token) if stat_token else None
     if not stat_token_norm and stat_token:
         stat_token_norm = normalize_stat_key(stat_token)
-    if not (matchup and (player_match or player_token_norm) and stat_token_norm and direction):
+    if not ((player_match or player_token_norm) and stat_token_norm and direction):
         return None
     key_player = player_match or player_token_norm
-    key = f"{day}|{matchup}|{key_player}|{stat_token_norm}|{direction}"
+    matchup_key = matchup or "UNKNOWN"
+    key = f"{day}|{matchup_key}|{key_player}|{stat_token_norm}|{direction}"
     meta = {
         "day_key": day,
         "event_key": event.get("event_key"),
@@ -742,6 +843,8 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                     "line_bucket": lb,
                     "lines": [],
                     "odds_samples": [],
+                    "source_urls": {},
+                    "source_lines": {},
                     "sources_set": set(),
                     "experts_set": set(),
                     "odds_list": [],
@@ -752,6 +855,9 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
             group["count_total"] += 1
             if line is not None:
                 group["lines"].append(line)
+                if prov.get("source_id"):
+                    lst = group["source_lines"].setdefault(prov.get("source_id"), [])
+                    lst.append(line)
             if odds is not None:
                 group["odds_samples"].append(odds)
             source_id = prov.get("source_id")
@@ -763,6 +869,8 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
             url = prov.get("canonical_url")
             if url and len(group["sample_urls"]) < 3 and url not in group["sample_urls"]:
                 group["sample_urls"].append(url)
+            if url and source_id and source_id not in group["source_urls"]:
+                group["source_urls"][source_id] = url
             continue
 
         # Player prop markets for hard consensus (group by match_key)
@@ -791,7 +899,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
         direction = direction.upper() if isinstance(direction, str) else direction
         player_id = meta.get("player_id") or normalize_player_id(market.get("player_key") or market.get("selection"))
         day = meta.get("day_key") or event.get("day_key") or day_key(event.get("event_key"))
-        matchup_key = meta.get("matchup_key") or event.get("matchup_key") or _normalize_matchup_key(event)
+        matchup_key = meta.get("matchup_key") or (event.get("matchup_key") if event.get("away_team") and event.get("home_team") else None) or (_normalize_matchup_key(event) if event.get("away_team") and event.get("home_team") else None)
         event_key = meta.get("event_key") or event.get("event_key")
         prop_groups.setdefault(match_key, []).append(
             {
@@ -843,6 +951,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 "canonical_selection": group.get("canonical_selection"),
                 "line_bucket": group.get("line_bucket"),
                 "lines": lines,
+                "line": line_median,
                 "line_median": line_median,
                 "line_min": line_min,
                 "line_max": line_max,
@@ -912,20 +1021,21 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 if not src or e.get("line") is None:
                     continue
                 lines_by_source.setdefault(src, []).append(float(e["line"]))
-            canonical_selection = _canonical_prop_selection(
-                f"NBA:{player_id}" if player_id and not str(player_id).startswith("NBA:") else player_id,
-                atomic_stat,
-                direction_val,
-            )
+            canonical_selection = _canonical_prop_selection(player_id, atomic_stat, direction_val)
             selection_example = next((e.get("selection") for e in cl if e.get("selection")), canonical_selection)
             tokens = match_key.split("|") if isinstance(match_key, str) else []
+            matchup_display = None
+            if matchup_meta and matchup_meta != "UNKNOWN":
+                matchup_display = matchup_meta
+            elif len(tokens) > 1 and tokens[1] != "UNKNOWN":
+                matchup_display = tokens[1]
             results.append(
                 {
                     "canonical_key": match_key,
                     "day_key": day_meta,
                     "event_key": event_meta,
                     "matchup_key": matchup_meta,
-                    "matchup": matchup_meta or (tokens[1] if len(tokens) > 1 else match_key),
+                    "matchup": matchup_display,
                     "market_type": "player_prop",
                     "player_id": player_id,
                     "atomic_stat": atomic_stat,
@@ -1052,7 +1162,9 @@ def build_atomic_signals(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return signals
 
 
-def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tuple[Any, ...]]] = None, debug_soft_tokens: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tuple[Any, ...]]] = None, debug_soft_tokens: Optional[List[str]] = None, hard_prop_ids: Optional[Set[Tuple[Any, ...]]] = None) -> List[Dict[str, Any]]:
+    if hard_prop_ids is not None and hard_identities is None:
+        hard_identities = hard_prop_ids
     signals = build_atomic_signals(records)
     groups: Dict[Tuple[Any, Any, Any, Any], Dict[str, Any]] = {}
     standard_groups: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
@@ -1439,7 +1551,7 @@ def format_soft_row(item: Dict[str, Any]) -> str:
             f"exp_strength={item.get('expert_strength')} count={item.get('count_total')} "
             f"sources={','.join(item.get('sources', []))}"
         )
-    subject = f"{item.get('player_id')}::{item.get('atomic_stat')}::{item.get('direction')}"
+    subject = item.get("selection") or f"{item.get('player_id')}::{item.get('atomic_stat')}::{item.get('direction')}"
     return (
         f"{item.get('day_key')} {subject} "
         f"exp_strength={item.get('expert_strength')} count={item.get('count_total')} "
@@ -1592,11 +1704,27 @@ def build_supports_from_group(group: Dict[str, Any]) -> List[Dict[str, Any]]:
             }
         )
     if supports:
+        _fix_support_provenance(supports)
         return supports
     sources = group.get("sources") or ([group.get("source_id")] if group.get("source_id") else [])
     direction = group.get("direction") or group.get("side")
     if sources:
         for idx, src in enumerate(sources):
+            url = None
+            src_url_map = group.get("source_urls") or {}
+            if src in src_url_map:
+                url = src_url_map[src]
+            elif group.get("sample_urls"):
+                if idx < len(group["sample_urls"]):
+                    url = group["sample_urls"][idx]
+                else:
+                    url = group["sample_urls"][0]
+            src_lines = group.get("source_lines") or {}
+            line_val = None
+            if src in src_lines and src_lines[src]:
+                line_val = sorted(set(src_lines[src]))[0]
+            else:
+                line_val = group.get("line")
             supports.append(
                 {
                     "source_id": src,
@@ -1605,8 +1733,8 @@ def build_supports_from_group(group: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "stat_key": group.get("stat_key") or group.get("atomic_stat"),
                     "atomic_stat": group.get("atomic_stat"),
                     "direction": direction,
-                    "line": group.get("line"),
-                    "canonical_url": sample_urls[idx] if idx < len(sample_urls) else (sample_urls[0] if sample_urls else None),
+                    "line": line_val,
+                    "canonical_url": url,
                 }
             )
     elif sample_urls:
@@ -1622,6 +1750,8 @@ def build_supports_from_group(group: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "canonical_url": sample_urls[0],
             }
         )
+    if supports:
+        _fix_support_provenance(supports)
     return supports
 
 
@@ -1726,10 +1856,16 @@ def build_unified_signals(
             if group.get("market_type") == "total":
                 direction = _parse_direction(group.get("side"), group.get("selection")) or group.get("direction")
                 direction = direction.upper() if direction else direction
-            line_median = group.get("line")
-            line_min = group.get("line")
-            line_max = group.get("line")
-            lines = [group.get("line")] if group.get("line") is not None else []
+            # Robust line fallback for standard markets
+            line_val = None
+            for cand in (group.get("line"), group.get("line_median"), group.get("line_bucket"), group.get("line_min"), group.get("line_max")):
+                if cand is not None:
+                    line_val = cand
+                    break
+            line_median = group.get("line_median") if group.get("line_median") is not None else line_val
+            line_min = group.get("line_min") if group.get("line_min") is not None else line_val
+            line_max = group.get("line_max") if group.get("line_max") is not None else line_val
+            lines = group.get("lines") or ([line_val] if line_val is not None else [])
             odds_list = group.get("odds_list") or group.get("odds") or []
             best_odds = group.get("best_odds")
         sources = group.get("sources") or []
@@ -2108,8 +2244,8 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                     "home_team": meta_row.get("home_team"),
                     "away_team": meta_row.get("away_team"),
                     "market_type": mkt,
-                    "selection": "GAME_TOTAL" if mkt == "total" else sel_only,
-                    "side": sel_only if mkt == "total" else sel_only,
+                    "selection": sel_only,
+                    "side": sel_only,
                     "canonical_selection": sel_only,
                     "line_bucket": None,
                     "lines": [],
@@ -2732,6 +2868,17 @@ def main(
             print(f"  {src}: {arr}")
         intersection = keys_by_source.get("action", set()) & keys_by_source.get("covers", set())
         print(f"[DEBUG] canonical key intersection count={len(intersection)} samples={list(intersection)[:5]}")
+
+    prop_prefix_counters: Dict[str, int] = {}
+    def _canon(seq: Optional[Iterable[Dict[str, Any]]]) -> None:
+        if not seq:
+            return
+        for row in seq:
+            canonicalize_prop_row(row, prop_prefix_counters)
+
+    for seq in (hard_groups, soft_groups, within_groups, std_hard, std_avoid, soft_conflicts):
+        _canon(seq)
+
     ensure_dir(out_dir)
     if debug:
         guard_items = {
@@ -2764,6 +2911,7 @@ def main(
     if standard_conflicts:
         unified_signals.extend(standard_conflicts)
         unified_signals.sort(key=lambda s: s.get("score", 0) if s.get("score") is not None else 0, reverse=True)
+    _canon(unified_signals)
     unified_before = len(unified_signals)
     signals_pre_dedupe = list(unified_signals)
     unified_signals = dedupe_signals(unified_signals)
@@ -2782,7 +2930,9 @@ def main(
     conflict_rows_raw = list(standard_conflicts)
     conflict_rows_raw.extend([s for s in unified_signals if s.get("signal_type") == "avoid_conflict"])
     conflict_rows_raw.extend(soft_conflicts)
+    _canon(conflict_rows_raw)
     conflict_rows = dedupe_signals(conflict_rows_raw)
+    _canon(conflict_rows)
 
     soft_std_before = [s for s in soft_groups if s.get("market_type") in {"spread", "moneyline", "total"}]
     # Build conflict identities for standard markets (event_key, market_type)
@@ -2870,6 +3020,28 @@ def main(
             and (r.get("market_type") in {"spread", "moneyline", "total"})
         )
     ]
+
+    if debug or track:
+        bad_rows = [
+            r
+            for r in unified_signals
+            if r.get("market_type") == "player_prop"
+            and isinstance(r.get("selection"), str)
+            and not r["selection"].startswith("NBA:")
+        ]
+        if bad_rows:
+            print("[DEBUG] missing NBA prefix after canonicalization (first 10):")
+            for br in bad_rows[:10]:
+                sup_sels = [
+                    s.get("selection")
+                    for s in (br.get("supports") or [])
+                    if isinstance(s, dict)
+                ]
+                print(f"  sel={br.get('selection')} player_id={br.get('player_id')} supports={sup_sels}")
+            raise AssertionError("player_prop selections missing NBA prefix after final canonicalization pass")
+        if track:
+            print(f"[DEBUG] prop_prefix_fixes: {prop_prefix_counters}")
+
     print_section("CONFLICTS / AVOIDS:", conflict_rows_filtered, format_conflict_row)
 
     # Tracking writes
@@ -2958,6 +3130,8 @@ def main(
                 print("[DEBUG] duplicate avoid_conflict keys still present:")
                 for k in dup_keys:
                     print(f"  key={k}")
+        if SUPPORT_FIX_COUNTERS:
+            print("[DEBUG] support provenance fixes:", dict(SUPPORT_FIX_COUNTERS))
         unified_by_type: Dict[str, int] = {}
         for sig in unified_signals:
             sig_type = sig.get("signal_type") or "unknown"
@@ -2983,6 +3157,11 @@ def main(
                 print(f"[DEBUG] sample {sig_type}: {json.dumps(sample, ensure_ascii=False)[:500]}")
 
 
+def _run_smoke_tests() -> None:
+    assert _canonical_prop_selection("NBA:r_barrett", "points", "OVER") == "NBA:r_barrett::points::OVER"
+    assert _canonical_prop_selection("r_barrett", "points", "OVER") == "NBA:r_barrett::points::OVER"
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute NBA consensus (hard, soft, within, unified).")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
@@ -2995,6 +3174,7 @@ if __name__ == "__main__":
     parser.add_argument("--out-dir", type=str, default="out", help="Directory for snapshot outputs (default: out).")
     args = parser.parse_args()
     debug_soft_tokens = [t.strip() for t in args.debug_soft_market.split() if t.strip()] if args.debug_soft_market else None
+    _run_smoke_tests()
     main(
         debug=args.debug,
         find_prop=args.find_prop,

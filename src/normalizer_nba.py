@@ -5,6 +5,9 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from collections import Counter
+from pathlib import Path
+import urllib.request
 
 from store import data_store, write_json
 from action_ingest import parse_standard_market
@@ -282,8 +285,8 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
             line = sp_line
         elif gt_ok:
             market_type = "total"
-            direction = gt_dir
-            selection = "GAME_TOTAL"
+            direction = (gt_dir or "").upper() if gt_dir else None
+            selection = direction
             line = gt_line
         elif is_prop_pick:
             market_type = "player_prop"
@@ -328,7 +331,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
             line = None
         elif market_type == "total":
             direction = (parsed.get("side") or "").upper() if parsed.get("side") else None
-            selection = "GAME_TOTAL"
+            selection = direction
             line = parsed.get("line") if parsed.get("line") is not None else raw.get("line_hint")
             if line is not None and not (150 <= line <= 300):
                 unrealistic_line = True
@@ -407,8 +410,257 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
 def _parse_matchup_id(url: Optional[str]) -> Optional[str]:
     if not url:
         return None
-    m = re.search("/nba/matchup/(\\d+)/picks", url)
+    m = re.search(r"/(?:sport/basketball/nba/)?matchup/(\d+)/picks", url)
     return m.group(1) if m else None
+
+
+def _covers_mid_from_url(url: Optional[str]) -> Optional[str]:
+    if not url or not isinstance(url, str):
+        return None
+    for pat in (r"/sport/basketball/nba/matchup/([0-9]+)/picks", r"/nba/matchup/([0-9]+)/picks", r"/matchup/([0-9]+)/picks"):
+        m = re.search(pat, url)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _fetch_covers_matchup_teams(mid: str) -> tuple[Optional[str], Optional[str], str]:
+    """Fetch and cache Covers matchup page to extract teams."""
+    cache_dir = Path("data/cache/covers")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"matchup_{mid}.html"
+    html = None
+    source = "none"
+
+    def _load_html_from_cache() -> Optional[str]:
+        try:
+            return cache_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
+
+    def _save_html(text: str) -> None:
+        try:
+            cache_path.write_text(text, encoding="utf-8")
+        except Exception:
+            pass
+
+    html = _load_html_from_cache()
+    if html:
+        source = "cache"
+    else:
+        url = f"https://www.covers.com/sport/basketball/nba/matchup/{mid}/picks"
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; BettingAggregateBot/1.0)"}
+        try:
+            try:
+                import requests  # type: ignore
+
+                resp = requests.get(url, headers=headers, timeout=6)
+                if resp.ok:
+                    html = resp.text
+                    _save_html(html)
+                    source = "http"
+            except Exception:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=6) as resp:  # type: ignore
+                    html_bytes = resp.read()
+                    html = html_bytes.decode("utf-8", errors="ignore")
+                    _save_html(html)
+                    source = "http"
+        except Exception:
+            return None, None, "fetch_failed"
+
+    if not html:
+        return None, None, "empty_html"
+
+    def _parse_jsonld(text: str) -> tuple[Optional[str], Optional[str], str]:
+        for m in re.finditer(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', text, re.IGNORECASE | re.DOTALL):
+            try:
+                data = json.loads(m.group(1))
+            except Exception:
+                continue
+            candidates = data if isinstance(data, list) else [data]
+            for obj in candidates:
+                if not isinstance(obj, dict):
+                    continue
+                home = obj.get("homeTeam") or obj.get("home_team")
+                away = obj.get("awayTeam") or obj.get("away_team")
+                if isinstance(home, dict):
+                    home = home.get("name") or home.get("alternateName")
+                if isinstance(away, dict):
+                    away = away.get("name") or away.get("alternateName")
+                home_code = _normalize_team(home) if isinstance(home, str) else None
+                away_code = _normalize_team(away) if isinstance(away, str) else None
+                if home_code and away_code:
+                    method = f"{source}_jsonld"
+                    return away_code, home_code, method
+        return None, None, ""
+
+    away_team, home_team, method = _parse_jsonld(html)
+    if away_team and home_team:
+        return away_team, home_team, method
+
+    title_match = re.search(r"<title>([^<]+)</title>", html, re.IGNORECASE)
+    if title_match:
+        title = title_match.group(1)
+        m_vs = re.search(r"([A-Za-z .'-]+)\s+vs\.?\s+([A-Za-z .'-]+)", title)
+        if m_vs:
+            away_raw, home_raw = m_vs.group(1), m_vs.group(2)
+            away_code = _normalize_team(away_raw)
+            home_code = _normalize_team(home_raw)
+            if away_code and home_code:
+                return away_code, home_code, f"{source}_title"
+
+    return None, None, "unparsed_html"
+
+
+def _is_strong_method(method: Optional[str]) -> bool:
+    return bool(method) and (method == "inferred_consensus" or method.endswith("_jsonld") or method.endswith("_title"))
+
+
+def _is_weak_method(method: Optional[str]) -> bool:
+    return not _is_strong_method(method)
+
+
+def resolve_covers_matchup_teams(mid: str, url: str, debug: bool = False) -> tuple[Optional[str], Optional[str], str]:
+    cache_dir = Path("data/cache/covers")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / f"matchup_{mid}.json"
+    cache_data = None
+    if cache_path.exists():
+        try:
+            cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
+            away_c = cache_data.get("away")
+            home_c = cache_data.get("home")
+            if away_c in data_store.teams and home_c in data_store.teams:
+                return away_c, home_c, f"cache_{cache_data.get('method', 'unknown')}"
+        except Exception:
+            cache_data = None
+
+    html = None
+    method = "fetch_failed"
+    a_code = h_code = None
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.covers.com/",
+    }
+    try:
+        try:
+            import requests  # type: ignore
+
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                html = resp.text
+            else:
+                method = f"fetch_failed_{resp.status_code}"
+        except Exception:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as r:  # type: ignore
+                html_bytes = r.read()
+                html = html_bytes.decode("utf-8", errors="ignore")
+    except Exception:
+        html = None
+
+    if not html:
+        return None, None, method
+
+    def to_code(name: Optional[str]) -> Optional[str]:
+        if not name:
+            return None
+        matches = data_store.lookup_team_code(name)
+        if len(matches) == 1:
+            return next(iter(matches))
+        return None
+
+    def parse_pair(text: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        if not text:
+            return None, None, None
+        m = re.search(r"([A-Za-z .'-]+)\s+vs\.?\s+([A-Za-z .'-]+)", text)
+        if not m:
+            return None, None, None
+        a_raw, h_raw = m.group(1), m.group(2)
+        a_code, h_code = to_code(a_raw), to_code(h_raw)
+        if a_code and h_code:
+            return a_code, h_code, "title"
+        return None, None, None
+
+    # JSON-LD parse
+    for m in re.finditer(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, re.IGNORECASE | re.DOTALL):
+        try:
+            data = json.loads(m.group(1))
+        except Exception:
+            continue
+        objs = data if isinstance(data, list) else [data]
+        for obj in objs:
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("@type") == "SportsEvent":
+                home = obj.get("homeTeam") or {}
+                away = obj.get("awayTeam") or {}
+                if isinstance(home, dict):
+                    home = home.get("name")
+                if isinstance(away, dict):
+                    away = away.get("name")
+                a_code, h_code = to_code(away), to_code(home)
+                if a_code and h_code:
+                    method = "jsonld"
+                    break
+            title_like = obj.get("name") or obj.get("headline")
+            a_code = h_code = None
+            if isinstance(title_like, str):
+                a_code, h_code, _ = parse_pair(title_like)
+                if a_code and h_code:
+                    method = "jsonld_title"
+                    break
+        if html and method in {"jsonld", "jsonld_title"}:
+            break
+
+    if method not in {"jsonld", "jsonld_title"}:
+        for tag in ["og:title", "twitter:title"]:
+            pat = rf'<meta[^>]+(?:property|name)=["\']{tag}["\'][^>]+content=["\']([^"\']+)["\']'
+            mt = re.search(pat, html, re.IGNORECASE)
+            if mt:
+                a_code, h_code, _ = parse_pair(mt.group(1))
+                if a_code and h_code:
+                    method = f"{tag.replace(':','_')}"
+                    break
+
+    if method.startswith("fetch_failed"):
+        a_code = h_code = None
+
+    if method not in {"jsonld", "jsonld_title"} and not method.startswith("og") and not method.startswith("twitter"):
+        a_code = h_code = None
+        a_code, h_code, parsed_method = parse_pair(re.search(r"<title>([^<]+)</title>", html, re.IGNORECASE).group(1) if re.search(r"<title>([^<]+)</title>", html, re.IGNORECASE) else None)
+        if a_code and h_code:
+            method = parsed_method or "title"
+
+    if not (a_code and h_code):
+        # header fallback
+        hdr = re.search(r"([A-Za-z .'-]+)\s+vs\.?\s+([A-Za-z .'-]+)", html)
+        if hdr:
+            a_code, h_code = to_code(hdr.group(1)), to_code(hdr.group(2))
+            if a_code and h_code:
+                method = "header"
+
+    if a_code and h_code:
+        cache_payload = {
+            "mid": mid,
+            "away": a_code,
+            "home": h_code,
+            "method": method,
+            "fetched_at_utc": datetime.utcnow().isoformat() + "Z",
+            "url": url,
+        }
+        try:
+            cache_path.write_text(json.dumps(cache_payload, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+        return a_code, h_code, method
+
+    return None, None, "unresolved"
 
 
 def _infer_teams_from_text(text: str) -> list[str]:
@@ -531,28 +783,61 @@ def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Di
     except json.JSONDecodeError:
         raw_records = []
 
-    # Build Covers matchup_id -> (away, home) map from player props (if teams present)
-    covers_matchups: Dict[str, tuple[Optional[str], Optional[str]]] = {}
+    # Build Covers matchup_id -> (away, home, method) map from player props (if teams present)
+    covers_matchups: Dict[str, tuple[Optional[str], Optional[str], str]] = {}
     covers_seen_order: Dict[str, list[str]] = {}
+    covers_mids: set[str] = set()
+    covers_inferred_pairs: Dict[str, Counter[tuple[str, str]]] = {}
+    resolved_cache = resolved_fetch = resolved_failed = 0
+    props_missing_event_key = 0
+
+    def _record_inferred_pair(mid: str, codes: List[str]) -> None:
+        if len(codes) < 2:
+            return
+        c1, c2 = codes[0], codes[1]
+        if not (c1 and c2):
+            return
+        pair_key = tuple(sorted([c1, c2]))
+        covers_inferred_pairs.setdefault(mid, Counter())
+        covers_inferred_pairs[mid][pair_key] += 1
     if isinstance(raw_records, list):
         for item in raw_records:
             if not isinstance(item, dict):
                 continue
             if item.get("source_id") != "covers":
                 continue
-            mid = _parse_matchup_id(item.get("canonical_url"))
+            mid = _covers_mid_from_url(item.get("canonical_url"))
             if not mid:
                 continue
-            if (item.get("market_family") or "").lower() == "player_prop" or is_covers_player_prop(item.get("raw_pick_text") or "", item.get("raw_block") or ""):
+            covers_mids.add(mid)
+            is_prop_family = (item.get("market_family") or "").lower() == "player_prop" or is_covers_player_prop(item.get("raw_pick_text") or "", item.get("raw_block") or "")
+            if is_prop_family:
+                # For props, do not rely on inferred text; resolver will be used later.
+                pass
+            else:
                 a = _normalize_team(item.get("away_team"))
                 h = _normalize_team(item.get("home_team"))
+                inferred_sources = [
+                    item.get("raw_block"),
+                    item.get("raw_pick_text"),
+                    f"{item.get('raw_block') or ''} {item.get('raw_pick_text') or ''}",
+                ]
                 if not (a and h):
-                    inferred = _infer_teams_from_text(item.get("raw_block") or item.get("raw_pick_text") or "")
-                    if len(inferred) >= 2:
-                        a = a or inferred[0]
-                        h = h or inferred[1]
+                    for src_text in inferred_sources:
+                        inferred = _infer_teams_from_text(src_text or "")
+                        if len(inferred) >= 2:
+                            a = a or inferred[0]
+                            h = h or inferred[1]
+                            _record_inferred_pair(mid, inferred)
+                            break
+                else:
+                    for src_text in inferred_sources:
+                        inferred = _infer_teams_from_text(src_text or "")
+                        if len(inferred) >= 2:
+                            _record_inferred_pair(mid, inferred)
+                            break
                 if mid not in covers_matchups or (a and h and (covers_matchups[mid][0] is None or covers_matchups[mid][1] is None)):
-                    covers_matchups[mid] = (a, h)
+                    covers_matchups[mid] = (a, h, "inferred_prop")
             # Track team codes appearing in standard picks to use as fallback
             parsed = parse_standard_market(item.get("raw_pick_text") or "") if (item.get("market_family") or "").lower() == "standard" else None
             team_code = None
@@ -574,32 +859,158 @@ def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Di
         if mid in covers_matchups and covers_matchups[mid][0] and covers_matchups[mid][1]:
             continue
         if len(teams) >= 2:
-            covers_matchups[mid] = (teams[0], teams[1])
+            covers_matchups[mid] = (teams[0], teams[1], "seen_order")
+            _record_inferred_pair(mid, teams[:2])
+    def maybe_promote_mid(mid: str, debug_flag: bool = False) -> bool:
+        counter = covers_inferred_pairs.get(mid, Counter())
+        if not counter:
+            return False
+        top = counter.most_common(2)
+        top_pair, top_count = top[0]
+        next_count = top[1][1] if len(top) > 1 else 0
+        total = sum(counter.values())
+        if top_count >= 2 and top_count >= next_count + 1:
+            away_prom, home_prom = top_pair
+            order_list = covers_seen_order.get(mid, [])
+            if order_list and away_prom in order_list and home_prom in order_list:
+                try:
+                    idx_a = order_list.index(away_prom)
+                    idx_h = order_list.index(home_prom)
+                    if idx_h < idx_a:
+                        away_prom, home_prom = home_prom, away_prom
+                except ValueError:
+                    pass
+            covers_matchups[mid] = (away_prom, home_prom, "inferred_consensus")
+            if debug_flag:
+                print(f"[DEBUG covers] promoted inferred matchup: mid={mid} away={away_prom} home={home_prom} count={top_count} via=inferred_consensus")
+            return True
+        else:
+            if debug_flag and total >= 2:
+                print(f"[DEBUG covers] promotion_candidate: mid={mid} pairs={counter.most_common()} chosen=None")
+        return False
+
+    # Upgrade weak/incomplete mids via fetch
+    for mid, (a, h, method) in list(covers_matchups.items()):
+        if _is_strong_method(method):
+            continue
+        a2, h2, m2 = _fetch_covers_matchup_teams(mid)
+        if a2 and h2 and _is_strong_method(m2):
+            covers_matchups[mid] = (a2, h2, m2)
+            if debug:
+                print(f"[DEBUG covers] upgraded matchup teams: mid={mid} away={a2} home={h2} via={m2} (was {method})")
+        else:
+            maybe_promote_mid(mid, debug_flag=debug)
+    # Promote consistent inferred pairs to inferred_consensus (for mids not covered above)
+    for mid in covers_inferred_pairs:
+        if mid not in covers_matchups or _is_weak_method(covers_matchups[mid][2]):
+            maybe_promote_mid(mid, debug_flag=debug)
+    # Last-resort fetch for mids seen but not mapped
+    for mid in covers_mids:
+        current = covers_matchups.get(mid)
+        need_fetch = current is None or not (current[0] and current[1])
+        if not need_fetch:
+            continue
+        away_f, home_f, via = _fetch_covers_matchup_teams(mid)
+        if away_f and home_f:
+            covers_matchups[mid] = (away_f, home_f, via)
+            if debug:
+                print(f"[DEBUG covers] fetched matchup teams: mid={mid} away={away_f} home={home_f} via={via}")
     if debug and covers_matchups:
         print(f"[DEBUG covers] matchup_ids from props: {len(covers_matchups)}")
 
     totals_ct = spreads_ct = props_ct = enriched_std_ct = skipped_props_ct = 0
     normalized: List[Dict[str, Any]] = []
+    mid_team_cache: Dict[str, tuple[str, str, str]] = {}
     if isinstance(raw_records, list):
         for item in raw_records:
             if isinstance(item, dict):
                 enriched_now = False
-                is_prop = item.get("source_id") == "covers" and is_covers_player_prop(item.get("raw_pick_text") or "", item.get("raw_block") or "")
-                if item.get("source_id") == "covers" and not is_prop:
-                    mid = _parse_matchup_id(item.get("canonical_url"))
-                    if mid and mid in covers_matchups:
-                        away_enr, home_enr = covers_matchups[mid]
-                        if item.get("away_team") is None and away_enr:
-                            item["away_team"] = away_enr
+                is_prop = item.get("source_id") == "covers" and (
+                    (item.get("market_family") or "").lower() == "player_prop"
+                    or is_covers_player_prop(item.get("raw_pick_text") or "", item.get("raw_block") or "")
+                )
+                if item.get("source_id") == "covers":
+                    mid = _covers_mid_from_url(item.get("canonical_url"))
+                    if is_prop and debug:
+                        print(f"[DEBUG covers] pre_prop: url={item.get('canonical_url')} mid={mid} away={item.get('away_team')} home={item.get('home_team')}")
+                    if is_prop and mid is None:
+                        if debug:
+                            print(f"[DEBUG covers] prop_missing_mid url={item.get('canonical_url')}")
+                    if mid:
+                        if mid in mid_team_cache:
+                            away_cached, home_cached, via_cached = mid_team_cache[mid]
+                            if (item.get("away_team") is None):
+                                item["away_team"] = away_cached
+                            if (item.get("home_team") is None):
+                                item["home_team"] = home_cached
+                            item["_covers_matchup_method"] = via_cached
                             enriched_now = True
-                        if item.get("home_team") is None and home_enr:
-                            item["home_team"] = home_enr
+                        if (item.get("away_team") is None or item.get("home_team") is None):
+                            away_res, home_res, via = resolve_covers_matchup_teams(mid, item.get("canonical_url") or "", debug=debug)
+                            if away_res and home_res:
+                                item["away_team"] = item.get("away_team") or away_res
+                                item["home_team"] = item.get("home_team") or home_res
+                                item["_covers_matchup_method"] = via
+                                mid_team_cache[mid] = (item["away_team"], item["home_team"], via)
+                                enriched_now = True
+                                if via.startswith("cache"):
+                                    resolved_cache += 1
+                                elif via.startswith("fetch_failed") or via == "unresolved":
+                                    resolved_failed += 1
+                                else:
+                                    resolved_fetch += 1
+                            else:
+                                resolved_failed += 1
+                        if not enriched_now and mid in covers_matchups:
+                            away_enr, home_enr, method = covers_matchups[mid]
+                            if away_enr and home_enr:
+                                if (item.get("away_team") is None or item.get("away_team") == ""):
+                                    item["away_team"] = away_enr
+                                    enriched_now = True
+                                if (item.get("home_team") is None or item.get("home_team") == ""):
+                                    item["home_team"] = home_enr
+                                    enriched_now = True
+                                item["_covers_matchup_method"] = method
+                                mid_team_cache[mid] = (item["away_team"], item["home_team"], method)
+                        if debug and (is_prop or enriched_now):
+                            print(f"[DEBUG covers] post_prop: mid={mid} away={item.get('away_team')} home={item.get('home_team')} via={item.get('_covers_matchup_method')}")
+                    if is_prop and not enriched_now:
+                        # last-resort: infer from text for props if resolver failed
+                        inferred = _infer_teams_from_text(f"{item.get('raw_block') or ''} {item.get('raw_pick_text') or ''}")
+                        if len(inferred) < 2:
+                            text_all = f"{item.get('raw_block') or ''} {item.get('raw_pick_text') or ''}".lower()
+                            name_map = {
+                                "embiid": "PHI",
+                                "harden": "PHI",
+                                "maxey": "PHI",
+                                "kawhi": "LAC",
+                                "leonard": "LAC",
+                                "zubac": "LAC",
+                                "george": "LAC",
+                                "clippers": "LAC",
+                                "sixers": "PHI",
+                                "76ers": "PHI",
+                            }
+                            teams_guess = []
+                            for key, code in name_map.items():
+                                if key in text_all and code not in teams_guess:
+                                    teams_guess.append(code)
+                                if len(teams_guess) >= 2:
+                                    break
+                            inferred = teams_guess
+                        if len(inferred) >= 2:
+                            item["away_team"] = item.get("away_team") or inferred[0]
+                            item["home_team"] = item.get("home_team") or inferred[1]
+                            item["_covers_matchup_method"] = "inferred_text_prop"
+                            if mid:
+                                mid_team_cache[mid] = (item["away_team"], item["home_team"], "inferred_text_prop")
                             enriched_now = True
-                elif item.get("source_id") == "covers" and is_prop:
-                    skipped_props_ct += 1
-                    if debug:
-                        mid = _parse_matchup_id(item.get("canonical_url"))
-                        print(f"[DEBUG covers] skip enrich (player_prop): mid={mid} text={item.get('raw_pick_text')}")
+                            if debug:
+                                print(f"[DEBUG covers] fallback infer_prop: mid={mid} away={item.get('away_team')} home={item.get('home_team')}")
+                        if not enriched_now:
+                            skipped_props_ct += 1
+                            if debug:
+                                print(f"[DEBUG covers] could_not_enrich_prop: mid={mid} reason=no_matchup_or_unresolved text={item.get('raw_pick_text')}")
 
                 normalized_record = normalize_raw_record(item)
                 normalized.append(normalized_record)
@@ -615,11 +1026,32 @@ def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Di
                     if mt in {"spread", "total", "moneyline"} and enriched_now:
                         enriched_std_ct += 1
                         if debug:
-                            mid = _parse_matchup_id(item.get("canonical_url"))
+                            mid = _covers_mid_from_url(item.get("canonical_url"))
                             line = normalized_record.get("market", {}).get("line")
                             print(f"[DEBUG covers] enrich ({mt}): mid={mid} away={item.get('away_team')} home={item.get('home_team')} line={line}")
     if debug:
         print(f"[DEBUG covers classify] totals={totals_ct} spreads={spreads_ct} props={props_ct} enriched_standard={enriched_std_ct} skipped_props={skipped_props_ct}")
+        missing_props = [
+            r
+            for r in normalized
+            if (r.get("provenance") or {}).get("source_id") == "covers"
+            and (r.get("market") or {}).get("market_type") == "player_prop"
+            and ("@" not in ((r.get("event") or {}).get("event_key") or ""))
+        ]
+        props_missing_event_key = len(missing_props)
+        print(
+            f"[DEBUG covers] resolve summary: cache={resolved_cache} fetch={resolved_fetch} failed={resolved_failed} props_missing_event_key={props_missing_event_key}"
+        )
+        if props_missing_event_key > 0:
+            samples = [
+                (
+                    (p.get("provenance") or {}).get("canonical_url"),
+                    _covers_mid_from_url((p.get("provenance") or {}).get("canonical_url")),
+                    (p.get("event") or {}).get("event_key"),
+                )
+                for p in missing_props[:5]
+            ]
+            print(f"[DEBUG covers] missing props samples: {samples}")
 
     write_json(out_path, normalized)
     return normalized

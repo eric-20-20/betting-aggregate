@@ -42,11 +42,9 @@ def test_spread_bucket_strict():
     r2 = make_record("covers", ev, "LAL", "LAC", "spread", "LAL_spread", "LAL", -3.0, -108)
     r3 = make_record("covers", ev, "LAL", "LAC", "spread", "LAL_spread", "LAL", -3.5, -105)
     groups = group_hard([r1, r2, r3])
-    assert len(groups) == 2  # -3.0 bucket together, -3.5 separate
-    buckets = sorted([g["line_bucket"] for g in groups])
-    assert buckets == [-3.5, -3.0]
-    main_group = [g for g in groups if g["line_bucket"] == -3.0][0]
-    assert main_group["source_strength"] == 2
+    assert len(groups) == 1  # -3.0 and -3.5 within ±1.0 bucket together now
+    g = groups[0]
+    assert g["source_strength"] == 2
 
 
 def test_total_over_under_bucket():
@@ -58,7 +56,7 @@ def test_total_over_under_bucket():
     g = groups[0]
     assert g["line_bucket"] in (225.0, 225.5)  # rounding nearest 0.5
     assert g["source_strength"] == 2
-    assert g["canonical_selection"] == "GAME_TOTAL"
+    assert g["canonical_selection"] == "OVER"
 
 
 def test_spread_bucket_overlap_only_if_bucket_matches():
@@ -66,9 +64,9 @@ def test_spread_bucket_overlap_only_if_bucket_matches():
     r1 = make_record("action", ev, "CHA", "MIA", "spread", "CHA_spread", "CHA", +6.5, -110)
     r2 = make_record("covers", ev, "CHA", "MIA", "spread", "CHA_spread", "CHA", +6.0, -108)
     groups = group_hard([r1, r2])
-    assert len(groups) == 2  # +6.5 and +6.0 bucket differently at 0.5 increments
-    buckets = sorted({g["line_bucket"] for g in groups})
-    assert buckets == [6.0, 6.5]
+    assert len(groups) == 1  # lines within ±1.0 now group
+    g = groups[0]
+    assert g["source_strength"] == 2
 
 
 def test_moneyline_matches_across_sources_odds_differ():

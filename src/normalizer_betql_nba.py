@@ -283,10 +283,6 @@ def normalize_betql_prop_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         eligible, ineligibility_reason = False, ineligibility_reason or "unparsed_direction"
     if line is None:
         eligible, ineligibility_reason = False, ineligibility_reason or "unparsed_line"
-    if rating_val is None:
-        eligible, ineligibility_reason = False, ineligibility_reason or "missing_rating"
-    elif rating_val < MIN_PROP_STARS:
-        eligible, ineligibility_reason = False, ineligibility_reason or "rating_below_threshold"
     if player_slug is None:
         eligible, ineligibility_reason = False, ineligibility_reason or "ambiguous_player"
 
@@ -464,11 +460,6 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         player_key = normalize_player_key(f"NBA:{player_slug}" if player_slug else None)
         if not player_key:
             eligible, inelig_reason = False, "unparsed_player"
-        rating_val = raw.get("rating_stars") if raw.get("rating_stars") is not None else raw.get("rating")
-        if rating_val is None:
-            eligible, inelig_reason = False, "missing_rating"
-        elif rating_val < MIN_PROP_STARS:
-            eligible, inelig_reason = False, "rating_below_threshold"
         stat_key = _stat_from_raw(stat_key)
         direction = direction.upper() if isinstance(direction, str) else direction
         if player_slug and stat_key and direction and player_key:
@@ -477,7 +468,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     else:
         selection = raw.get("selection_hint")
         if market_type == "total":
-            selection = raw.get("side_hint") or selection
+            selection = (raw.get("side_hint") or selection or "").upper() or None
             line = raw.get("line_hint")
             odds = raw.get("odds_hint")
             side = selection

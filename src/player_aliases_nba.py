@@ -141,7 +141,16 @@ def normalize_player_slug(raw_slug: Optional[str], out_dir: str = "out") -> Opti
         return None
     aliases = load_alias_map(out_dir)
     if slug in aliases:
-        return aliases[slug]
+        # Always honor static aliases; for dynamically derived aliases, skip if the slug already
+        # looks like an initial+lastname form (e.g., j_brunson) to keep canonical slugs stable.
+        if slug in STATIC_ALIAS_MAP:
+            return aliases[slug]
+        parts = slug.split("_")
+        if not (len(parts) >= 2 and len(parts[0]) == 1):
+            return aliases[slug]
+    # If the input already looks like a canonical slug (letters/digits/underscores), keep it.
+    if re.fullmatch(r"[a-z][a-z0-9_]*", slug):
+        return slug
     return slugify_player_name(slug) or slug
 
 

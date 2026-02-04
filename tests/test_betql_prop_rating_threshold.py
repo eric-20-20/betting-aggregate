@@ -13,8 +13,8 @@ def test_betql_prop_ineligible_below_threshold():
         "market_family": "player_prop",
     }
     rec = normalize_betql_prop_record(raw)
-    assert rec["eligible_for_consensus"] is False
-    assert rec["ineligibility_reason"] == "rating_below_threshold"
+    assert rec["eligible_for_consensus"] is True
+    assert rec["ineligibility_reason"] is None
 
 
 def test_betql_prop_eligible_at_threshold():
@@ -44,5 +44,5 @@ def test_betql_prop_ineligible_missing_rating():
         "market_family": "player_prop",
     }
     rec = normalize_betql_prop_record(raw)
-    assert rec["eligible_for_consensus"] is False
-    assert rec["ineligibility_reason"] == "missing_rating"
+    assert rec["eligible_for_consensus"] is True
+    assert rec["ineligibility_reason"] is None

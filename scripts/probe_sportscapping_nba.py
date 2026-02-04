@@ -9,9 +9,12 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
+import os
 
 import requests
 from bs4 import BeautifulSoup
+
+OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:

@@ -4,24 +4,44 @@ import os
 import shutil
 import tempfile
 from collections import defaultdict
-from typing import Dict, Iterable, List, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 # NOTE: This in-memory store is a temporary persistence layer.
 # It will be replaced by a database-backed implementation later.
-SPORT = "NBA"
 
-from data import TEAM_SEED, build_prop_stat_aliases, build_team_aliases
+# Sport constants
+NBA_SPORT = "NBA"
+NCAAB_SPORT = "NCAAB"
+SPORT = NBA_SPORT  # Default for backward compatibility
+
 from models import Player, PlayerAlias, PropStatAlias, Team, TeamAlias
 from utils import normalize_text
 
 
 class DataStore:
-    def __init__(self) -> None:
+    def __init__(self, sport: str = NBA_SPORT) -> None:
+        self.sport = sport
         self.reset()
 
     def reset(self) -> None:
-        self.teams: Dict[str, Team] = {team.code: team for team in TEAM_SEED}
-        self.team_aliases: List[TeamAlias] = build_team_aliases()
+        # Import sport-specific data lazily
+        if self.sport == NCAAB_SPORT:
+            from data_ncaab import (
+                NCAAB_TEAM_SEED,
+                build_ncaab_prop_stat_aliases,
+                build_ncaab_team_aliases,
+            )
+            team_seed = NCAAB_TEAM_SEED
+            team_aliases_func = build_ncaab_team_aliases
+            prop_stat_aliases_func = build_ncaab_prop_stat_aliases
+        else:
+            from data import TEAM_SEED, build_prop_stat_aliases, build_team_aliases
+            team_seed = TEAM_SEED
+            team_aliases_func = build_team_aliases
+            prop_stat_aliases_func = build_prop_stat_aliases
+
+        self.teams: Dict[str, Team] = {team.code: team for team in team_seed}
+        self.team_aliases: List[TeamAlias] = team_aliases_func()
         self.team_alias_index: Dict[str, Set[str]] = defaultdict(set)
         for alias in self.team_aliases:
             self.team_alias_index[alias.normalized_alias].add(alias.team_code)
@@ -30,7 +50,7 @@ class DataStore:
         self.player_aliases: List[PlayerAlias] = []
         self.player_alias_index: Dict[str, str] = {}
 
-        self.prop_stat_aliases: List[PropStatAlias] = build_prop_stat_aliases()
+        self.prop_stat_aliases: List[PropStatAlias] = prop_stat_aliases_func()
         self.prop_stat_alias_index: Dict[str, str] = {
             alias.normalized_alias: alias.stat_key for alias in self.prop_stat_aliases
         }
@@ -47,7 +67,7 @@ class DataStore:
         normalized_alias = normalize_text(alias_text)
         tokens = normalized_alias.split()
         base = "_".join(tokens) if tokens else "player"
-        base_key = f"{SPORT}:{base}" if not base.startswith(f"{SPORT}:") else base
+        base_key = f"{self.sport}:{base}" if not base.startswith(f"{self.sport}:") else base
 
         player_key = base_key
         counter = 2
@@ -79,7 +99,26 @@ class DataStore:
         return None
 
 
-data_store = DataStore()
+# Default NBA store for backward compatibility
+data_store = DataStore(NBA_SPORT)
+
+# Sport-specific store cache
+_sport_stores: Dict[str, DataStore] = {}
+
+
+def get_data_store(sport: str = NBA_SPORT) -> DataStore:
+    """Get or create a DataStore for the specified sport.
+
+    Args:
+        sport: Sport identifier (NBA_SPORT or NCAAB_SPORT)
+
+    Returns:
+        DataStore configured for the specified sport
+    """
+    global _sport_stores
+    if sport not in _sport_stores:
+        _sport_stores[sport] = DataStore(sport)
+    return _sport_stores[sport]
 
 
 def ensure_dir(path: str) -> None:

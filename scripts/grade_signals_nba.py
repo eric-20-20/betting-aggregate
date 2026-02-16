@@ -1,4 +1,6 @@
-"""Grade NBA signals using external provider data with caching and idempotent writes.
+"""Grade signals using external provider data with caching and idempotent writes.
+
+Supports both NBA and NCAAB sports via --sport parameter.
 
 Env:
   RESULTS_PROVIDER=nba_api|nba_cdn|api_sports|auto
@@ -6,6 +8,7 @@ Env:
   API_SPORTS_BASE=https://v1.basketball.api-sports.io (scheme auto-added if missing)
 
 Flags:
+  --sport NBA|NCAAB : select sport to grade (default NBA)
   --refresh-cache : ignore cached provider files and refetch
   --provider auto|nba_api|api_sports : override provider selection (default auto -> nba_api priority)
 """
@@ -20,15 +23,44 @@ import copy
 from collections import Counter, defaultdict
 from datetime import datetime, date, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Set
 
 # ensure repo root on path for src package imports
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from src.results import nba_provider  # type: ignore
 from src.results import nba_provider_api_sports  # type: ignore
+from src.signal_keys import (
+    build_selection_key,
+    build_offer_key,
+    player_match_confidence as compute_player_match_confidence,
+    is_roi_eligible,
+)
+
+# Sport constants
+NBA_SPORT = "NBA"
+NCAAB_SPORT = "NCAAB"
 
 
+def get_signals_latest_path(sport: str) -> Path:
+    if sport == NCAAB_SPORT:
+        return Path("data/ledger/ncaab/signals_latest.jsonl")
+    return Path("data/ledger/signals_latest.jsonl")
+
+
+def get_grades_occ_path(sport: str) -> Path:
+    if sport == NCAAB_SPORT:
+        return Path("data/ledger/ncaab/grades_occurrences.jsonl")
+    return Path("data/ledger/grades_occurrences.jsonl")
+
+
+def get_grades_latest_path(sport: str) -> Path:
+    if sport == NCAAB_SPORT:
+        return Path("data/ledger/ncaab/grades_latest.jsonl")
+    return Path("data/ledger/grades_latest.jsonl")
+
+
+# Legacy paths for backward compatibility
 SIGNALS_LATEST_PATH = Path("data/ledger/signals_latest.jsonl")
 GRADES_OCC_PATH = Path("data/ledger/grades_occurrences.jsonl")
 GRADES_LATEST_PATH = Path("data/ledger/grades_latest.jsonl")
@@ -112,10 +144,8 @@ def parse_event_teams(event_key: Optional[str]) -> Tuple[Optional[str], Optional
 def derive_teams(signal: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     away = signal.get("away_team")
     home = signal.get("home_team")
-    # canonical key takes precedence
-    cgk = signal.get("canonical_game_key")
-    if isinstance(cgk, (list, tuple)) and len(cgk) >= 4 and cgk[2] and cgk[3]:
-        return str(cgk[2]).upper(), str(cgk[3]).upper()
+    # away_team/home_team fields take precedence - they contain actual orientation
+    # canonical_game_key is sorted alphabetically, NOT by away/home order
     if away and home:
         return str(away).upper(), str(home).upper()
 
@@ -185,7 +215,8 @@ def pick_odds(signal: Dict[str, Any]) -> Optional[float]:
 def day_key_to_date_str(day_key: Optional[str]) -> Optional[str]:
     if not isinstance(day_key, str):
         return None
-    if day_key.startswith("NBA:"):
+    # Handle both NBA: and NCAAB: prefixes
+    if day_key.startswith("NBA:") or day_key.startswith("NCAAB:"):
         parts = day_key.split(":")
         if len(parts) >= 4 and all(p.isdigit() for p in parts[1:4]):
             return f"{parts[1]}-{parts[2]}-{parts[3]}"
@@ -198,7 +229,8 @@ def day_key_to_date_str(day_key: Optional[str]) -> Optional[str]:
 def event_key_to_date_str(event_key: Optional[str]) -> Optional[str]:
     if not isinstance(event_key, str):
         return None
-    if event_key.startswith("NBA:"):
+    # Handle both NBA: and NCAAB: prefixes
+    if event_key.startswith("NBA:") or event_key.startswith("NCAAB:"):
         parts = event_key.split(":")
         if len(parts) >= 4 and all(p.isdigit() for p in parts[1:4]):
             return f"{parts[1]}-{parts[2]}-{parts[3]}"
@@ -260,6 +292,12 @@ def check_eligibility(signal: Dict[str, Any], date_str: Optional[str]) -> Tuple[
     direction = parse_direction(signal)
     stat_key = extract_stat_key(signal)
     player_id = signal.get("player_id")
+    # Try to extract player_id from selection if not provided (e.g., "p_pritchard::points::OVER")
+    if not player_id and selection and "::" in selection:
+        player_id = selection.split("::")[0]
+        # Strip NBA: prefix if present
+        if player_id.upper().startswith("NBA:"):
+            player_id = player_id[4:]
     if market == "moneyline":
         if not selection:
             return False, "missing_selection", ["selection"]
@@ -294,6 +332,9 @@ def grade_signal(
     provider_name: str,
     debug: bool = False,
     debug_samples: Optional[List[Dict[str, Any]]] = None,
+    counters: Optional[Counter] = None,
+    sport: str = NBA_SPORT,
+    results_provider: Any = None,
 ) -> Dict[str, Any]:
     sid = signal.get("signal_id")
     day_key = signal.get("day_key")
@@ -303,15 +344,19 @@ def grade_signal(
     notes: List[str] = []
     raw_event_key = signal.get("event_key")
     safe_event_key = (
-        f"NBA:{date_str.replace('-', ':')}:{away}@{home}"
+        f"{sport}:{date_str.replace('-', ':')}:{away}@{home}"
         if date_str and away and home
         else None
     )
+
+    # Use passed provider or fall back to nba_provider
+    provider = results_provider or nba_provider
 
     def attach_event_keys(row: Dict[str, Any]) -> Dict[str, Any]:
         row.setdefault("event_key_raw", raw_event_key)
         if safe_event_key:
             row.setdefault("event_key_safe", safe_event_key)
+            row.setdefault("canonical_event_key", safe_event_key)
         return row
 
     if not date_str:
@@ -379,7 +424,7 @@ def grade_signal(
         event_key_format = "hyphen"
 
     try:
-        game_result = nba_provider.fetch_game_result(
+        game_result = provider.fetch_game_result(
             safe_event_key or raw_event_key,
             away,
             home,
@@ -464,14 +509,6 @@ def grade_signal(
             }
         )
 
-    line = pick_line(signal)
-    odds = pick_odds(signal)
-    direction = parse_direction(signal)
-
-    home_score = game_result.get("home_score")
-    away_score = game_result.get("away_score")
-    game_id = game_result.get("game_id")
-
     status_raw = game_result.get("status")
     if debug and games_info and date_str and games_info.get("date") and games_info.get("date") != date_str:
         notes.append(f"meta_date_mismatch:{games_info.get('date')}!= {date_str}")
@@ -481,18 +518,86 @@ def grade_signal(
                 "signal_id": sid,
                 "graded_at_utc": graded_at,
                 "status": "ERROR",
-            "result": None,
-            "units": None,
-            "market_type": market,
-            "selection": signal.get("selection"),
-            "event_key": signal.get("event_key"),
+                "result": None,
+                "units": None,
+                "market_type": market,
+                "selection": signal.get("selection"),
+                "event_key": signal.get("event_key"),
                 "day_key": day_key,
                 "urls": urls,
                 "notes": game_result.get("notes") or ";".join(notes) or "game_not_found",
                 "games_info": games_info,
             }
         )
-    if status_raw and status_raw != "FINAL":
+    home_score = game_result.get("home_score")
+    away_score = game_result.get("away_score")
+    game_id = game_result.get("game_id")
+
+    tried_heal = False
+    while status_raw and status_raw != "FINAL":
+        reason = pending_reason(status_raw, date_str, games_info)
+        if (
+            not debug
+            and isinstance(games_info, dict)
+            and games_info.get("date_used")
+            and date_str
+            and str(games_info.get("date_used")) != date_str
+        ):
+            reason = f"{reason};date_used_mismatch"
+        upgrade = should_upgrade_pending_to_error(reason, date_str, games_info)
+        heal_meta: Optional[Dict[str, Any]] = None
+        if upgrade and upgrade.startswith("stale_scheduled"):
+            heal_key = f"{date_str}|{away}|{home}"
+            if heal_key in _HEALED_GAMES:
+                heal_meta = {"healed": False, "reason": "already_attempted"}
+                if counters is not None:
+                    counters["healed_stale_scheduled_skipped_cached"] += 1
+            elif not tried_heal:
+                _HEALED_GAMES.add(heal_key)
+                healed_res, heal_meta = heal_stale_scheduled(
+                    safe_event_key or raw_event_key, away, home, date_str or "", games_info, refresh_cache, provider=provider
+                )
+                tried_heal = True
+                if heal_meta.get("healed"):
+                    if counters is not None:
+                        counters["healed_stale_scheduled_success"] += 1
+                    game_result = healed_res or game_result
+                    status_raw = game_result.get("status")
+                    try:
+                        games_info = copy.deepcopy(game_result.get("games_info"))
+                    except Exception:
+                        games_info = json.loads(json.dumps(game_result.get("games_info")))
+                    home_score = game_result.get("home_score")
+                    away_score = game_result.get("away_score")
+                    game_id = game_result.get("game_id")
+                    continue
+                else:
+                    if counters is not None:
+                        counters["healed_stale_scheduled_no_change"] += 1
+            if heal_meta and isinstance(games_info, dict) and (debug or upgrade):
+                try:
+                    gi = copy.deepcopy(games_info)
+                except Exception:
+                    gi = json.loads(json.dumps(games_info))
+                gi["heal_meta"] = heal_meta
+                games_info = gi
+        if upgrade:
+            return attach_event_keys(
+                {
+                    "signal_id": sid,
+                    "graded_at_utc": graded_at,
+                    "status": "ERROR",
+                    "result": None,
+                    "units": None,
+                    "market_type": market,
+                    "selection": signal.get("selection"),
+                    "event_key": signal.get("event_key"),
+                    "day_key": day_key,
+                    "urls": urls,
+                    "notes": upgrade,
+                    "games_info": games_info,
+                }
+            )
         return attach_event_keys(
             {
                 "signal_id": sid,
@@ -505,7 +610,7 @@ def grade_signal(
             "event_key": signal.get("event_key"),
                 "day_key": day_key,
                 "urls": urls,
-                "notes": "game_not_final",
+                "notes": reason,
                 "games_info": games_info,
             }
         )
@@ -528,9 +633,16 @@ def grade_signal(
             }
         )
 
+    line = pick_line(signal)
+    odds = pick_odds(signal)
+    direction = parse_direction(signal)
+
     if market in {"spread", "total", "moneyline"}:
         if market == "moneyline":
             selected = (signal.get("selection") or "").upper()
+            # Strip common suffixes like _ML from selection (e.g., "GSW_ML" -> "GSW")
+            if selected.endswith("_ML"):
+                selected = selected[:-3]
             if not selected:
                 notes.append("stat_missing")
                 result = None
@@ -558,6 +670,9 @@ def grade_signal(
                     }
                 )
             selected = signal.get("selection").upper()
+            # Strip _SPREAD suffix if present (e.g., "MIA_SPREAD" -> "MIA")
+            if selected.endswith("_SPREAD"):
+                selected = selected[:-7]
             if selected == away:
                 margin = away_score - home_score
             elif selected == home:
@@ -629,7 +744,7 @@ def grade_signal(
                 }
             )
         try:
-            statline = nba_provider.fetch_player_statline(
+            statline = provider.fetch_player_statline(
                 safe_event_key or raw_event_key,
                 player_id,
                 stat_key,
@@ -756,6 +871,37 @@ def grade_signal(
         notes.append("missing_odds")
 
     status_val = result if result else "ERROR"
+
+    # Build selection_key and offer_key for audit trail
+    selection_key = build_selection_key(
+        day_key=day_key or "",
+        market_type=market or "",
+        selection=signal.get("selection"),
+        player_id=signal.get("player_id"),
+        atomic_stat=extract_stat_key(signal),
+        direction=parse_direction(signal),
+        team=signal.get("selection") if market in ("spread", "moneyline") else None,
+    )
+    offer_key = build_offer_key(selection_key, line, int(odds) if odds else None)
+
+    # Compute audit fields
+    stat_value: Optional[float] = None
+    match_confidence: Optional[float] = None
+
+    if market == "player_prop" and "val_num" in locals():
+        stat_value = val_num
+    if market == "player_prop" and "player_meta" in locals() and player_meta:
+        match_method = player_meta.get("match_method")
+        match_confidence = compute_player_match_confidence(match_method)
+
+    # Determine ROI eligibility (never silently assume -110)
+    roi_eligible = is_roi_eligible(
+        status=status_val,
+        odds=int(odds) if odds else None,
+        player_match_confidence_val=match_confidence,
+        market_type=market,
+    )
+
     row = {
         "signal_id": sid,
         "graded_at_utc": graded_at,
@@ -768,11 +914,28 @@ def grade_signal(
         "day_key": day_key,
         "urls": urls,
         "notes": ";".join(notes) if notes else "",
+        # Contract audit fields
+        "selection_key": selection_key,
+        "offer_key": offer_key,
+        "roi_eligible": roi_eligible,
     }
+
+    # Add stat_value for player props
+    if stat_value is not None:
+        row["stat_value"] = stat_value
+
+    # Add player_match_confidence for player props
+    if match_confidence is not None:
+        row["player_match_confidence"] = match_confidence
+
+    # Provider audit fields
     if games_info:
         row["games_info"] = games_info
+        row["provider_game_id"] = games_info.get("matched_game_id")
     if market == "player_prop" and "player_meta" in locals() and player_meta:
         row["player_meta"] = player_meta
+        row["provider"] = player_meta.get("provider")
+
     return attach_event_keys(row)
 
 
@@ -780,7 +943,8 @@ def parse_day_key_to_date(day_key: Optional[str]) -> Optional[date]:
     if not isinstance(day_key, str):
         return None
     parts = day_key.split(":")
-    if len(parts) < 4 or parts[0] != "NBA":
+    # Handle both NBA: and NCAAB: prefixes
+    if len(parts) < 4 or parts[0] not in ("NBA", "NCAAB"):
         return None
     try:
         return date(int(parts[1]), int(parts[2]), int(parts[3]))
@@ -813,6 +977,144 @@ def collect_urls(signal: Dict[str, Any]) -> List[str]:
     return urls
 
 
+def _pick(d: Optional[Dict[str, Any]], keys: Iterable[str]) -> Dict[str, Any]:
+    if not isinstance(d, dict):
+        return {}
+    return {k: d[k] for k in keys if k in d}
+
+
+def _stable_games_info(games_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    keep = ("matched_game_id", "matched_status", "date_used", "date_shifted", "date_strategy", "match_orientation")
+    return _pick(games_info, keep)
+
+
+def _stable_player_meta(player_meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    keep = ("game_id", "player_notes", "match_method", "matched_personId", "matched_name_raw")
+    return _pick(player_meta, keep)
+
+
+def _stable_grade_fingerprint(row: Dict[str, Any]) -> Dict[str, Any]:
+    urls_raw = row.get("urls") or []
+    urls = sorted({u for u in urls_raw if isinstance(u, str)})
+    return {
+        "signal_id": row.get("signal_id"),
+        "status": row.get("status"),
+        "result": row.get("result"),
+        "notes": row.get("notes") or "",
+        "market_type": row.get("market_type"),
+        "selection": row.get("selection"),
+        "day_key": row.get("day_key"),
+        "event_key_safe": row.get("event_key_safe") or "",
+        "event_key": row.get("event_key") or "",
+        "urls": urls,
+        "games_info": _stable_games_info(row.get("games_info")),
+        "player_meta": _stable_player_meta(row.get("player_meta")),
+    }
+
+
+def materially_equal(prev: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(prev, dict) or not isinstance(new, dict):
+        return False
+    return _stable_grade_fingerprint(prev) == _stable_grade_fingerprint(new)
+
+
+def compact_games_info(row: Dict[str, Any], keep_full: bool) -> None:
+    if not isinstance(row, dict):
+        return
+    gi = row.get("games_info")
+    if not isinstance(gi, dict):
+        return
+    if keep_full:
+        return
+    row["games_info"] = _stable_games_info(gi)
+
+
+def pending_reason(status_raw: Optional[str], date_str: Optional[str], games_info: Optional[Dict[str, Any]]) -> str:
+    if not status_raw:
+        return "pending_unknown_status"
+    status = str(status_raw).upper().strip()
+    if status in {"IN_PROGRESS", "LIVE", "HALF", "Q1", "Q2", "Q3", "Q4"}:
+        return "pending_in_progress"
+    if status in {"SCHEDULED", "PRE"}:
+        requested_dt = None
+        try:
+            requested_dt = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else None
+        except Exception:
+            requested_dt = None
+        date_used = None
+        try:
+            if isinstance(games_info, dict) and games_info.get("date_used"):
+                date_used = datetime.strptime(str(games_info.get("date_used")), "%Y-%m-%d").date()
+        except Exception:
+            date_used = None
+        if requested_dt and date_used:
+            if date_used < requested_dt:
+                return "pending_scheduled_date_shifted_earlier"
+            if date_used > requested_dt:
+                return "pending_scheduled_date_shifted_later"
+        today_utc = datetime.now(timezone.utc).date()
+        if requested_dt and requested_dt < today_utc:
+            return "pending_scheduled_past_date"
+        return "pending_scheduled"
+    if status in {"POSTPONED", "PPD", "CANCELLED"}:
+        return "pending_postponed"
+    if status == "FINAL":
+        return ""
+    return f"pending_{status.lower()}"
+
+
+def should_upgrade_pending_to_error(pending_note: str, date_str: Optional[str], games_info: Optional[Dict[str, Any]]) -> Optional[str]:
+    try:
+        requested_date = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else None
+    except Exception:
+        requested_date = None
+    today_utc = datetime.now(timezone.utc).date()
+
+    if not requested_date:
+        return None
+    if requested_date >= today_utc:
+        return None
+
+    if pending_note == "pending_scheduled_past_date":
+        return "stale_scheduled_past_date"
+    if pending_note.startswith("pending_scheduled_date_shifted_"):
+        return "stale_scheduled_shifted_past_date"
+    if isinstance(games_info, dict) and games_info.get("date_used") and str(games_info.get("date_used")) != date_str:
+        return "stale_date_used_mismatch_past_date"
+    return None
+
+
+_HEALED_GAMES: Set[str] = set()
+
+
+def heal_stale_scheduled(
+    event_key: Optional[str],
+    away: str,
+    home: str,
+    date_str: str,
+    initial_games_info: Optional[Dict[str, Any]],
+    refresh_cache: bool,
+    provider: Any = None,
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    heal_meta: Dict[str, Any] = {"healed": False, "path": None}
+    if refresh_cache:
+        heal_meta["reason"] = "already_refreshing"
+        return None, heal_meta
+    # Use passed provider or fall back to nba_provider
+    results_provider = provider or nba_provider
+    try:
+        res = results_provider.fetch_game_result(event_key, away, home, date_str, refresh_cache=True)
+    except Exception:
+        heal_meta["reason"] = "fetch_exception"
+        return None, heal_meta
+    heal_meta["path"] = "refresh_cache"
+    if isinstance(res, dict) and res.get("status") and str(res.get("status")).upper() != "SCHEDULED":
+        heal_meta["healed"] = True
+        return res, heal_meta
+    heal_meta["reason"] = "refresh_cache_no_change"
+    return None, heal_meta
+
+
 def pick_latest_by_signal(grades: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     latest: Dict[str, Dict[str, Any]] = {}
     for row in grades:
@@ -828,14 +1130,39 @@ def pick_latest_by_signal(grades: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Grade NBA signals.")
+    ap = argparse.ArgumentParser(description="Grade signals (NBA or NCAAB).")
+    ap.add_argument("--sport", choices=["NBA", "NCAAB"], default="NBA", help="Sport to grade (default: NBA)")
     ap.add_argument("--since", type=str, help="Only grade signals with day_key >= YYYY-MM-DD")
     ap.add_argument("--mode", choices=["pending", "grade"], default="grade", help="pending=just enqueue PENDING rows; grade=compute outcomes")
     ap.add_argument("--dry-run", action="store_true", help="Do not write any output files.")
     ap.add_argument("--debug", action="store_true", help="Print debug samples and counters.")
     ap.add_argument("--refresh-cache", action="store_true", help="Force refresh of provider caches.")
     ap.add_argument("--provider", choices=["auto", "nba_api", "nba_cdn", "api_sports"], default="auto", help="Override results provider selection.")
+    ap.add_argument(
+        "--signals",
+        type=str,
+        default=None,
+        help="Signals JSONL input (default: auto based on sport). Use signals_occurrences.jsonl for history grading.",
+    )
+    ap.add_argument(
+        "--regrade",
+        action="store_true",
+        help="Bypass already_graded checks and re-grade all signals (useful for fixing grades after provider updates).",
+    )
     args = ap.parse_args()
+
+    # Determine sport and load appropriate provider
+    sport = args.sport
+    if sport == NCAAB_SPORT:
+        from src.results import ncaab_provider  # type: ignore
+        results_provider = ncaab_provider
+    else:
+        results_provider = nba_provider
+
+    # Get sport-specific paths
+    signals_latest_path = get_signals_latest_path(sport)
+    grades_occ_path = get_grades_occ_path(sport)
+    grades_latest_path = get_grades_latest_path(sport)
 
     if args.provider != "auto":
         os.environ["RESULTS_PROVIDER"] = args.provider
@@ -852,7 +1179,10 @@ def main() -> None:
         except ValueError:
             raise SystemExit(f"Invalid --since value: {args.since} (expected YYYY-MM-DD)")
 
-    signals = read_jsonl(SIGNALS_LATEST_PATH)
+    # Use explicit signals path or sport-specific default
+    signals_path = Path(args.signals) if args.signals else signals_latest_path
+    print(f"[grader] Reading {sport} signals from: {signals_path}")
+    signals = read_jsonl(signals_path)
     # Pick best hydrated signal per id to fill missing matchup info
     best_by_signal_id: Dict[str, Dict[str, Any]] = {}
     def score_sig(s: Dict[str, Any]) -> int:
@@ -877,10 +1207,14 @@ def main() -> None:
         prev = best_by_signal_id.get(sid)
         if prev is None or sc > score_sig(prev):
             best_by_signal_id[sid] = s
-    existing_occ = read_jsonl(GRADES_OCC_PATH)
+    existing_occ = read_jsonl(grades_occ_path)
     latest_by_signal = pick_latest_by_signal(existing_occ)
 
-    prov_info = nba_provider.provider_info()
+    # Get provider info - for NCAAB we may not have full provider_info()
+    try:
+        prov_info = results_provider.provider_info() if hasattr(results_provider, 'provider_info') else {"provider": sport.lower()}
+    except Exception:
+        prov_info = {"provider": sport.lower()}
     print(f"[provider] name={prov_info.get('provider')} base={prov_info.get('base')} api_key_present={prov_info.get('key_present')} refresh_cache={args.refresh_cache}")
 
     counters = Counter()
@@ -913,7 +1247,7 @@ def main() -> None:
                 if prev_status in TERMINAL_STATUSES:
                     counters["already_terminal"] += 1
                     continue
-            if args.mode == "grade" and prev_status in TERMINAL_STATUSES:
+            if args.mode == "grade" and prev_status in TERMINAL_STATUSES and not args.regrade:
                 counters["already_graded"] += 1
                 continue
 
@@ -929,7 +1263,7 @@ def main() -> None:
         raw_event_key = merged.get("event_key")
         away_safe, home_safe = derive_teams(merged)
         safe_event_key = (
-            f"NBA:{date_str.replace('-', ':')}:{away_safe}@{home_safe}"
+            f"{sport}:{date_str.replace('-', ':')}:{away_safe}@{home_safe}"
             if date_str and away_safe and home_safe
             else None
         )
@@ -949,48 +1283,85 @@ def main() -> None:
                 "notes": "pending grade",
             }
         else:
-            eligible, reason, missing_fields = check_eligibility(merged, date_str)
-            if not eligible:
+            # Check for pre-graded results (e.g., from SportsLine expert picks)
+            pregraded_result = merged.get("pregraded_result")
+            pregraded_by = merged.get("pregraded_by")
+            if pregraded_result and pregraded_result in {"WIN", "LOSS", "PUSH"}:
+                # Use pre-graded result directly instead of fetching from provider
+                odds = merged.get("odds")
+                units = american_odds_to_units(odds, pregraded_result) if pregraded_result else None
                 grade_row = {
                     "signal_id": sid,
                     "graded_at_utc": now,
-                    "status": "INELIGIBLE",
-                    "result": None,
-                    "units": None,
+                    "status": pregraded_result,
+                    "result": pregraded_result,
+                    "units": units,
                     "market_type": merged.get("market_type"),
                     "selection": merged.get("selection"),
                     "event_key": merged.get("event_key"),
                     "event_key_raw": raw_event_key,
                     "event_key_safe": safe_event_key,
                     "day_key": merged.get("day_key"),
-                    "canonical_game_key": merged.get("canonical_game_key"),
                     "urls": collect_urls(merged),
-                    "notes": reason,
-                    "missing_fields": missing_fields,
+                    "notes": f"pregraded_by_{pregraded_by}" if pregraded_by else "pregraded",
+                    "graded_by": pregraded_by,
+                    # Include scores if available
+                    "home_score": merged.get("home_score"),
+                    "away_score": merged.get("away_score"),
                 }
-                new_rows.append(grade_row)
-                latest_by_signal[sid] = grade_row
-                counters["added"] += 1
-                counters[f"ineligible_{reason}"] += 1
-                continue
-            grade_row = grade_signal(
-                merged,
-                now,
-                date_str,
-                args.refresh_cache,
-                provider_name=prov_info.get("provider", ""),
-                debug=args.debug,
-                debug_samples=debug_provider_samples,
-            )
+                counters["pregraded"] += 1
+                counters[f"pregraded_{pregraded_result}"] += 1
+            else:
+                eligible, reason, missing_fields = check_eligibility(merged, date_str)
+                if not eligible:
+                    grade_row = {
+                        "signal_id": sid,
+                        "graded_at_utc": now,
+                        "status": "INELIGIBLE",
+                        "result": None,
+                        "units": None,
+                        "market_type": merged.get("market_type"),
+                        "selection": merged.get("selection"),
+                        "event_key": merged.get("event_key"),
+                        "event_key_raw": raw_event_key,
+                        "event_key_safe": safe_event_key,
+                        "day_key": merged.get("day_key"),
+                        "canonical_game_key": merged.get("canonical_game_key"),
+                        "urls": collect_urls(merged),
+                        "notes": reason,
+                        "missing_fields": missing_fields,
+                    }
+                    compact_games_info(grade_row, keep_full=args.debug or grade_row.get("status") == "ERROR")
+                    new_rows.append(grade_row)
+                    latest_by_signal[sid] = grade_row
+                    counters["added"] += 1
+                    counters[f"ineligible_{reason}"] += 1
+                    continue
+                grade_row = grade_signal(
+                    merged,
+                    now,
+                    date_str,
+                    args.refresh_cache,
+                    provider_name=prov_info.get("provider", ""),
+                    debug=args.debug,
+                    debug_samples=debug_provider_samples,
+                    counters=counters,
+                    sport=sport,
+                    results_provider=results_provider,
+                )
 
-        if prev and prev == grade_row:
+        if grade_row.get("status") == "PENDING":
+            counters[f"pending_{grade_row.get('notes')}"] += 1
+
+        if prev and materially_equal(prev, grade_row):
             counters["unchanged"] += 1
             continue
 
+        compact_games_info(grade_row, keep_full=args.debug or grade_row.get("status") == "ERROR")
         new_rows.append(grade_row)
         latest_by_signal[sid] = grade_row
         counters["added"] += 1
-        if args.mode == "grade" and grade_row.get("status") == "GRADED":
+        if args.mode == "grade" and grade_row.get("status") in {"WIN", "LOSS", "PUSH"}:
             mkt = grade_row.get("market_type") or "unknown"
             if len(graded_samples[mkt]) < 5:
                 graded_samples[mkt].append(grade_row)
@@ -1035,8 +1406,8 @@ def main() -> None:
 
     if not args.dry_run:
         if new_rows:
-            append_jsonl(GRADES_OCC_PATH, new_rows)
-        write_jsonl(GRADES_LATEST_PATH, latest_by_signal.values())
+            append_jsonl(grades_occ_path, new_rows)
+        write_jsonl(grades_latest_path, latest_by_signal.values())
 
     # Validation output
     status_counts = Counter(row.get("status") for row in latest_by_signal.values())
@@ -1046,17 +1417,20 @@ def main() -> None:
     print("Result counts:", dict(result_counts))
     print("Grade counts by market_type:", dict(market_counts))
     if args.debug:
-        if prov_info.get("provider") == "nba_api":
-            try:
-                from src.results import nba_provider_nba_api as nba_api_provider  # type: ignore
-                print("Provider stats:", nba_api_provider.STATS)
-            except Exception:
-                pass
-        else:
-            try:
-                print("Provider stats:", nba_provider_api_sports.STATS)
-            except Exception:
-                pass
+        try:
+            from src.results import nba_provider_nba_api as nba_api_provider  # type: ignore
+            print("Provider stats (nba_api):", nba_api_provider.STATS)
+        except Exception:
+            pass
+        try:
+            print("Provider stats (api_sports):", nba_provider_api_sports.STATS)
+        except Exception:
+            pass
+        try:
+            from src.results import nba_provider_nba_cdn as nba_cdn_provider  # type: ignore
+            print("Provider stats (nba_cdn):", nba_cdn_provider.STATS)
+        except Exception:
+            pass
         if counters:
             print("Error note counts (selected):", {k: v for k, v in counters.items() if k.startswith("error_")})
         if debug_provider_samples:

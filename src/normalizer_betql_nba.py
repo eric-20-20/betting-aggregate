@@ -123,6 +123,13 @@ def _parse_standard_pick(text: str) -> Tuple[Optional[str], Optional[float], Opt
     return selection, line, odds
 
 
+def _safe_float(val: Any) -> Optional[float]:
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def _map_team(alias: Optional[str]) -> Optional[str]:
     if not alias:
         return None
@@ -286,6 +293,12 @@ def normalize_betql_prop_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     if player_slug is None:
         eligible, ineligibility_reason = False, ineligibility_reason or "ambiguous_player"
 
+    # Filter by star rating - only picks with MIN_PROP_STARS or more are eligible
+    if rating_val is None:
+        eligible, ineligibility_reason = False, ineligibility_reason or "missing_rating"
+    elif rating_val < MIN_PROP_STARS:
+        eligible, ineligibility_reason = False, ineligibility_reason or "rating_below_threshold"
+
     observed_dt = _parse_dt(raw.get("observed_at_utc"))
     event_dt = _parse_dt(raw.get("event_start_time_utc")) or observed_dt
     day_key = None
@@ -295,14 +308,13 @@ def normalize_betql_prop_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         day_key = f"NBA:{event_dt.year:04d}:{event_dt.month:02d}:{event_dt.day:02d}"
     if day_key and away_team and home_team:
         event_key = f"{day_key}:{away_team}@{home_team}"
-        teams_sorted = sorted([away_team, home_team])
-        matchup_key = f"{day_key}:{teams_sorted[0]}-{teams_sorted[1]}"
+        matchup_key = f"{day_key}:{home_team}-{away_team}"
     matchup_hint = raw.get("matchup_hint")
     if not matchup_key and day_key and matchup_hint and "@" in str(matchup_hint):
         parts = str(matchup_hint).split("@")
         if len(parts) == 2:
             a, h = parts[0].upper(), parts[1].upper()
-            matchup_key = f"{day_key}:{'-'.join(sorted([a, h]))}"
+            matchup_key = f"{day_key}:{h}-{a}"
 
     selection = None
     side = None
@@ -447,8 +459,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     matchup_key = None
     if day_key and away and home:
         event_key = f"{day_key}:{away}@{home}"
-        teams_sorted = sorted([away, home])
-        matchup_key = f"{day_key}:{teams_sorted[0]}-{teams_sorted[1]}"
+        matchup_key = f"{day_key}:{home}-{away}"
 
     if market_family == "player_prop":
         market_type = "player_prop"
@@ -466,20 +477,20 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
             selection = f"{player_key}::{stat_key}::{direction}"
             side = "player_over" if direction == "OVER" else "player_under" if direction == "UNDER" else direction
     else:
-        selection = raw.get("selection_hint")
+        selection_raw = raw.get("selection_hint") or raw.get("side_hint")
+        selection = _map_team(selection_raw)
         if market_type == "total":
             selection = (raw.get("side_hint") or selection or "").upper() or None
-            line = raw.get("line_hint")
+            line = _safe_float(raw.get("line_hint"))
             odds = raw.get("odds_hint")
             side = selection
         else:
-            if selection:
-                selection = _map_team(selection)
-            else:
-                selection, line, odds = _parse_standard_pick(raw_pick_text)
-                selection = _map_team(selection)
+            parsed_selection, parsed_line, odds = _parse_standard_pick(raw_pick_text)
+            selection = selection or _map_team(parsed_selection)
             if line is None:
-                line = raw.get("line_hint")
+                line = _safe_float(raw.get("line_hint"))
+            if line is None:
+                line = parsed_line
             side = selection
         if surface in {"betql_probet_spread", "betql_probet_total", "betql_sharp_spread", "betql_sharp_total"}:
             pct = raw.get("pro_pct") or 0
@@ -512,6 +523,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "selection": selection,
         "side": side,
         "line": line,
+        "line_hint": raw.get("line_hint") if line is None else line,
         "odds": odds,
         "player_key": player_key,
         "stat_key": stat_key,

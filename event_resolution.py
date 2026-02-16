@@ -14,10 +14,17 @@ class ScheduledGame:
     away_team: str
     start_time_utc: datetime
     event_key: str
+    canonical_event_key: str  # New: canonical format
 
 
 def build_event_key(start_time_utc: datetime, away_team: str, home_team: str) -> str:
+    """Build legacy event key with timestamp (for backward compatibility)."""
     return f"{SPORT}:{start_time_utc:%Y%m%d}:{away_team}@{home_team}:{start_time_utc:%H%M}"
+
+
+def build_canonical_event_key(start_time_utc: datetime, away_team: str, home_team: str) -> str:
+    """Build canonical event key: SPORT:YYYY:MM:DD:AWAY@HOME."""
+    return f"{SPORT}:{start_time_utc:%Y}:{start_time_utc:%m}:{start_time_utc:%d}:{away_team}@{home_team}"
 
 
 def load_nba_schedule() -> List[ScheduledGame]:
@@ -41,6 +48,7 @@ def load_nba_schedule() -> List[ScheduledGame]:
                 away_team=away,
                 start_time_utc=start_dt,
                 event_key=build_event_key(start_dt, away_team=away, home_team=home),
+                canonical_event_key=build_canonical_event_key(start_dt, away_team=away, home_team=home),
             )
         )
 
@@ -81,6 +89,7 @@ def resolve_event(
     game = matches[0]
     return {
         "event_key": game.event_key,
+        "canonical_event_key": game.canonical_event_key,
         "event_start_time_utc": game.start_time_utc,
         "home_team": game.home_team,
         "away_team": game.away_team,

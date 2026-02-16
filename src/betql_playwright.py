@@ -29,11 +29,36 @@ class BetQLSession:
         )
         return self
 
-    def open(self, url: str) -> Page:
+    def open(self, url: str, wait_for: str | None = None, timeout_ms: int = 60000) -> Page:
         if not self.context:
             raise RuntimeError("BetQLSession is not started; use context manager or call __enter__().")
         page = self.context.new_page()
-        page.goto(url, wait_until="networkidle")
+        used_wait_until = "domcontentloaded"
+        try:
+            page.goto(url, wait_until=used_wait_until, timeout=timeout_ms)
+        except Exception:
+            try:
+                used_wait_until = "load"
+                page.goto(url, wait_until=used_wait_until, timeout=timeout_ms)
+            except Exception:
+                logger = getattr(__import__("logging"), "getLogger")(__name__)
+                logger.warning("Retry navigation failed for %s", url)
+                raise
+        try:
+            page.wait_for_selector("body", timeout=timeout_ms)
+        except Exception:
+            pass
+        if wait_for:
+            try:
+                page.wait_for_selector(wait_for, timeout=timeout_ms)
+            except Exception:
+                logger = getattr(__import__("logging"), "getLogger")(__name__)
+                logger.warning("wait_for selector %s timed out for %s", wait_for, url)
+        logger = getattr(__import__("logging"), "getLogger")(__name__)
+        try:
+            logger.debug("[betql-session] goto url=%s wait_until=%s final_url=%s", url, used_wait_until, page.url)
+        except Exception:
+            pass
         return page
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -53,10 +78,46 @@ class BetQLSession:
             self._p = None
 
 
+def _dismiss_modals(page: Page) -> None:
+    """Try to dismiss any popups or modals that might be blocking content."""
+    # Common modal close button selectors
+    close_selectors = [
+        "button[aria-label='Close']",
+        "button.close",
+        ".modal-close",
+        "[data-dismiss='modal']",
+        "button:has-text('Close')",
+        "button:has-text('No thanks')",
+        "button:has-text('Maybe later')",
+    ]
+    for selector in close_selectors:
+        try:
+            btn = page.locator(selector).first
+            if btn.is_visible(timeout=500):
+                btn.click(timeout=1000)
+                page.wait_for_timeout(300)
+        except Exception:
+            pass
+
+
 def wait_for_ready(page: Page, surface: str, timeout: int = 45000) -> None:
     try:
+        # First try to dismiss any modals
+        _dismiss_modals(page)
+
+        # Wait for network to settle a bit
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+
         if surface == "model":
-            page.wait_for_selector("button.games-table-column__rating-button", state="attached", timeout=timeout)
+            # Try multiple selectors - the rating button or the team cells
+            try:
+                page.wait_for_selector("button.games-table-column__rating-button", state="attached", timeout=timeout)
+            except Exception:
+                # Fallback to just team cells if rating buttons not found
+                page.wait_for_selector("div.games-table-column__team-cell", state="attached", timeout=timeout)
             page.wait_for_selector("div.games-table-column__team-cell, img[src*='/NBA/']", state="attached", timeout=timeout)
         elif surface == "sharps":
             page.wait_for_selector("div.games-table-column__team-cell, img[src*='/NBA/']", state="attached", timeout=timeout)
@@ -65,6 +126,12 @@ def wait_for_ready(page: Page, surface: str, timeout: int = 45000) -> None:
             page.wait_for_selector("div.carousel-track div.carousel-pane > button", state="attached", timeout=timeout)
             page.wait_for_selector("div.team-player-props-head .team-name", state="attached", timeout=timeout)
             page.wait_for_selector("div.player-props", state="attached", timeout=timeout)
+        elif surface == "game":
+            page.wait_for_selector("body", timeout=timeout)
+            try:
+                page.wait_for_selector("text=Props", timeout=timeout)
+            except Exception:
+                pass
         else:
             page.wait_for_selector("body", timeout=timeout)
     except Exception as exc:

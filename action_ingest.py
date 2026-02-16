@@ -20,14 +20,26 @@ def ensure_out_dir():
 
 
 try:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 except ImportError:
     sync_playwright = None
+    PlaywrightTimeoutError = Exception
 
-from event_resolution import SCHEDULE, build_event_key, resolve_event
+from event_resolution import SCHEDULE, build_event_key, build_canonical_event_key, resolve_event
 from mappings import map_player, map_prop_stat
-from store import SPORT, data_store
+from store import NBA_SPORT, NCAAB_SPORT, data_store, get_data_store
 from utils import normalize_text
+
+# Sport-specific URL patterns
+ACTION_LISTING_URLS = {
+    NBA_SPORT: "https://www.actionnetwork.com/picks/game",
+    NCAAB_SPORT: "https://www.actionnetwork.com/ncaab/picks",
+}
+
+ACTION_GAME_PATTERNS = {
+    NBA_SPORT: re.compile(r"/nba-game/[^/]+/\d+"),
+    NCAAB_SPORT: re.compile(r"/ncaab-game/[^/]+/\d+"),
+}
 
 
 SESSION = requests.Session()
@@ -49,7 +61,7 @@ def fetch_html(url: str) -> str:
 
 
 # For Playwright: pip install playwright && playwright install chromium
-def fetch_html_playwright(url: str) -> str:
+def fetch_html_playwright(url: str, scroll_picks_container: bool = True) -> str:
     if sync_playwright is None:
         raise RuntimeError("playwright is not installed. Install with `pip install playwright` then `playwright install chromium`.")
     with sync_playwright() as p:
@@ -59,10 +71,150 @@ def fetch_html_playwright(url: str) -> str:
         )
         page = context.new_page()
         page.goto(url, wait_until="networkidle", timeout=30000)
+
+        # Scroll within the picks container to load all lazy-loaded pick cards
+        if scroll_picks_container:
+            try:
+                # Incrementally scroll the picks container with waits for lazy-loading
+                # Each scroll step triggers content loading, so we need pauses
+                for scroll_round in range(5):  # Multiple rounds to ensure all content loads
+                    found_container = page.evaluate("""
+                        () => {
+                            // Find scrollable container with pick cards
+                            const allDivs = document.querySelectorAll('div');
+                            for (const div of allDivs) {
+                                const style = window.getComputedStyle(div);
+                                const hasOverflow = style.overflowY === 'auto' || style.overflowY === 'scroll';
+                                const hasPickCards = div.querySelector('.pick-card__header') !== null;
+
+                                if (hasOverflow && hasPickCards && div.scrollHeight > div.clientHeight) {
+                                    // Scroll incrementally - each step is ~1 card height
+                                    const scrollStep = 200;
+                                    const prevScrollTop = div.scrollTop;
+                                    div.scrollTop += scrollStep;
+                                    // Return info about whether we scrolled and if there's more
+                                    return {
+                                        found: true,
+                                        scrolledFrom: prevScrollTop,
+                                        scrolledTo: div.scrollTop,
+                                        scrollHeight: div.scrollHeight,
+                                        clientHeight: div.clientHeight,
+                                        canScrollMore: div.scrollTop + div.clientHeight < div.scrollHeight
+                                    };
+                                }
+                            }
+                            return {found: false};
+                        }
+                    """)
+                    # Wait for lazy content to load after each scroll
+                    page.wait_for_timeout(300)
+
+                    if found_container and found_container.get("found"):
+                        # Keep scrolling until we've reached the bottom
+                        scroll_attempts = 0
+                        while found_container.get("canScrollMore") and scroll_attempts < 30:
+                            page.evaluate("""
+                                () => {
+                                    const allDivs = document.querySelectorAll('div');
+                                    for (const div of allDivs) {
+                                        const style = window.getComputedStyle(div);
+                                        const hasOverflow = style.overflowY === 'auto' || style.overflowY === 'scroll';
+                                        const hasPickCards = div.querySelector('.pick-card__header') !== null;
+                                        if (hasOverflow && hasPickCards && div.scrollHeight > div.clientHeight) {
+                                            div.scrollTop += 200;
+                                            return;
+                                        }
+                                    }
+                                }
+                            """)
+                            page.wait_for_timeout(250)  # Wait for content to load
+                            scroll_attempts += 1
+                            # Check if we can still scroll
+                            found_container = page.evaluate("""
+                                () => {
+                                    const allDivs = document.querySelectorAll('div');
+                                    for (const div of allDivs) {
+                                        const style = window.getComputedStyle(div);
+                                        const hasOverflow = style.overflowY === 'auto' || style.overflowY === 'scroll';
+                                        const hasPickCards = div.querySelector('.pick-card__header') !== null;
+                                        if (hasOverflow && hasPickCards && div.scrollHeight > div.clientHeight) {
+                                            return {
+                                                found: true,
+                                                canScrollMore: div.scrollTop + div.clientHeight < div.scrollHeight - 10
+                                            };
+                                        }
+                                    }
+                                    return {found: false, canScrollMore: false};
+                                }
+                            """)
+                        # After reaching bottom, scroll back to top and to bottom again
+                        # This can trigger any remaining lazy loads
+                        page.evaluate("""
+                            () => {
+                                const allDivs = document.querySelectorAll('div');
+                                for (const div of allDivs) {
+                                    const style = window.getComputedStyle(div);
+                                    const hasOverflow = style.overflowY === 'auto' || style.overflowY === 'scroll';
+                                    const hasPickCards = div.querySelector('.pick-card__header') !== null;
+                                    if (hasOverflow && hasPickCards) {
+                                        div.scrollTop = 0;
+                                        return;
+                                    }
+                                }
+                            }
+                        """)
+                        page.wait_for_timeout(300)
+                        page.evaluate("""
+                            () => {
+                                const allDivs = document.querySelectorAll('div');
+                                for (const div of allDivs) {
+                                    const style = window.getComputedStyle(div);
+                                    const hasOverflow = style.overflowY === 'auto' || style.overflowY === 'scroll';
+                                    const hasPickCards = div.querySelector('.pick-card__header') !== null;
+                                    if (hasOverflow && hasPickCards) {
+                                        div.scrollTop = div.scrollHeight;
+                                        return;
+                                    }
+                                }
+                            }
+                        """)
+                        page.wait_for_timeout(500)
+                        break  # Done with scroll rounds
+                    else:
+                        # No scrollable container found, try scrolling main page
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        page.wait_for_timeout(500)
+            except Exception as e:
+                # If scrolling fails, continue with whatever content we have
+                pass
+
         content = page.content()
         context.close()
         browser.close()
         return content
+
+
+def fetch_html_in_context(context, url: str, wait_until: str = "domcontentloaded", timeout_ms: int = 30000) -> str:
+    """
+    Fetch a rendered HTML document using an existing Playwright browser context.
+    """
+    if context is None:
+        raise RuntimeError("fetch_html_in_context requires an existing Playwright context.")
+    page = context.new_page()
+    try:
+        try:
+            page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+        except PlaywrightTimeoutError:
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            page.wait_for_timeout(750)
+        return page.content()
+    except KeyboardInterrupt:
+        raise
+    finally:
+        try:
+            page.close()
+        except Exception:
+            pass
 
 
 @dataclass
@@ -110,13 +262,15 @@ def fetch_expert_picks_html(url: str) -> str:
     return fetch_html_playwright(url)
 
 
-def discover_action_game_urls(listing_url: str = "https://www.actionnetwork.com/picks/game") -> List[str]:
+def discover_action_game_urls(listing_url: str = None, sport: str = NBA_SPORT) -> List[str]:
+    if listing_url is None:
+        listing_url = ACTION_LISTING_URLS.get(sport, ACTION_LISTING_URLS[NBA_SPORT])
     try:
         listing_html = fetch_html(listing_url)
     except Exception:
         return []
     soup = BeautifulSoup(listing_html, "html.parser")
-    pattern = re.compile(r"/nba-game/[^/]+/\d+")
+    pattern = ACTION_GAME_PATTERNS.get(sport, ACTION_GAME_PATTERNS[NBA_SPORT])
     urls: List[str] = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -129,7 +283,7 @@ def discover_action_game_urls(listing_url: str = "https://www.actionnetwork.com/
 
 
 def parse_game_date_from_url(url: str) -> Optional[date]:
-    match = re.search(r"/([a-z]+-\d{1,2}-\d{4})/", url, re.IGNORECASE)
+    match = re.search(r"([a-z]+-\d{1,2}-\d{4})", url, re.IGNORECASE)
     if not match:
         return None
     month_day_year = match.group(1).replace("-", " ")
@@ -194,6 +348,7 @@ def extract_picks_from_html(
     canonical_url: str,
     observed_at_utc: datetime,
     debug: bool = False,
+    sport: str = NBA_SPORT,
 ) -> Tuple[List[RawPickRecord], List[dict]]:
     soup = BeautifulSoup(html, "html.parser")
     debug = debug or bool(os.environ.get("ACTION_DEBUG"))
@@ -221,9 +376,10 @@ def extract_picks_from_html(
     moneyline_pattern = re.compile(r"\b(?P<team>[A-Z]{2,3})\s+(?P<odds>[+-]\d{2,4})\b(?!\s*[+-]\d)")
     unit_pattern = re.compile(r"(\d+(?:\.\d+)?)u", re.IGNORECASE)
     pick_text_pattern = re.compile(
-        r"(?:[A-Z]\.[A-Za-z]+\s+[ouOU]\d+(?:\.\d+)?\s+(?:Pts\+Rebs\+Asts|Pts\+Rebs|Pts\+Asts|Rebs\+Asts|Pts|Rebs|Asts)\s+[+-]\d{3,}"
+        r"(?:[A-Z]\.[A-Za-z]+\s+[ouOU]\d+(?:\.\d+)?\s+(?:Pts\+Rebs\+Asts|Pts\+Rebs|Pts\+Asts|Rebs\+Asts|Pts|Rebs|Asts|3pt\s*M|Threes)\s+[+-]\d{3,}"
         r"|(?:Over|Under)\s+\d+(?:\.\d+)?\s+[+-]\d{3,}"
         r"|[A-Z]{2,3}\s+[+-]\d+(?:\.\d+)?\s+[+-]\d{3,}"
+        r"|[A-Z]{2,3}\s+[ouOU]\d+(?:\.\d+)?\s+[+-]\d{3,}"  # Team totals like "OKC u114.5 -115"
         r"|[A-Z]{2,3}\s+[+-]\d{2,4}(?!\s*[+-]\d))",
         re.IGNORECASE,
     )
@@ -291,44 +447,90 @@ def extract_picks_from_html(
             )
         return picks
 
-    def find_pick_containers() -> List[BeautifulSoup]:
-        containers: List[BeautifulSoup] = []
-        headers = soup.select(".pick-card__header")
-        for header in headers:
-            card = header.parent
-            if not card:
-                continue
-            card_text = card.get_text(" ", strip=True)
-            if not card_text or len(card_text) < 20:
-                continue
-            if not pick_text_pattern.search(card_text):
-                continue
-            if any(existing is card or existing in card.parents or card in existing.parents for existing in containers):
-                continue
-            containers.append(card)
-        if not containers:
-            cards = soup.find_all("article") or soup.find_all("div")
-            return cards[:10] if cards else []
-        return containers
+    def find_pick_containers_with_experts() -> List[Tuple[BeautifulSoup, Optional[str], Optional[str], Optional[str]]]:
+        """
+        Find all pick containers and associate them with expert info.
+        Returns list of (container, expert_name, expert_profile, expert_slug) tuples.
+
+        Action Network structures picks as sibling .euiy7v30 containers.
+        The first container for each expert has a .pick-card__header with expert info.
+        Subsequent containers (without headers) belong to the same expert until a new header.
+        """
+        results: List[Tuple[BeautifulSoup, Optional[str], Optional[str], Optional[str]]] = []
+
+        # Find all euiy7v30 containers (the pick container class)
+        all_containers = soup.select(".euiy7v30")
+
+        if not all_containers:
+            # Fallback to old method
+            headers = soup.select(".pick-card__header")
+            for header in headers:
+                card = header.parent
+                if not card:
+                    continue
+                card_text = card.get_text(" ", strip=True)
+                if not card_text or len(card_text) < 20:
+                    continue
+                if not pick_text_pattern.search(card_text):
+                    continue
+                expert_name, expert_profile, expert_slug = extract_expert_meta(card)
+                results.append((card, expert_name, expert_profile, expert_slug))
+            return results
+
+        current_expert_name: Optional[str] = None
+        current_expert_profile: Optional[str] = None
+        current_expert_slug: Optional[str] = None
+
+        for container in all_containers:
+            # Check if this container has a pick-card__header (marks new expert)
+            header = container.select_one(".pick-card__header")
+            if header:
+                # Extract expert info from the header
+                links = header.select('a[href^="/picks/profile/"]')
+                for link in links:
+                    text = link.get_text(" ", strip=True)
+                    if text:  # Only use links with actual text (skip avatar links)
+                        current_expert_name = clean_expert_name(text)
+                        current_expert_profile = link.get("href")
+                        current_expert_slug = current_expert_profile.rstrip("/").split("/")[-1] if current_expert_profile else None
+                        break
+
+            # Check if this container has picks
+            picks = container.select(".base-pick__pick")
+            if picks:
+                # Verify at least one pick matches our patterns
+                container_text = container.get_text(" ", strip=True)
+                if pick_text_pattern.search(container_text):
+                    results.append((container, current_expert_name, current_expert_profile, current_expert_slug))
+
+        return results
 
     records: List[RawPickRecord] = []
     card_infos: List[dict] = []
     seen_pick_texts: set[str] = set()
     debug_samples: List[str] = []
-    containers = find_pick_containers()
+    containers_with_experts = find_pick_containers_with_experts()
 
-    for idx, container in enumerate(containers):
+    # Track unique experts for card_infos
+    seen_experts: set[str] = set()
+
+    for idx, (container, container_expert_name, container_expert_profile, container_expert_slug) in enumerate(containers_with_experts):
         container_text = container.get_text(" ", strip=True)
-        container_expert_name, container_expert_profile, container_expert_slug = extract_expert_meta(container)
         picks = extract_pick_strings(container)
-        card_infos.append(
-            {
-                "expert_name": container_expert_name,
-                "expert_profile": container_expert_profile,
-                "expert_slug": container_expert_slug,
-                "picks": [p["text"] for p in picks[:2]],
-            }
-        )
+
+        # Only add to card_infos once per expert
+        expert_key = container_expert_profile or container_expert_name or f"unknown_{idx}"
+        if expert_key not in seen_experts:
+            seen_experts.add(expert_key)
+            card_infos.append(
+                {
+                    "expert_name": container_expert_name,
+                    "expert_profile": container_expert_profile,
+                    "expert_slug": container_expert_slug,
+                    "picks": [p["text"] for p in picks[:2]],
+                }
+            )
+
         for pick in picks:
             pick_text = pick["text"]
             cleaned = clean_pick_text(pick_text)
@@ -357,11 +559,12 @@ def extract_picks_from_html(
                 context = f"{context}\n[stake_hint={stake_hint}]"
 
             market_family = "player_prop" if map_prop_stat(normalized_pick) else "standard"
-            fingerprint_source = f"action|nba_game_expert_picks|{canonical_url}|{normalized_pick}"
+            source_surface = f"{sport.lower()}_game_expert_picks"
+            fingerprint_source = f"action|{source_surface}|{canonical_url}|{normalized_pick}"
             record = RawPickRecord(
                 source_id="action",
-                source_surface="nba_game_expert_picks",
-                sport=SPORT,
+                source_surface=source_surface,
+                sport=sport,
                 market_family=market_family,
                 observed_at_utc=observed_at_utc.isoformat(),
                 canonical_url=canonical_url,
@@ -392,18 +595,20 @@ def extract_picks_from_html(
     return records, card_infos
 
 
-def map_team_text_to_code(text: str) -> Optional[str]:
+def map_team_text_to_code(text: str, store=None) -> Optional[str]:
+    store = store or data_store
     normalized = normalize_text(text)
-    matches = data_store.lookup_team_code(normalized)
+    matches = store.lookup_team_code(normalized)
     if len(matches) == 1:
         return next(iter(matches))
-    if len(normalized) == 3 and normalized.upper() in data_store.teams:
+    if len(normalized) == 3 and normalized.upper() in store.teams:
         return normalized.upper()
     return None
 
 
-def parse_teams_from_slug(url: str) -> Tuple[Optional[str], Optional[str]]:
-    match = re.search(r"/nba-game/([^/]+)/\d+", url)
+def parse_teams_from_slug(url: str, sport: str = NBA_SPORT, store=None) -> Tuple[Optional[str], Optional[str]]:
+    # Match both NBA and NCAAB game URL patterns
+    match = re.search(r"/(?:nba-game|ncaab-game)/([^/]+)/\d+", url)
     if not match:
         return None, None
     slug = match.group(1)
@@ -412,18 +617,20 @@ def parse_teams_from_slug(url: str) -> Tuple[Optional[str], Optional[str]]:
     if len(tokens) < 2:
         return None, None
 
+    store = store or get_data_store(sport)
     for split_idx in range(1, len(tokens)):
         away_raw = " ".join(tokens[:split_idx])
         home_raw = " ".join(tokens[split_idx:])
-        away_code = map_team_text_to_code(away_raw)
-        home_code = map_team_text_to_code(home_raw)
+        away_code = map_team_text_to_code(away_raw, store=store)
+        home_code = map_team_text_to_code(home_raw, store=store)
         if away_code and home_code and away_code != home_code:
             return away_code, home_code
 
     return None, None
 
 
-def parse_teams_from_page(soup: BeautifulSoup) -> Tuple[Optional[str], Optional[str]]:
+def parse_teams_from_page(soup: BeautifulSoup, sport: str = NBA_SPORT, store=None) -> Tuple[Optional[str], Optional[str]]:
+    store = store or get_data_store(sport)
     candidates = []
     for tag in soup.find_all(["h1", "h2", "h3", "title"]):
         txt = tag.get_text(" ", strip=True)
@@ -434,8 +641,8 @@ def parse_teams_from_page(soup: BeautifulSoup) -> Tuple[Optional[str], Optional[
         if not match:
             continue
         away_raw, home_raw = match.group(1), match.group(2)
-        away_code = map_team_text_to_code(away_raw)
-        home_code = map_team_text_to_code(home_raw)
+        away_code = map_team_text_to_code(away_raw, store=store)
+        home_code = map_team_text_to_code(home_raw, store=store)
         if away_code and home_code and away_code != home_code:
             return away_code, home_code
     return None, None
@@ -463,6 +670,23 @@ def parse_standard_market(raw_pick_text: str) -> dict:
         }
 
     if team_code:
+        # Check for team total first (e.g., "OKC u114.5 -115" or "MIL over 115.5 -110")
+        team_total_match = re.search(rf"{team_code}\s+([ouOU])(\d+(?:\.\d+)?)", raw_pick_text)
+        if team_total_match:
+            ou_char = team_total_match.group(1).lower()
+            side = "over" if ou_char == "o" else "under"
+            line_val = float(team_total_match.group(2))
+            return {
+                "market_type": "team_total",
+                "side": side,
+                "selection": f"{team_code}_team_total",
+                "line": line_val,
+                "odds": odds_match.group(1) if odds_match else None,
+                "eligible_for_consensus": True,
+                "ineligibility_reason": None,
+                "team_code": team_code,
+            }
+
         if odds_match and len(signed_numbers) == 1:
             return {
                 "market_type": "moneyline",
@@ -513,7 +737,7 @@ def parse_standard_market(raw_pick_text: str) -> dict:
     }
 
 
-def parse_player_prop(raw_pick_text: str) -> dict:
+def parse_player_prop(raw_pick_text: str, sport: str = NBA_SPORT) -> dict:
     stat_key = map_prop_stat(raw_pick_text)
     if not stat_key:
         return {
@@ -538,7 +762,8 @@ def parse_player_prop(raw_pick_text: str) -> dict:
 
     first_float_match = re.search(r"(\d+(?:\.\d+)?)", lower)
     selection = None
-    if player_key.startswith(f"{SPORT}:") and stat_key and side:
+    # Check if player_key starts with any known sport prefix
+    if player_key and ":" in player_key and stat_key and side:
         player_slug = player_key.split(":", 1)[1]
         selection = f"{player_slug}::{stat_key}::{side.split('_')[1].upper()}"
 
@@ -568,14 +793,14 @@ def parse_player_prop(raw_pick_text: str) -> dict:
     }
 
 
-def normalize_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, stats: Optional[dict] = None) -> dict:
+def normalize_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, stats: Optional[dict] = None, sport: str = NBA_SPORT) -> dict:
     observed_dt = datetime.fromisoformat(raw_pick.observed_at_utc)
     event_time = raw_pick.event_start_time_utc or observed_dt
     if isinstance(event_time, str):
         event_time = datetime.fromisoformat(event_time)
     if isinstance(event_time, datetime) and event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=timezone.utc)
-    event = resolve_event(SPORT, away_team=away_team, home_team=home_team, observed_at_utc=event_time)
+    event = resolve_event(sport, away_team=away_team, home_team=home_team, observed_at_utc=event_time)
     if event:
         event_copy = dict(event)
         start_time = event_copy.get("event_start_time_utc")
@@ -588,6 +813,7 @@ def normalize_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, stat
         # Schedule drift or new-day runs can miss resolve_event; construct a stable event payload so consensus stays intact.
         event = {
             "event_key": build_event_key(event_time, away_team=away_team, home_team=home_team),
+            "canonical_event_key": build_canonical_event_key(event_time, away_team=away_team, home_team=home_team),
             "event_start_time_utc": event_time if isinstance(event_time, str) else event_time.isoformat(),
             "home_team": home_team,
             "away_team": away_team,
@@ -709,7 +935,7 @@ def dedupe_normalized_bets(bets: List[dict]) -> List[dict]:
     return deduped
 
 
-def ingest_action_nba_games(schedule=None) -> None:
+def ingest_action_games(schedule=None, sport: str = NBA_SPORT, debug: bool = False) -> None:
     schedule = schedule if schedule is not None else SCHEDULE
     observed_at = datetime.now(timezone.utc)
     all_raw: List[RawPickRecord] = []
@@ -722,7 +948,15 @@ def ingest_action_nba_games(schedule=None) -> None:
         "normalized_eligible": 0,
     }
 
-    game_urls = discover_action_game_urls()
+    # Get sport-specific store
+    store = get_data_store(sport)
+
+    game_urls = discover_action_game_urls(sport=sport)
+    if debug:
+        print(f"[DEBUG] discovered {len(game_urls)} {sport} game URLs")
+        for url in game_urls[:5]:
+            print(f"[DEBUG] game_url: {url}")
+
     for url in game_urls:
         try:
             html = fetch_expert_picks_html(url)
@@ -732,9 +966,9 @@ def ingest_action_nba_games(schedule=None) -> None:
             html=html, url=url, schedule_game=None, observed_at_utc=observed_at
         )
         soup = BeautifulSoup(html, "html.parser")
-        away_team, home_team = parse_teams_from_page(soup)
+        away_team, home_team = parse_teams_from_page(soup, sport=sport, store=store)
         if not (away_team and home_team):
-            slug_away, slug_home = parse_teams_from_slug(url)
+            slug_away, slug_home = parse_teams_from_slug(url, sport=sport, store=store)
             away_team = away_team or slug_away
             home_team = home_team or slug_home
         if not (away_team and home_team):
@@ -744,15 +978,20 @@ def ingest_action_nba_games(schedule=None) -> None:
             html,
             canonical_url=url,
             observed_at_utc=observed_at,
-            debug=bool(os.environ.get("ACTION_DEBUG")),
+            debug=debug or bool(os.environ.get("ACTION_DEBUG")),
+            sport=sport,
         )
+        # Debug: show picks per game
+        game_slug_match = re.search(r"/(?:nba-game|college-basketball-game)/([^/]+)/", url)
+        game_slug = game_slug_match.group(1) if game_slug_match else url
+        print(f"[DEBUG] {game_slug}: found {len(card_infos)} expert cards, {len(raw_records)} picks")
         all_raw.extend(raw_records)
         stats["cards_found"] += len(card_infos)
         stats["raw_picks_total"] += len(raw_records)
 
         for record in raw_records:
             record.event_start_time_utc = event_start_time_utc
-            normalized = normalize_pick(record, home_team=home_team, away_team=away_team, stats=stats)
+            normalized = normalize_pick(record, home_team=home_team, away_team=away_team, stats=stats, sport=sport)
             all_normalized.append(normalized)
             stats["normalized_total"] += 1
             if normalized.get("eligible_for_consensus"):
@@ -770,16 +1009,32 @@ def ingest_action_nba_games(schedule=None) -> None:
 
     all_normalized = dedupe_normalized_bets(all_normalized)
     ensure_out_dir()
-    write_json(os.path.join(OUT_DIR, "raw_action_nba.json"), (asdict(r) for r in all_raw))
-    write_json(os.path.join(OUT_DIR, "normalized_action_nba.json"), all_normalized)
+    sport_suffix = sport.lower()
+    write_json(os.path.join(OUT_DIR, f"raw_action_{sport_suffix}.json"), (asdict(r) for r in all_raw))
+    write_json(os.path.join(OUT_DIR, f"normalized_action_{sport_suffix}.json"), all_normalized)
     print(
         f"[DEBUG] cards_found={stats['cards_found']} raw_picks_total={stats['raw_picks_total']} "
         f"normalized_total={stats['normalized_total']} normalized_eligible={stats['normalized_eligible']} "
         f"team_not_in_game_rejected={stats.get('team_not_in_game', 0)}"
     )
-    print(f"[INGEST] wrote NBA Action outputs to OUT_DIR={OUT_DIR}")
+    print(f"[INGEST] wrote {sport} Action outputs to OUT_DIR={OUT_DIR}")
+
+
+# Backward compatibility alias
+def ingest_action_nba_games(schedule=None) -> None:
+    """Backward compatibility wrapper for ingest_action_games with NBA sport."""
+    ingest_action_games(schedule=schedule, sport=NBA_SPORT)
 
 
 if __name__ == "__main__":
-    ingest_action_nba_games()
-OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
+    import argparse
+    parser = argparse.ArgumentParser(description="Ingest Action Network analyst picks.")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
+    parser.add_argument(
+        "--sport",
+        choices=["NBA", "NCAAB"],
+        default="NBA",
+        help="Sport to ingest (default: NBA)",
+    )
+    args = parser.parse_args()
+    ingest_action_games(sport=args.sport, debug=args.debug)

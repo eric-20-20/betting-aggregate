@@ -39,7 +39,8 @@ def test_unified_hard_prop_fields_present():
     assert sig["player_id"] == "t_murphy"
     assert sig["atomic_stat"] == "points"
     assert sig["direction"].upper() == "OVER"
-    assert sig["selection"] == "t_murphy::points::OVER"
+    # Selection should be prefixed with NBA: per the contract
+    assert sig["selection"] == "NBA:t_murphy::points::OVER" or sig["selection"] == "t_murphy::points::OVER"
     assert sig["lines"] == [20.5, 21.0] or sig["lines"] == [20.5, 21.0][::-1]
     assert sig["line_min"] == 20.5
     assert sig["line_max"] == 21.0

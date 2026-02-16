@@ -97,7 +97,12 @@ def _parse_teams_from_canonical(url: Optional[str]) -> tuple[Optional[str], Opti
 def _build_day_and_event(dt: Optional[datetime], away: Optional[str], home: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     if not dt:
         return None, None
-    day_key = f"NBA:{dt.year:04d}:{dt.month:02d}:{dt.day:02d}"
+    # Convert to US Eastern time for NBA game day assignment
+    # Games at 9pm ET on Feb 12 should be day_key NBA:2026:02:12, not Feb 13
+    from zoneinfo import ZoneInfo
+    eastern = ZoneInfo("America/New_York")
+    dt_eastern = dt.astimezone(eastern)
+    day_key = f"NBA:{dt_eastern.year:04d}:{dt_eastern.month:02d}:{dt_eastern.day:02d}"
     if away and home:
         return day_key, f"{day_key}:{away}@{home}"
     return day_key, day_key
@@ -476,8 +481,29 @@ def _fetch_covers_matchup_teams(mid: str) -> tuple[Optional[str], Optional[str],
 
     def _parse_jsonld(text: str) -> tuple[Optional[str], Optional[str], str]:
         for m in re.finditer(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', text, re.IGNORECASE | re.DOTALL):
+            raw_json = m.group(1).strip()
             try:
-                data = json.loads(m.group(1))
+                data = json.loads(raw_json)
+            except json.JSONDecodeError:
+                # Handle malformed JSON with extra trailing braces
+                # Find proper end by matching braces
+                depth = 0
+                end_pos = 0
+                for i, c in enumerate(raw_json):
+                    if c == '{':
+                        depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end_pos = i + 1
+                            break
+                if end_pos > 0:
+                    try:
+                        data = json.loads(raw_json[:end_pos])
+                    except Exception:
+                        continue
+                else:
+                    continue
             except Exception:
                 continue
             candidates = data if isinstance(data, list) else [data]
@@ -589,8 +615,28 @@ def resolve_covers_matchup_teams(mid: str, url: str, debug: bool = False) -> tup
 
     # JSON-LD parse
     for m in re.finditer(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, re.IGNORECASE | re.DOTALL):
+        raw_json = m.group(1).strip()
         try:
-            data = json.loads(m.group(1))
+            data = json.loads(raw_json)
+        except json.JSONDecodeError:
+            # Handle malformed JSON with extra trailing braces
+            depth = 0
+            end_pos = 0
+            for i, c in enumerate(raw_json):
+                if c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end_pos = i + 1
+                        break
+            if end_pos > 0:
+                try:
+                    data = json.loads(raw_json[:end_pos])
+                except Exception:
+                    continue
+            else:
+                continue
         except Exception:
             continue
         objs = data if isinstance(data, list) else [data]

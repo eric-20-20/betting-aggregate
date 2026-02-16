@@ -33,11 +33,27 @@ from action_ingest import (
     parse_standard_market,
     sha256_digest,
 )
-from event_resolution import SCHEDULE, ScheduledGame, build_event_key, resolve_event
-from store import SPORT, data_store
+from event_resolution import SCHEDULE, ScheduledGame, build_event_key, build_canonical_event_key, resolve_event
+from store import NBA_SPORT, NCAAB_SPORT, data_store, get_data_store
 from utils import normalize_text
 
 OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
+
+# Sport-specific URL patterns
+COVERS_LISTING_URLS = {
+    NBA_SPORT: "https://www.covers.com/picks/nba",
+    NCAAB_SPORT: "https://www.covers.com/picks/ncaab",
+}
+
+COVERS_MATCHUP_PATTERNS = {
+    NBA_SPORT: re.compile(r"/sport/basketball/nba/matchup/(\d+)/picks", re.IGNORECASE),
+    NCAAB_SPORT: re.compile(r"/sport/basketball/ncaab/matchup/(\d+)/picks", re.IGNORECASE),
+}
+
+COVERS_MATCHUP_URL_TEMPLATES = {
+    NBA_SPORT: "https://www.covers.com/sport/basketball/nba/matchup/{matchup_id}/picks",
+    NCAAB_SPORT: "https://www.covers.com/sport/basketball/ncaab/matchup/{matchup_id}/picks",
+}
 
 SESSION = requests.Session()
 SESSION.headers.update(
@@ -85,13 +101,15 @@ EXCLUDE_TOKENS = {"computer pick", "consensus", "model rating", "best odds"}
 PICK_LABEL_PATTERNS = [re.compile(r"pick made", re.IGNORECASE)]
 
 
-def discover_matchup_pick_urls(listing_url: str = "https://www.covers.com/picks/nba") -> list[str]:
+def discover_matchup_pick_urls(listing_url: str = None, sport: str = NBA_SPORT) -> list[str]:
+    if listing_url is None:
+        listing_url = COVERS_LISTING_URLS.get(sport, COVERS_LISTING_URLS[NBA_SPORT])
     try:
         listing_html = fetch_html(listing_url)
     except Exception:
         return []
     soup = BeautifulSoup(listing_html, "html.parser")
-    pattern = re.compile(r"/sport/basketball/nba/matchup/(\d+)/picks", re.IGNORECASE)
+    pattern = COVERS_MATCHUP_PATTERNS.get(sport, COVERS_MATCHUP_PATTERNS[NBA_SPORT])
     urls: list[str] = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -103,7 +121,8 @@ def discover_matchup_pick_urls(listing_url: str = "https://www.covers.com/picks/
             urls.append(full)
     return urls
 
-def map_team_token_to_code(token: str) -> Optional[str]:
+def map_team_token_to_code(token: str, store=None) -> Optional[str]:
+    store = store or data_store
     normalized = normalize_text(token)
     alt = {
         "pho": "PHX",
@@ -111,15 +130,16 @@ def map_team_token_to_code(token: str) -> Optional[str]:
     }
     if normalized in alt:
         return alt[normalized]
-    code_matches = data_store.lookup_team_code(normalized)
+    code_matches = store.lookup_team_code(normalized)
     if len(code_matches) == 1:
         return next(iter(code_matches))
-    if len(normalized) == 3 and normalized.upper() in data_store.teams:
+    if len(normalized) == 3 and normalized.upper() in store.teams:
         return normalized.upper()
     return None
 
 
-def extract_matchup_teams_from_header(soup: BeautifulSoup) -> tuple[Optional[str], Optional[str]]:
+def extract_matchup_teams_from_header(soup: BeautifulSoup, store=None) -> tuple[Optional[str], Optional[str]]:
+    store = store or data_store
     text = soup.get_text(" ", strip=True)
     fallback_map = {
         "PHO": "PHX",
@@ -132,10 +152,10 @@ def extract_matchup_teams_from_header(soup: BeautifulSoup) -> tuple[Optional[str
         code = fallback_map.get(token.upper())
         if code:
             return code
-        mapped = data_store.lookup_team_code(token)
+        mapped = store.lookup_team_code(token)
         if len(mapped) == 1:
             return next(iter(mapped))
-        if len(token) == 3 and token.upper() in data_store.teams:
+        if len(token) == 3 and token.upper() in store.teams:
             return token.upper()
         return None
 
@@ -151,10 +171,10 @@ def extract_matchup_teams_from_header(soup: BeautifulSoup) -> tuple[Optional[str
     # Full team names
     def map_full_name(token: str) -> Optional[str]:
         normalized = normalize_text(token)
-        matches = data_store.lookup_team_code(normalized)
+        matches = store.lookup_team_code(normalized)
         if len(matches) == 1:
             return next(iter(matches))
-        for code, team in data_store.teams.items():
+        for code, team in store.teams.items():
             if normalize_text(team.city) == normalized or normalize_text(team.nickname) == normalized:
                 return code
         return None
@@ -183,29 +203,32 @@ def extract_matchup_teams_from_header(soup: BeautifulSoup) -> tuple[Optional[str
     return None, None
 
 
-def team_search_tokens(team_code: str) -> set[str]:
+def team_search_tokens(team_code: str, store=None) -> set[str]:
+    store = store or data_store
     tokens = {team_code.upper()}
-    team = data_store.teams.get(team_code.upper())
+    team = store.teams.get(team_code.upper())
     if team:
         tokens.add(team.city.upper())
         tokens.add(team.nickname.upper())
         tokens.add(f"{team.city.upper()} {team.nickname.upper()}")
 
-    for alias in data_store.team_aliases:
+    for alias in store.team_aliases:
         if alias.team_code == team_code:
             tokens.add(alias.alias.upper())
     return tokens
 
 
-def search_matchup_url(away_team: str, home_team: str, listing_html: Optional[str] = None) -> Optional[str]:
+def search_matchup_url(away_team: str, home_team: str, listing_html: Optional[str] = None, sport: str = NBA_SPORT, store=None) -> Optional[str]:
+    store = store or get_data_store(sport)
+    listing_url = COVERS_LISTING_URLS.get(sport, COVERS_LISTING_URLS[NBA_SPORT])
     try:
-        main_html = listing_html or fetch_html("https://www.covers.com/picks/nba")
+        main_html = listing_html or fetch_html(listing_url)
     except Exception:
         return None
 
-    away_tokens = team_search_tokens(away_team)
-    home_tokens = team_search_tokens(home_team)
-    pattern = re.compile(r"/sport/basketball/nba/matchup/(\d+)/picks", re.IGNORECASE)
+    away_tokens = team_search_tokens(away_team, store=store)
+    home_tokens = team_search_tokens(home_team, store=store)
+    pattern = COVERS_MATCHUP_PATTERNS.get(sport, COVERS_MATCHUP_PATTERNS[NBA_SPORT])
     matches = list(pattern.finditer(main_html))
 
     def snippet_has_match(start: int, end: int) -> bool:
@@ -214,21 +237,23 @@ def search_matchup_url(away_team: str, home_team: str, listing_html: Optional[st
         home_hit = any(token in snippet for token in home_tokens)
         return away_hit and home_hit
 
+    url_template = COVERS_MATCHUP_URL_TEMPLATES.get(sport, COVERS_MATCHUP_URL_TEMPLATES[NBA_SPORT])
     for m in matches:
         start = max(0, m.start() - 240)
         end = min(len(main_html), m.end() + 240)
         if snippet_has_match(start, end):
             matchup_id = m.group(1)
-            return f"https://www.covers.com/sport/basketball/nba/matchup/{matchup_id}/picks"
+            return url_template.format(matchup_id=matchup_id)
     return None
 
 
-def get_covers_matchup_url(away_team: str, home_team: str, game_date: str) -> Optional[str]:
+def get_covers_matchup_url(away_team: str, home_team: str, game_date: str, sport: str = NBA_SPORT) -> Optional[str]:
+    listing_url = COVERS_LISTING_URLS.get(sport, COVERS_LISTING_URLS[NBA_SPORT])
     try:
-        listing_html = fetch_html("https://www.covers.com/picks/nba")
+        listing_html = fetch_html(listing_url)
     except Exception:
         listing_html = None
-    return search_matchup_url(away_team, home_team, listing_html=listing_html)
+    return search_matchup_url(away_team, home_team, listing_html=listing_html, sport=sport)
 
 
 def normalize_ou_prefix(text: str) -> str:
@@ -276,7 +301,7 @@ def parse_event_start_utc(html: str, observed_at_utc: datetime) -> datetime:
     return observed_at_utc if observed_at_utc.tzinfo else observed_at_utc.replace(tzinfo=timezone.utc)
 
 
-def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: datetime, debug: bool = False, debug_stats: Optional[dict] = None) -> List[RawPickRecord]:
+def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: datetime, debug: bool = False, debug_stats: Optional[dict] = None, sport: str = NBA_SPORT) -> List[RawPickRecord]:
     soup = BeautifulSoup(html, "html.parser")
     debug_stats = debug_stats if debug_stats is not None else {}
     cards: List[Tag] = []
@@ -389,16 +414,17 @@ def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: date
                 continue
             seen.add(normalized_pick)
             picks_dom += 1
+            source_surface = f"{sport.lower()}_matchup_picks"
             record = RawPickRecord(
                 source_id="covers",
-                source_surface="nba_matchup_picks",
-                sport=SPORT,
+                source_surface=source_surface,
+                sport=sport,
                 market_family=market_family,
                 observed_at_utc=observed_at_utc.isoformat(),
                 canonical_url=canonical_url,
                 raw_pick_text=normalized_pick,
                 raw_block=text_all,
-                raw_fingerprint=sha256_digest(f"covers|nba_matchup_picks|{canonical_url}|{normalized_pick}"),
+                raw_fingerprint=sha256_digest(f"covers|{source_surface}|{canonical_url}|{normalized_pick}"),
                 expert_name=expert_name,
             )
             records.append(record)
@@ -421,16 +447,17 @@ def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: date
                     continue
                 seen.add(normalized_pick)
                 picks_regex += 1
+                source_surface = f"{sport.lower()}_matchup_picks"
                 record = RawPickRecord(
                     source_id="covers",
-                    source_surface="nba_matchup_picks",
-                    sport=SPORT,
+                    source_surface=source_surface,
+                    sport=sport,
                     market_family=market_family,
                     observed_at_utc=observed_at_utc.isoformat(),
                     canonical_url=canonical_url,
                     raw_pick_text=normalized_pick,
                     raw_block=token.strip(),
-                    raw_fingerprint=sha256_digest(f"covers|nba_matchup_picks|{canonical_url}|{normalized_pick}"),
+                    raw_fingerprint=sha256_digest(f"covers|{source_surface}|{canonical_url}|{normalized_pick}"),
                     expert_name=None,
                 )
                 records.append(record)
@@ -450,14 +477,14 @@ def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: date
     return records
 
 
-def normalize_covers_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, event_start_time_utc: Optional[datetime] = None) -> dict:
+def normalize_covers_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, event_start_time_utc: Optional[datetime] = None, sport: str = NBA_SPORT) -> dict:
     observed_dt = datetime.fromisoformat(raw_pick.observed_at_utc)
     event_time = event_start_time_utc or observed_dt
     if isinstance(event_time, str):
         event_time = datetime.fromisoformat(event_time)
     if isinstance(event_time, datetime) and event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=timezone.utc)
-    event = resolve_event(SPORT, away_team=away_team, home_team=home_team, observed_at_utc=event_time)
+    event = resolve_event(sport, away_team=away_team, home_team=home_team, observed_at_utc=event_time)
     if event:
         event_copy = dict(event)
         start_time = event_copy.get("event_start_time_utc")
@@ -470,6 +497,7 @@ def normalize_covers_pick(raw_pick: RawPickRecord, home_team: str, away_team: st
         # Coverage pages may lack schedule alignment; fallback keeps consensus intact.
         event = {
             "event_key": build_event_key(event_time, away_team=away_team, home_team=home_team),
+            "canonical_event_key": build_canonical_event_key(event_time, away_team=away_team, home_team=home_team),
             "event_start_time_utc": event_time if isinstance(event_time, str) else event_time.isoformat(),
             "home_team": home_team,
             "away_team": away_team,
@@ -509,7 +537,13 @@ def normalize_covers_pick(raw_pick: RawPickRecord, home_team: str, away_team: st
             "observed_at_utc": raw_pick.observed_at_utc,
             "canonical_url": raw_pick.canonical_url,
             "raw_fingerprint": raw_pick.raw_fingerprint,
+            "raw_pick_text": raw_pick.raw_pick_text,
+            "raw_block": raw_pick.raw_block,
             "expert_name": expert_name,
+            "expert_handle": getattr(raw_pick, "expert_handle", None),
+            "expert_profile": getattr(raw_pick, "expert_profile", None),
+            "expert_slug": getattr(raw_pick, "expert_slug", None),
+            "matchup_hint": getattr(raw_pick, "matchup_hint", None),
         },
         "event": event,
         "market": {
@@ -545,25 +579,28 @@ def write_json(path: str, payload: Iterable[dict]) -> None:
         json.dump(prepared, f, ensure_ascii=False, indent=2, default=json_default)
 
 
-def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=None, debug: bool = False) -> None:
+def ingest_covers_games(matchup_urls: Optional[List[str]] = None, schedule=None, debug: bool = False, sport: str = NBA_SPORT) -> None:
     schedule = schedule if schedule is not None else SCHEDULE
     observed_at = datetime.now(timezone.utc)
     all_raw: List[RawPickRecord] = []
     all_normalized: List[dict] = []
 
+    # Get sport-specific store
+    store = get_data_store(sport)
+
     entries: List[tuple[str, Optional[str], Optional[str]]] = []
     if matchup_urls:
         entries = [(u, None, None) for u in matchup_urls]
     else:
-        discovered = discover_matchup_pick_urls()
+        discovered = discover_matchup_pick_urls(sport=sport)
         if debug:
-            print(f"[DEBUG] discovered_matchup_urls={len(discovered)}")
+            print(f"[DEBUG] discovered_matchup_urls={len(discovered)} sport={sport}")
             for url in discovered[:10]:
                 print(f"[DEBUG] matchup_url: {url}")
         entries = [(u, None, None) for u in discovered]
         if not entries and schedule:
             for game in schedule:
-                url = get_covers_matchup_url(game.away_team, game.home_team, game.game_date)
+                url = get_covers_matchup_url(game.away_team, game.home_team, game.game_date, sport=sport)
                 if url:
                     entries.append((url, game.away_team, game.home_team))
     if debug:
@@ -578,7 +615,7 @@ def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=N
             continue
         event_start_time_utc = parse_event_start_utc(html, observed_at_utc=observed_at)
         soup = BeautifulSoup(html, "html.parser")
-        page_away, page_home = extract_matchup_teams_from_header(soup)
+        page_away, page_home = extract_matchup_teams_from_header(soup, store=store)
 
         away_code = page_away or scheduled_away
         home_code = page_home or scheduled_home
@@ -604,6 +641,7 @@ def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=N
             observed_at_utc=observed_at,
             debug=True if idx == 0 else bool(debug_stats),
             debug_stats=debug_stats if idx == 0 else ({} if (debug and idx < 3) else None),
+            sport=sport,
         )
         all_raw.extend(raw_records)
         normalized_batch: List[dict] = []
@@ -613,6 +651,7 @@ def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=N
                 home_team=home_code,
                 away_team=away_code,
                 event_start_time_utc=event_start_time_utc,
+                sport=sport,
             )
             normalized_batch.append(normalized)
             all_normalized.append(normalized)
@@ -672,14 +711,16 @@ def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=N
 
     all_normalized = dedupe_normalized_bets(all_normalized)
     ensure_out_dir()
-    write_json(os.path.join(OUT_DIR, "raw_covers_nba.json"), all_raw)
-    write_json(os.path.join(OUT_DIR, "normalized_covers_nba.json"), all_normalized)
+    sport_suffix = sport.lower()
+    write_json(os.path.join(OUT_DIR, f"raw_covers_{sport_suffix}.json"), all_raw)
+    write_json(os.path.join(OUT_DIR, f"normalized_covers_{sport_suffix}.json"), all_normalized)
 
     eligible_records = [n for n in all_normalized if n.get("eligible_for_consensus")]
     unique_event_keys = {n.get("event", {}).get("event_key") for n in all_normalized if n.get("event")}
     print(
         json.dumps(
             {
+                "sport": sport,
                 "matchup_pages_processed": len(entries),
                 "raw_records": len(all_raw),
                 "normalized_records": len(all_normalized),
@@ -688,11 +729,23 @@ def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=N
             }
         )
     )
-    print(f"[INGEST] wrote NBA Covers outputs to OUT_DIR={OUT_DIR}")
+    print(f"[INGEST] wrote {sport} Covers outputs to OUT_DIR={OUT_DIR}")
+
+
+# Backward compatibility alias
+def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=None, debug: bool = False) -> None:
+    """Backward compatibility wrapper for ingest_covers_games with NBA sport."""
+    ingest_covers_games(matchup_urls=matchup_urls, schedule=schedule, debug=debug, sport=NBA_SPORT)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ingest Covers NBA analyst picks.")
+    parser = argparse.ArgumentParser(description="Ingest Covers analyst picks.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
+    parser.add_argument(
+        "--sport",
+        choices=["NBA", "NCAAB"],
+        default="NBA",
+        help="Sport to ingest (default: NBA)",
+    )
     args = parser.parse_args()
-    ingest_covers_nba_games(debug=args.debug)
+    ingest_covers_games(debug=args.debug, sport=args.sport)

@@ -20,7 +20,7 @@ def main() -> None:
     signals = sorted(signals, key=lambda r: r.get("observed_at_utc") or "")[-5:]
     now = datetime.now(timezone.utc).isoformat()
     for sig in signals:
-        res = grade_signal(sig, now, derive_date_str(sig), refresh_cache=False)
+        res = grade_signal(sig, now, derive_date_str(sig), refresh_cache=False, provider_name="api_sports", debug=False)
         print(
             json.dumps(
                 {

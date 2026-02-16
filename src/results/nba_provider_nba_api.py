@@ -41,6 +41,12 @@ STATS: Dict[str, int] = {
     "box_cache_hits_mem": 0,
     "box_fetches": 0,
     "box_refreshes": 0,
+    # detailed telemetry
+    "cache_hit_mem": 0,
+    "cache_hit_file": 0,
+    "http_fetch_scoreboard": 0,
+    "refresh_attempt_scoreboard": 0,
+    "http_error_scoreboard": 0,
 }
 
 TEAM_ABBR_MAP = {
@@ -188,6 +194,7 @@ def get_scoreboard(date_str: str, refresh_cache: bool = False) -> Tuple[Optional
     # memo always wins if present, even when refresh_cache is True (avoid repeat fetches in one run)
     if date_str in SCOREBOARD_MEMO:
         STATS["cache_hits_mem"] += 1
+        STATS["cache_hit_mem"] += 1
         meta["used_cache_mem"] = True
         return SCOREBOARD_MEMO[date_str], meta
 
@@ -199,15 +206,19 @@ def get_scoreboard(date_str: str, refresh_cache: bool = False) -> Tuple[Optional
         if cached is not None and not _is_poison_scoreboard(cached):
             meta["used_cache_file"] = True
             data = cached
+            STATS["cache_hits_file"] += 1
+            STATS["cache_hit_file"] += 1
 
     if data is None:
         if refresh_cache:
             STATS["refreshes"] += 1
+            STATS["refresh_attempt_scoreboard"] += 1
         try:
             _sleep()
+            STATS["fetches"] += 1
+            STATS["http_fetch_scoreboard"] += 1
             sb = scoreboardv2.ScoreboardV2(game_date=_format_date(date_str), league_id=LeagueID.nba, timeout=3)
             data = sb.get_dict()
-            STATS["fetches"] += 1
         except Exception:
             meta["fetch_failed"] = True
             data = None
@@ -217,6 +228,9 @@ def get_scoreboard(date_str: str, refresh_cache: bool = False) -> Tuple[Optional
         elif data is None:
             meta["fetch_failed"] = True
             data = {"resultSets": []}
+
+        if meta.get("fetch_failed"):
+            STATS["http_error_scoreboard"] += 1
 
     if data is not None:
         SCOREBOARD_MEMO[date_str] = data

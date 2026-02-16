@@ -25,6 +25,7 @@ DEFAULT_INPUT_FILES = [
     "normalized_betql_spread_nba.json",
     "normalized_betql_total_nba.json",
     "normalized_betql_prop_nba.json",
+    "normalized_sportsline_nba.json",
 ]
 
 HARD_DEBUG_META: Dict[str, Any] = {}
@@ -51,7 +52,7 @@ def load_records(out_dir: str) -> List[Dict[str, Any]]:
 
 
 def load_raw_records(out_dir: str) -> List[Dict[str, Any]]:
-    raw_paths = ["raw_action_nba.json", "raw_covers_nba.json", "raw_betql_prop_nba.json", "raw_betql_sharp_nba.json", "raw_betql_spread_nba.json", "raw_betql_total_nba.json", "raw_sportscapping_nba.json"]
+    raw_paths = ["raw_action_nba.json", "raw_covers_nba.json", "raw_betql_prop_nba.json", "raw_betql_sharp_nba.json", "raw_betql_spread_nba.json", "raw_betql_total_nba.json", "raw_sportscapping_nba.json", "raw_sportsline_nba.json"]
     raw: List[Dict[str, Any]] = []
     loaded = []
     for fname in raw_paths:
@@ -71,13 +72,27 @@ def load_raw_records(out_dir: str) -> List[Dict[str, Any]]:
 
 
 def day_key(event_key: str | None) -> str | None:
+    """Extract day_key from event_key in format NBA:YYYY:MM:DD.
+
+    Handles two event_key formats:
+    1. "NBA:YYYYMMDD:AWAY@HOME:HHMM" (e.g., "NBA:20260212:MIL@OKC:1700")
+    2. "NBA:YYYY:MM:DD:AWAY@HOME" (e.g., "NBA:2026:02:12:MIL@OKC")
+
+    Returns day_key in format "NBA:YYYY:MM:DD" or None if parsing fails.
+    """
     if not event_key or not isinstance(event_key, str):
         return None
     parts = event_key.split(":")
-    if len(parts) >= 4:
-        return ":".join(parts[:4])
-    if len(parts) >= 3:
-        return ":".join(parts[:3])
+    if len(parts) < 2:
+        return None
+    date_part = parts[1]
+    # Format 1: YYYYMMDD (e.g., "20260212") - reformat as YYYY:MM:DD
+    if len(date_part) == 8 and date_part.isdigit():
+        y, m, d = date_part[:4], date_part[4:6], date_part[6:8]
+        return f"NBA:{y}:{m}:{d}"
+    # Format 2: Already in YYYY:MM:DD format (check parts[1], parts[2], parts[3])
+    if len(parts) >= 4 and parts[1].isdigit() and parts[2].isdigit() and parts[3].isdigit():
+        return f"NBA:{parts[1]}:{parts[2]}:{parts[3]}"
     return None
 
 
@@ -850,6 +865,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                     "odds_list": [],
                     "sample_urls": [],
                     "count_total": 0,
+                    "supports": [],
                 },
             )
             group["count_total"] += 1
@@ -871,6 +887,20 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 group["sample_urls"].append(url)
             if url and source_id and source_id not in group["source_urls"]:
                 group["source_urls"][source_id] = url
+            # Append support entry with full provenance for standard markets
+            group["supports"].append({
+                "source_id": source_id,
+                "source_surface": prov.get("source_surface"),
+                "selection": selection,
+                "direction": market.get("side"),
+                "line": line,
+                "line_hint": prov.get("line_hint"),
+                "raw_pick_text": prov.get("raw_pick_text"),
+                "raw_block": (prov.get("raw_block") or "")[:300] if prov.get("raw_block") else None,
+                "canonical_url": url,
+                "expert_name": prov.get("expert_name"),
+                "expert_handle": prov.get("expert_handle"),
+            })
             continue
 
         # Player prop markets for hard consensus (group by match_key)
@@ -964,6 +994,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 "experts_raw": sorted(f"{src}:{val}" for (src, val) in group["experts_set"] if src and val),
                 "count_total": group["count_total"],
                 "sample_urls": group["sample_urls"],
+                "supports": group.get("supports") or [],
             }
         )
 
@@ -1233,6 +1264,20 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
         if url and len(grp["sample_urls"]) < 3 and url not in grp["sample_urls"]:
             grp["sample_urls"].append(url)
         grp["records"].append({"rec": rec, "expert_id": expert, "source_id": src})
+        # Build support entry for standard market with full provenance
+        grp.setdefault("supports", []).append({
+            "source_id": src,
+            "source_surface": prov.get("source_surface"),
+            "selection": selection_norm,
+            "direction": direction,
+            "line": line,
+            "line_hint": prov.get("line_hint"),
+            "raw_pick_text": prov.get("raw_pick_text"),
+            "raw_block": (prov.get("raw_block") or "")[:300] if prov.get("raw_block") else None,
+            "canonical_url": prov.get("canonical_url"),
+            "expert_name": prov.get("expert_name"),
+            "expert_handle": prov.get("expert_handle"),
+        })
 
     for rec in records:
         if rec.get("eligible_for_consensus"):
@@ -1272,12 +1317,16 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
                 "stat_key": sig.get("stat_key"),
                 "line": sig.get("line"),
                 "source_id": source_id,
+                "source_surface": sig.get("source_surface"),
                 "selection": sig.get("selection"),
                 "display_player_id": sig.get("display_player_id"),
                 "expert_name": sig.get("expert_name"),
                 "expert_handle": sig.get("expert_handle"),
                 "canonical_url": sig.get("sample_url"),
                 "direction": sig.get("direction"),
+                "line_hint": sig.get("line_hint"),
+                "raw_pick_text": sig.get("raw_pick_text"),
+                "raw_block": sig.get("raw_block"),
             }
         )
 
@@ -1416,7 +1465,7 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
                     "expert_names": [],
                     "count_total": grp["count_total"],
                     "sample_urls": grp["sample_urls"],
-                    "supports": [],
+                    "supports": grp.get("supports") or [],
                     "line_median": line_median,
                     "line_min": line_min,
                     "line_max": line_max,
@@ -1521,6 +1570,24 @@ def print_section(title: str, rows: List[Dict[str, Any]], row_formatter) -> None
         return
     for idx, item in enumerate(rows, 1):
         print(f"{idx}. {row_formatter(item)}")
+
+
+def format_solo_row(item: Dict[str, Any]) -> str:
+    """Format a solo pick for display."""
+    mkt = item.get("market_type", "unknown")
+    line = item.get("line")
+    line_part = f" line={line}" if line is not None else ""
+    src = item.get("sources", [])
+    src_str = src[0] if src else "unknown"
+    experts = item.get("experts", [])
+    exp_str = experts[0] if experts else ""
+    url = ""
+    if item.get("supports"):
+        url = item["supports"][0].get("canonical_url", "")[:60]
+    return (
+        f"{item.get('day_key')} [{mkt}] {item.get('selection')}{line_part} "
+        f"source={src_str} expert={exp_str} url={url}..."
+    )
 
 
 def format_hard_row(item: Dict[str, Any]) -> str:
@@ -1691,6 +1758,7 @@ def build_supports_from_group(group: Dict[str, Any]) -> List[Dict[str, Any]]:
         supports.append(
             {
                 "source_id": sup.get("source_id") or group.get("source_id"),
+                "source_surface": sup.get("source_surface") or group.get("source_surface"),
                 "expert_name": sup.get("expert_name"),
                 "expert_handle": sup.get("expert_handle"),
                 "selection": sup.get("selection") or group.get("selection"),
@@ -1699,6 +1767,9 @@ def build_supports_from_group(group: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "atomic_stat": sup.get("atomic_stat") or group.get("atomic_stat"),
                 "direction": sup.get("direction") or group.get("direction") or group.get("side"),
                 "line": sup.get("line") if sup.get("line") is not None else group.get("line"),
+                "line_hint": sup.get("line_hint"),
+                "raw_pick_text": sup.get("raw_pick_text"),
+                "raw_block": sup.get("raw_block"),
                 "canonical_url": sup.get("canonical_url") or (sample_urls[0] if sample_urls else None),
                 "evidence_type": evidence_type,
             }
@@ -1777,6 +1848,158 @@ def derive_experts(group: Dict[str, Any]) -> List[str]:
         return sorted(raw)
     sources = group.get("sources") or ([group.get("source_id")] if group.get("source_id") else [])
     return sorted({str(src) for src in sources if src})
+
+
+def build_solo_signals(
+    records: List[Dict[str, Any]],
+    hard_groups: List[Dict[str, Any]],
+    soft_groups: List[Dict[str, Any]],
+    within_groups: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build solo signals for records that didn't match any consensus.
+
+    A solo pick is a record from a single source/expert that didn't get grouped
+    with picks from other sources. These are tracked separately to give each
+    source credit for their individual calls.
+    """
+    # Collect all record fingerprints that are in consensus groups
+    # A record is "in consensus" if it's in a group with source_strength >= 2 OR expert_strength >= 2
+    consensus_fingerprints: Set[Tuple[Any, ...]] = set()
+
+    def add_fingerprints_from_supports(supports: List[Dict[str, Any]]) -> None:
+        for sup in supports:
+            src = sup.get("source_id")
+            url = sup.get("canonical_url")
+            expert = sup.get("expert_handle") or sup.get("expert_name")
+            if src and url:
+                consensus_fingerprints.add((src, url))
+            if src and expert:
+                consensus_fingerprints.add((src, expert))
+
+    # Process hard groups - records in groups with source_strength >= 2 are in consensus
+    for g in hard_groups:
+        if g.get("source_strength", 0) >= 2:
+            add_fingerprints_from_supports(g.get("supports") or [])
+
+    # Process soft groups - records in groups with expert_strength >= 2 are in consensus
+    for g in soft_groups:
+        if g.get("expert_strength", 0) >= 2 or g.get("count_total", 0) >= 2:
+            add_fingerprints_from_supports(g.get("supports") or [])
+
+    # Process within groups - records in groups with count_total >= 2 from same source
+    for g in within_groups:
+        if g.get("count_total", 0) >= 2:
+            add_fingerprints_from_supports(g.get("supports") or [])
+
+    # Find records not in any consensus
+    solo_signals: List[Dict[str, Any]] = []
+    seen_solo_keys: Set[Tuple[Any, ...]] = set()
+
+    for rec in records:
+        if not rec.get("eligible_for_consensus"):
+            continue
+
+        event = rec.get("event") or {}
+        market = rec.get("market") or {}
+        prov = rec.get("provenance") or {}
+
+        src = prov.get("source_id")
+        url = prov.get("canonical_url")
+        expert = prov.get("expert_handle") or prov.get("expert_name")
+
+        # Check if this record is in consensus
+        in_consensus = False
+        if src and url and (src, url) in consensus_fingerprints:
+            in_consensus = True
+        if src and expert and (src, expert) in consensus_fingerprints:
+            in_consensus = True
+
+        if in_consensus:
+            continue
+
+        # This is a solo pick - build a solo signal
+        market_type = market.get("market_type")
+        dk = day_key(event.get("event_key"))
+
+        # Build a unique key to dedupe solo signals
+        solo_key = (
+            dk,
+            src,
+            market_type,
+            market.get("selection"),
+            market.get("line"),
+            expert,
+        )
+        if solo_key in seen_solo_keys:
+            continue
+        seen_solo_keys.add(solo_key)
+
+        line = market.get("line")
+        odds = market.get("odds")
+
+        # Determine direction/selection based on market type
+        if market_type == "player_prop":
+            player_id = market.get("player_key") or market.get("selection")
+            if player_id and isinstance(player_id, str):
+                player_id = normalize_player_id(player_id)
+            atomic_stat = market.get("stat_key")
+            if atomic_stat:
+                atomic_stat = _normalize_prop_stat_key(atomic_stat)
+            direction = _normalize_prop_direction(market.get("side"), market.get("selection"))
+            selection = _canonical_prop_selection(
+                f"NBA:{player_id}" if player_id else None,
+                atomic_stat,
+                direction
+            ) or market.get("selection")
+        else:
+            player_id = None
+            atomic_stat = None
+            selection = market.get("selection")
+            direction = market.get("side")
+
+        solo_signals.append({
+            "signal_type": "solo_pick",
+            "day_key": dk,
+            "event_key": event.get("event_key"),
+            "market_type": market_type,
+            "player_id": player_id,
+            "selection": selection,
+            "atomic_stat": atomic_stat,
+            "direction": direction,
+            "line": line,
+            "line_median": line,
+            "line_min": line,
+            "line_max": line,
+            "lines": [line] if line is not None else [],
+            "score": 10,  # Low score for solo picks
+            "source_strength": 1,
+            "expert_strength": 1,
+            "count_total": 1,
+            "sources": [src] if src else [],
+            "sources_present": [src] if src else [],  # Only the solo source
+            "experts": [expert] if expert else [],
+            "supports": [{
+                "source_id": src,
+                "source_surface": prov.get("source_surface"),
+                "selection": selection,
+                "direction": direction,
+                "line": line,
+                "line_hint": prov.get("line_hint"),
+                "raw_pick_text": prov.get("raw_pick_text"),
+                "raw_block": (prov.get("raw_block") or "")[:300] if prov.get("raw_block") else None,
+                "canonical_url": url,
+                "expert_name": prov.get("expert_name"),
+                "expert_handle": prov.get("expert_handle"),
+            }],
+            "odds": [odds] if odds else [],
+            "odds_list": [odds] if odds else [],
+            "best_odds": odds,
+            "matchup": event.get("matchup_key") or f"{event.get('away_team')}@{event.get('home_team')}",
+            "home_team": event.get("home_team"),
+            "away_team": event.get("away_team"),
+        })
+
+    return solo_signals
 
 
 def build_unified_signals(
@@ -2898,6 +3121,16 @@ def main(
         json.dump(within_groups, f, ensure_ascii=False, indent=2)
 
     unified_signals = build_unified_signals(hard_groups, soft_groups, within_groups)
+
+    # Build solo signals for records not in any consensus
+    solo_signals = build_solo_signals(records, hard_groups, soft_groups, within_groups)
+    if solo_signals:
+        print(f"[SOLO PICKS] Generated {len(solo_signals)} solo pick signals")
+        # Write solo signals to separate file for debugging
+        with open(os.path.join(out_dir, "consensus_nba_solo.json"), "w", encoding="utf-8") as f:
+            json.dump(solo_signals, f, ensure_ascii=False, indent=2)
+        unified_signals.extend(solo_signals)
+
     prop_conflict_count = sum(
         1
         for sig in unified_signals
@@ -3043,6 +3276,16 @@ def main(
             print(f"[DEBUG] prop_prefix_fixes: {prop_prefix_counters}")
 
     print_section("CONFLICTS / AVOIDS:", conflict_rows_filtered, format_conflict_row)
+
+    # Print solo picks summary (limit to first 20)
+    if solo_signals:
+        solo_by_source: Dict[str, int] = {}
+        for sig in solo_signals:
+            src = (sig.get("sources") or ["unknown"])[0]
+            solo_by_source[src] = solo_by_source.get(src, 0) + 1
+        print(f"\nSOLO PICKS ({len(solo_signals)} total):")
+        print(f"  By source: {solo_by_source}")
+        print_section("SOLO PICKS (first 20):", solo_signals[:20], format_solo_row)
 
     # Tracking writes
     if track:

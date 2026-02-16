@@ -49,6 +49,24 @@ def provider_info() -> Dict[str, Any]:
     return {"provider": prov, "base": "unknown", "key_present": False}
 
 
+def _games_diagnostics(games: List[Dict[str, Any]]) -> Tuple[List[str], List[Dict[str, Any]]]:
+    matchups_full: List[str] = []
+    games_full: List[Dict[str, Any]] = []
+    for g in games:
+        away = g.get("away_team_abbrev")
+        home = g.get("home_team_abbrev")
+        matchups_full.append(f"{away}@{home}")
+        games_full.append(
+            {
+                "game_id": str(g.get("game_id")),
+                "away": away,
+                "home": home,
+                "status": g.get("status"),
+            }
+        )
+    return matchups_full, games_full
+
+
 def _parse_event_key_date(event_key: Optional[str]) -> Optional[str]:
     if not isinstance(event_key, str):
         return None
@@ -95,6 +113,30 @@ def _candidate_dates(primary_date: str, event_key: Optional[str]) -> List[Tuple[
     return out
 
 
+def _prepare_games_meta(games: List[Dict[str, Any]], meta: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    meta_copy = json.loads(json.dumps(meta))
+    matchups_full, games_full = _games_diagnostics(games)
+    actual_count = len(games)
+    meta_count_raw = meta_copy.get("games_count") or 0
+    try:
+        meta_count = int(meta_count_raw)
+    except Exception:
+        meta_count = 0
+    mismatch = bool(meta_count and actual_count and meta_count != actual_count)
+    partial = mismatch or (meta_count == 0 and actual_count > 0)
+    meta_copy.update(
+        {
+            "games_count_actual": actual_count,
+            "games_count_meta": meta_count,
+            "matchups_full": matchups_full,
+            "games_full": games_full,
+        }
+    )
+    if partial:
+        meta_copy["suspect_partial"] = True
+    return games, meta_copy
+
+
 def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refresh_cache: bool = False) -> Optional[Dict[str, Any]]:
     provider = _provider()
     if provider in {"nba_api", "auto"}:
@@ -105,30 +147,49 @@ def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refre
             game_id = None
             used_date = date_str
             for ds_attempt, shift, strat in _candidate_dates(date_str, event_key):
-                games, meta = nba_api.get_games_for_date(ds_attempt, refresh_cache=refresh_cache)
-                meta = json.loads(json.dumps(meta))
+                games, meta_raw = nba_api.get_games_for_date(ds_attempt, refresh_cache=refresh_cache)
+                games, meta = _prepare_games_meta(games, meta_raw)
+                if not refresh_cache and meta.get("suspect_partial") and (meta.get("used_cache_file") or meta.get("used_cache_mem")):
+                    games, meta_raw = nba_api.get_games_for_date(ds_attempt, refresh_cache=True)
+                    games, meta = _prepare_games_meta(games, meta_raw)
+                    meta["partial_refetch"] = True
                 meta["date_used"] = ds_attempt
                 meta["date_shifted"] = shift
                 meta["date_strategy"] = strat
                 meta["search"] = {"away": away, "home": home, "away_norm": away_n, "home_norm": home_n}
+                meta["search_attempted"] = [
+                    {"away": away, "home": home, "away_norm": away_n, "home_norm": home_n},
+                    {"away": home, "home": away, "away_norm": home_n, "home_norm": away_n},
+                ]
+                meta.setdefault("match_orientation", "none")
                 # keep first meta as baseline
                 if not meta_copy:
                     meta_copy = json.loads(json.dumps(meta))
                 for g in games:
-                    if nba_api._norm_team(str(g.get("away_team_abbrev") or "")) == away_n and nba_api._norm_team(
-                        str(g.get("home_team_abbrev") or "")
-                    ) == home_n:
+                    away_game = nba_api._norm_team(str(g.get("away_team_abbrev") or ""))
+                    home_game = nba_api._norm_team(str(g.get("home_team_abbrev") or ""))
+                    orientation = None
+                    if away_game == away_n and home_game == home_n:
+                        orientation = "direct"
+                    elif away_game == home_n and home_game == away_n:
+                        orientation = "flipped"
+                    if orientation:
                         game_id = str(g.get("game_id"))
                         meta_copy = json.loads(json.dumps(meta))
                         meta_copy["matched_game_id"] = game_id
                         meta_copy["matched_status"] = g.get("status")
+                        meta_copy["match_orientation"] = orientation
+                        if orientation == "flipped":
+                            meta_copy["search_flipped"] = {"away": home, "home": away, "away_norm": home_n, "home_norm": away_n}
                         used_date = ds_attempt
                         break
                 if game_id:
                     break
             if meta_copy.get("fetch_failed"):
                 return {"status": "ERROR", "notes": "fetch_failed", "games_info": meta_copy}
-            if meta_copy.get("games_count", 0) == 0:
+            actual_count = meta_copy.get("games_count_actual", meta_copy.get("games_count", 0))
+            meta_count = meta_copy.get("games_count_meta", meta_copy.get("games_count", 0))
+            if actual_count == 0 and meta_count == 0:
                 return {"status": "NO_GAMES", "notes": "no_games_for_date", "games_info": meta_copy}
             if game_id:
                 score = nba_api.get_game_score(game_id, used_date, refresh_cache=refresh_cache) or {}
@@ -137,9 +198,11 @@ def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refre
                 score["games_info"] = info
                 return {"game_id": game_id, **score}
             # include scoreboard list for debugging
-            meta_copy["matchups"] = [
-                f"{g.get('away_team_abbrev')}@{g.get('home_team_abbrev')}" for g in games[:10]
-            ]
+            meta_copy["match_orientation"] = meta_copy.get("match_orientation") or "none"
+            matchups_full, games_full = _games_diagnostics(games)
+            meta_copy["matchups_full"] = matchups_full
+            meta_copy["games_full"] = games_full
+            meta_copy["matchups"] = matchups_full[:10]
             return {"status": "ERROR", "notes": "game_not_found", "games_info": meta_copy}
         except Exception as e:
             return {"status": "ERROR", "notes": "nba_api_exception", "games_info": {"provider": "nba_api", "date": date_str, "fetch_failed": True, "exception": repr(e)}}
@@ -155,20 +218,42 @@ def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refre
             return {"status": "ERROR", "notes": "api_sports_exception", "games_info": {"provider": "api_sports", "date": date_str, "fetch_failed": True, "exception": repr(e)}}
         # fallback to nba_api if API-Sports blank
         try:
-            games, meta = nba_api.get_games_for_date(date_str, refresh_cache=refresh_cache)
+            games, meta_raw = nba_api.get_games_for_date(date_str, refresh_cache=refresh_cache)
+            games, meta = _prepare_games_meta(games, meta_raw)
+            if not refresh_cache and meta.get("suspect_partial") and (meta.get("used_cache_file") or meta.get("used_cache_mem")):
+                games, meta_raw = nba_api.get_games_for_date(date_str, refresh_cache=True)
+                games, meta = _prepare_games_meta(games, meta_raw)
+                meta["partial_refetch"] = True
             game_id = None
             away_n = nba_api._norm_team(away)
             home_n = nba_api._norm_team(home)
+            meta["search"] = {"away": away, "home": home, "away_norm": away_n, "home_norm": home_n}
+            meta["search_attempted"] = [
+                {"away": away, "home": home, "away_norm": away_n, "home_norm": home_n},
+                {"away": home, "home": away, "away_norm": home_n, "home_norm": away_n},
+            ]
+            meta.setdefault("match_orientation", "none")
             for g in games:
-                if nba_api._norm_team(str(g.get("away_team_abbrev") or "")) == away_n and nba_api._norm_team(
-                    str(g.get("home_team_abbrev") or "")
-                ) == home_n:
+                away_game = nba_api._norm_team(str(g.get("away_team_abbrev") or ""))
+                home_game = nba_api._norm_team(str(g.get("home_team_abbrev") or ""))
+                orientation = None
+                if away_game == away_n and home_game == home_n:
+                    orientation = "direct"
+                elif away_game == home_n and home_game == away_n:
+                    orientation = "flipped"
+                if orientation:
                     game_id = str(g.get("game_id"))
                     meta["matched_game_id"] = game_id
+                    meta["matched_status"] = g.get("status")
+                    meta["match_orientation"] = orientation
+                    if orientation == "flipped":
+                        meta["search_flipped"] = {"away": home, "home": away, "away_norm": home_n, "home_norm": away_n}
                     break
             if meta.get("fetch_failed"):
                 return {"status": "ERROR", "notes": "fetch_failed", "games_info": meta}
-            if meta.get("games_count", 0) == 0:
+            actual_count = meta.get("games_count_actual", meta.get("games_count", 0))
+            meta_count = meta.get("games_count_meta", meta.get("games_count", 0))
+            if actual_count == 0 and meta_count == 0:
                 return {"status": "NO_GAMES", "notes": "no_games_for_date", "games_info": meta}
             if game_id:
                 score = nba_api.get_game_score(game_id, date_str, refresh_cache=refresh_cache) or {}
@@ -176,6 +261,8 @@ def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refre
                 info.update(meta)
                 score["games_info"] = info
                 return {"game_id": game_id, **score}
+            meta["matchups"] = meta.get("matchups_full", [])[:10]
+            return {"status": "ERROR", "notes": "game_not_found", "games_info": meta}
         except Exception as e:
             return {"status": "ERROR", "notes": "nba_api_exception", "games_info": {"provider": "nba_api", "date": date_str, "fetch_failed": True, "exception": repr(e), "fallback_from": "api_sports"}}
 
@@ -206,28 +293,50 @@ def fetch_player_statline(event_key: str, player_id: str, stat_key: str, date_st
             away_n = nba_api._norm_team(away)
             home_n = nba_api._norm_team(home)
             for ds_attempt, shift, strat in _candidate_dates(date_str, event_key):
-                games, meta = nba_api.get_games_for_date(ds_attempt, refresh_cache=refresh_cache)
-                meta = json.loads(json.dumps(meta))
+                games, meta_raw = nba_api.get_games_for_date(ds_attempt, refresh_cache=refresh_cache)
+                games, meta = _prepare_games_meta(games, meta_raw)
+                if not refresh_cache and meta.get("suspect_partial") and (meta.get("used_cache_file") or meta.get("used_cache_mem")):
+                    games, meta_raw = nba_api.get_games_for_date(ds_attempt, refresh_cache=True)
+                    games, meta = _prepare_games_meta(games, meta_raw)
+                    meta["partial_refetch"] = True
                 meta["date_used"] = ds_attempt
                 meta["date_shifted"] = shift
                 meta["date_strategy"] = strat
                 meta["search"] = {"away": away, "home": home, "away_norm": away_n, "home_norm": home_n}
+                meta["search_attempted"] = [
+                    {"away": away, "home": home, "away_norm": away_n, "home_norm": home_n},
+                    {"away": home, "home": away, "away_norm": home_n, "home_norm": away_n},
+                ]
+                meta.setdefault("match_orientation", "none")
                 if not meta_best:
                     meta_best = json.loads(json.dumps(meta))
                 for g in games:
-                    if nba_api._norm_team(str(g.get("away_team_abbrev") or "")) == away_n and nba_api._norm_team(
-                        str(g.get("home_team_abbrev") or "")
-                    ) == home_n:
+                    away_game = nba_api._norm_team(str(g.get("away_team_abbrev") or ""))
+                    home_game = nba_api._norm_team(str(g.get("home_team_abbrev") or ""))
+                    orientation = None
+                    if away_game == away_n and home_game == home_n:
+                        orientation = "direct"
+                    elif away_game == home_n and home_game == away_n:
+                        orientation = "flipped"
+                    if orientation:
                         game_id = str(g.get("game_id"))
                         meta_best = json.loads(json.dumps(meta))
                         meta_best["matched_game_id"] = game_id
                         meta_best["matched_status"] = g.get("status")
+                        meta_best["match_orientation"] = orientation
+                        if orientation == "flipped":
+                            meta_best["search_flipped"] = {"away": home, "home": away, "away_norm": home_n, "home_norm": away_n}
                         break
                 if game_id:
                     break
             if game_id:
                 return game_id, meta_best
-            meta_best["matchups"] = [f"{g.get('away_team_abbrev')}@{g.get('home_team_abbrev')}" for g in (games if 'games' in locals() else [])[:10]]
+            games_last = games if "games" in locals() else []
+            matchups_full, games_full = _games_diagnostics(games_last)
+            meta_best["matchups_full"] = matchups_full
+            meta_best["games_full"] = games_full
+            meta_best["matchups"] = matchups_full[:10]
+            meta_best["match_orientation"] = meta_best.get("match_orientation") or "none"
             return None, meta_best
         except Exception:
             return None, {"error": "resolve_game_id_exception"}

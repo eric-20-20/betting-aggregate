@@ -33,7 +33,15 @@ def _alarm(seconds: int):
 CACHE_DIR = Path("data/cache/results")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-STATS = {"cache_hits": 0, "fetches": 0}
+STATS = {
+    "cache_hits": 0,
+    "fetches": 0,
+    # detailed telemetry
+    "cache_hit_file": 0,
+    "http_fetch_boxscore_cdn": 0,
+    "refresh_attempt_boxscore_cdn": 0,
+    "http_error_boxscore_cdn": 0,
+}
 
 def _cache_path(game_id: str) -> Path:
     return CACHE_DIR / f"nba_cdn_boxscore_{game_id}.json"
@@ -54,10 +62,14 @@ def _fetch_boxscore_json(game_id: str, refresh_cache: bool = False, timeout: int
     if cp.exists() and not refresh_cache:
         try:
             STATS["cache_hits"] += 1
+            STATS["cache_hit_file"] += 1
             meta["used_cache_file"] = True
             return json.loads(cp.read_text()), meta
         except Exception:
             pass
+
+    if refresh_cache:
+        STATS["refresh_attempt_boxscore_cdn"] += 1
 
     url = f"https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{game_id}.json"
     meta["url"] = url
@@ -83,6 +95,7 @@ def _fetch_boxscore_json(game_id: str, refresh_cache: bool = False, timeout: int
         try:
             with _deadline(5):
                 STATS["fetches"] += 1
+                STATS["http_fetch_boxscore_cdn"] += 1
                 resp = session.get(url, timeout=(3, 20), verify=True)
             meta["status"] = resp.status_code
             meta["elapsed_sec"] = round(time.time() - t0, 3)
@@ -92,14 +105,18 @@ def _fetch_boxscore_json(game_id: str, refresh_cache: bool = False, timeout: int
                     cp.write_text(json.dumps(data))
                     return data, meta
             meta["body_preview"] = resp.text[:200]
+            if resp.status_code != 200:
+                STATS["http_error_boxscore_cdn"] += 1
         except Exception as e:
             meta.setdefault("exceptions", []).append(repr(e))
             meta["elapsed_sec"] = round(time.time() - t0, 3)
+            STATS["http_error_boxscore_cdn"] += 1
 
     # curl fallback with python-enforced timeout
     meta["path"] = "curl_fallback"
     try:
         t0 = time.time()
+        STATS["http_fetch_boxscore_cdn"] += 1
         output = subprocess.check_output(["curl", "-sL", url], timeout=20)
         meta["elapsed_sec"] = round(time.time() - t0, 3)
         meta["status"] = 0
@@ -111,13 +128,19 @@ def _fetch_boxscore_json(game_id: str, refresh_cache: bool = False, timeout: int
                     return data, meta
                 else:
                     meta.setdefault("exceptions", []).append("curl_json_invalid")
+                    STATS["http_error_boxscore_cdn"] += 1
             except Exception as e:
                 meta.setdefault("exceptions", []).append(f"curl_json_error:{e}")
+                STATS["http_error_boxscore_cdn"] += 1
+        else:
+            STATS["http_error_boxscore_cdn"] += 1
     except subprocess.TimeoutExpired as e:
         meta.setdefault("exceptions", []).append(f"curl_timeout:{e}")
         meta["elapsed_sec"] = round(time.time() - t0, 3)
+        STATS["http_error_boxscore_cdn"] += 1
     except Exception as e:
         meta.setdefault("exceptions", []).append(f"curl_error:{e}")
+        STATS["http_error_boxscore_cdn"] += 1
 
     meta["fetch_failed"] = True
     return None, meta

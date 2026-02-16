@@ -21,7 +21,7 @@ def main(out_path: str, storage_state: str, headless: bool = True, debug: bool =
     records = []
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     with BetQLSession(storage_state_path=storage_state, headless=headless) as sess:
-        page = sess.open(CANONICAL_URL)
+        page = sess.open(CANONICAL_URL, wait_for="div.carousel-track")
         wait_for_ready(page, surface="props")
         recs = extract_prop_picks(page, canonical_url=CANONICAL_URL, debug=debug)
         records.extend(recs)

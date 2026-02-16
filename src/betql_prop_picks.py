@@ -257,6 +257,82 @@ def _iter_team_sections(page: Page, away_abbrev: Optional[str], home_abbrev: Opt
         side = _team_side(team_abbrev, away_abbrev, home_abbrev)
         yield (team_abbrev, side, team_name_txt, card_idxs)
 
+
+def _props_snapshot(page: Page) -> Dict[str, str]:
+    try:
+        logo = page.locator(TEAM_PANEL_LOGO_SELECTOR).first
+        logo_src = (logo.get_attribute("src") or "").strip()
+    except Exception:
+        logo_src = ""
+    try:
+        name = page.locator(PLAYER_NAME_SELECTOR).first.inner_text().strip()
+    except Exception:
+        name = ""
+    try:
+        bet = page.locator(BET_TEXT_SELECTOR).first.inner_text().strip()
+    except Exception:
+        bet = ""
+    return {"logo": logo_src, "name": name, "bet": bet}
+
+
+def _has_usable_props(page: Page) -> bool:
+    try:
+        cards = page.locator(PLAYER_CARD_SELECTOR).count()
+        bets = page.locator(BET_ROW_SELECTOR).count()
+        return cards > 0 and bets > 0
+    except Exception:
+        return False
+
+
+def _click_card_and_wait(page: Page, card, prev_snapshot: Dict[str, str], debug: bool = False) -> None:
+    attempts = 0
+    last_snapshot = prev_snapshot
+    while attempts < 3:
+        attempts += 1
+        try:
+            card.scroll_into_view_if_needed()
+        except Exception:
+            pass
+        try:
+            card.click(timeout=5000, force=True)
+        except Exception:
+            try:
+                page.evaluate("(el)=>el && el.click()", card)
+            except Exception:
+                pass
+        try:
+            page.wait_for_selector(PLAYER_CARD_SELECTOR, state="attached", timeout=15000)
+        except Exception:
+            pass
+        page.wait_for_timeout(300 + 100 * attempts)
+        snap = _props_snapshot(page)
+        usable = _has_usable_props(page)
+        changed = (snap != prev_snapshot)
+        if debug:
+            try:
+                pc = page.locator(PLAYER_CARD_SELECTOR).count()
+                br = page.locator(BET_ROW_SELECTOR).count()
+            except Exception:
+                pc = br = -1
+            logger.debug(
+                "[betql-props] card wait attempt=%s usable=%s changed=%s pc=%s br=%s snap=%s prev=%s",
+                attempts,
+                usable,
+                changed,
+                pc,
+                br,
+                snap,
+                prev_snapshot,
+            )
+        if usable and (changed or attempts >= 1):
+            return
+        last_snapshot = snap
+    pc = page.locator(PLAYER_CARD_SELECTOR).count() if page else -1
+    br = page.locator(BET_ROW_SELECTOR).count() if page else -1
+    raise TimeoutError(
+        f"Failed to load props after click; usable={_has_usable_props(page)} prev={prev_snapshot} last={last_snapshot} pc={pc} br={br}"
+    )
+
 def _scrape_visible_props(
     page: Page,
     canonical_url: str,
@@ -340,7 +416,7 @@ def extract_prop_picks(page: Page, canonical_url: str = CANONICAL_URL, debug: bo
 
     # Ensure key elements exist before looping.
     page.wait_for_selector(GAME_CARD_SELECTOR, state="attached", timeout=20000)
-    page.wait_for_selector(ACTIVE_GAME_SELECTOR, state="attached", timeout=20000)
+    page.wait_for_selector(PLAYER_CARD_SELECTOR, state="attached", timeout=20000)
 
     scroll_attempts = 0
     while True:
@@ -354,14 +430,8 @@ def extract_prop_picks(page: Page, canonical_url: str = CANONICAL_URL, debug: bo
                 continue
             visited_cards.add(card_key)
 
-            prev_active = _active_team_name(page) or ""
-            card.click()
-            page.wait_for_function(
-                """(sel, prev)=>{const el=document.querySelector(sel); return el && el.textContent.trim() !== prev;}""",
-                arg=(ACTIVE_GAME_SELECTOR, prev_active),
-                timeout=15000,
-            )
-            page.wait_for_selector(PLAYER_CARD_SELECTOR, state="attached", timeout=15000)
+            snapshot = _props_snapshot(page)
+            _click_card_and_wait(page, card, snapshot, debug=debug)
             for sec_abbrev, sec_side, sec_team_name, card_indexes in _iter_team_sections(
                 page, away_abbrev, home_abbrev, debug=debug
             ):

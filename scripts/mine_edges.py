@@ -77,7 +77,11 @@ class EdgePattern:
 
 
 def load_graded_data(sport: str = "NBA") -> List[Dict[str, Any]]:
-    """Load graded signals/occurrences data."""
+    """Load graded signals/occurrences data, deduplicated by unique pick.
+
+    The source data may have multiple rows for the same pick (different signal
+    windows, expert combinations, etc.). We deduplicate to count each bet once.
+    """
     if sport.upper() == "NCAAB":
         path = Path("data/analysis/ncaab/graded_occurrences_latest.jsonl")
     else:
@@ -88,6 +92,9 @@ def load_graded_data(sport: str = "NBA") -> List[Dict[str, Any]]:
         print(f"Warning: {path} not found")
         return rows
 
+    seen_picks = set()
+    duplicates_skipped = 0
+
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -96,9 +103,22 @@ def load_graded_data(sport: str = "NBA") -> List[Dict[str, Any]]:
                     row = json.loads(line)
                     # Only include graded rows with terminal results
                     if row.get("grade_status") == "GRADED" and row.get("result") in ("WIN", "LOSS", "PUSH"):
+                        # Create unique pick key: event + selection (the bet)
+                        event_key = row.get("event_key", "")
+                        selection = row.get("selection", "")
+                        pick_key = f"{event_key}|{selection}"
+
+                        if pick_key in seen_picks:
+                            duplicates_skipped += 1
+                            continue
+
+                        seen_picks.add(pick_key)
                         rows.append(row)
                 except json.JSONDecodeError:
                     continue
+
+    if duplicates_skipped > 0:
+        print(f"  (Deduplicated: skipped {duplicates_skipped} duplicate picks)")
 
     return rows
 
@@ -767,9 +787,15 @@ def mine_patterns(
     stratify_team: bool = False,
     stratify_player: bool = False,
     stratify_expert: bool = False,
+    include_single_source: bool = False,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Group rows by pattern (source combinations + stratifications).
+
+    Args:
+        include_single_source: If True, also create patterns for each individual source
+            that participated in a pick. E.g., an action|betql consensus pick will count
+            toward "action" pattern, "betql" pattern, AND "action|betql" pattern.
 
     Returns: Dict[pattern_id -> List[rows matching pattern]]
     """
@@ -810,13 +836,57 @@ def mine_patterns(
         if stratify_expert:
             experts_list = extract_experts(row)
 
+        # If include_single_source, also create patterns for each individual source
+        # This allows tracking "how does Action perform overall" including consensus picks
+        if include_single_source:
+            for source in sources:
+                pattern_id = generate_pattern_id(
+                    [source],
+                    market_type=market_type,
+                    prop_stat=prop_stat,
+                    odds_bucket=odds_bucket,
+                    line_bucket=line_bucket,
+                    team=team,
+                    player=player,
+                    expert=None,
+                )
+                patterns[pattern_id].append(row)
+
+                # Also create expert-specific single-source patterns
+                if stratify_expert and experts_list:
+                    for expert in experts_list:
+                        pattern_id = generate_pattern_id(
+                            [source],
+                            market_type=market_type,
+                            prop_stat=prop_stat,
+                            odds_bucket=odds_bucket,
+                            line_bucket=line_bucket,
+                            team=team,
+                            player=player,
+                            expert=expert,
+                        )
+                        patterns[pattern_id].append(row)
+
         # Generate all source combinations (pairs, triplets, etc.)
         for k in range(min_sources, min(max_sources + 1, len(sources) + 1)):
             for combo in combinations(sources, k):
                 combo_list = list(combo)
 
+                # Always create the aggregate pattern (without expert)
+                pattern_id = generate_pattern_id(
+                    combo_list,
+                    market_type=market_type,
+                    prop_stat=prop_stat,
+                    odds_bucket=odds_bucket,
+                    line_bucket=line_bucket,
+                    team=team,
+                    player=player,
+                    expert=None,
+                )
+                patterns[pattern_id].append(row)
+
+                # Additionally create expert-specific patterns if requested
                 if stratify_expert and experts_list:
-                    # Create a pattern for EACH expert in the row
                     for expert in experts_list:
                         pattern_id = generate_pattern_id(
                             combo_list,
@@ -829,19 +899,6 @@ def mine_patterns(
                             expert=expert,
                         )
                         patterns[pattern_id].append(row)
-                else:
-                    # Standard pattern without expert stratification
-                    pattern_id = generate_pattern_id(
-                        combo_list,
-                        market_type=market_type,
-                        prop_stat=prop_stat,
-                        odds_bucket=odds_bucket,
-                        line_bucket=line_bucket,
-                        team=team,
-                        player=player,
-                        expert=None,
-                    )
-                    patterns[pattern_id].append(row)
 
     return patterns
 
@@ -1092,6 +1149,8 @@ def main():
                        help="Stratify by player (player_props only)")
     parser.add_argument("--stratify-expert", action="store_true",
                        help="Stratify by expert/tipster")
+    parser.add_argument("--include-single-source", action="store_true",
+                       help="Include single-source patterns (e.g., 'action' gets credit for action|betql picks)")
     parser.add_argument("--min-samples-team", type=int, default=10,
                        help="Minimum samples per team pattern (default: 10)")
     parser.add_argument("--min-samples-player", type=int, default=8,
@@ -1112,7 +1171,27 @@ def main():
         print("Loading backfill consensus data...")
         backfill_rows = load_backfill_consensus_grades()
         print(f"  Loaded {len(backfill_rows)} backfill consensus grades")
-        rows.extend(backfill_rows)
+
+        # Deduplicate when combining (backfill may overlap with pipeline)
+        seen_picks = set()
+        for row in rows:
+            day_key = row.get("day_key", "")
+            market_type = row.get("market_type", "")
+            # Use day_key + market_type + sources as dedup key for combined data
+            pick_key = f"{day_key}|{market_type}|{row.get('sources_combo', '')}"
+            seen_picks.add(pick_key)
+
+        added = 0
+        for row in backfill_rows:
+            day_key = row.get("day_key", "")
+            market_type = row.get("market_type", "")
+            pick_key = f"{day_key}|{market_type}|{row.get('sources_combo', '')}"
+            if pick_key not in seen_picks:
+                rows.append(row)
+                seen_picks.add(pick_key)
+                added += 1
+
+        print(f"  Added {added} unique backfill grades (skipped {len(backfill_rows) - added} overlaps)")
         print(f"  Total: {len(rows)} rows")
 
     if not rows:
@@ -1138,6 +1217,7 @@ def main():
         stratify_team=args.stratify_team,
         stratify_player=args.stratify_player,
         stratify_expert=args.stratify_expert,
+        include_single_source=args.include_single_source,
     )
 
     test_patterns = mine_patterns(
@@ -1151,6 +1231,7 @@ def main():
         stratify_team=args.stratify_team,
         stratify_player=args.stratify_player,
         stratify_expert=args.stratify_expert,
+        include_single_source=args.include_single_source,
     )
 
     print(f"  Found {len(train_patterns)} unique patterns in training data")

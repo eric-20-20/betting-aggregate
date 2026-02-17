@@ -16,29 +16,68 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from mappings import atomic_stats as mapping_atomic_stats, normalize_stat_key
 from src.player_aliases_nba import normalize_player_key, generate_dynamic_alias_map, alias_cache_info, normalize_player_slug
-from store import append_jsonl, copy_file, ensure_dir, sha256_json, write_json
+from store import append_jsonl, copy_file, ensure_dir, sha256_json, write_json, NBA_SPORT, NCAAB_SPORT
 
-DEFAULT_INPUT_FILES = [
-    "normalized_action_nba.json",
-    "normalized_covers_nba.json",
-    "normalized_sportscapping_nba.json",
-    "normalized_betql_spread_nba.json",
-    "normalized_betql_total_nba.json",
-    "normalized_betql_prop_nba.json",
-    "normalized_sportsline_nba.json",
-]
+# Sport-specific input file patterns
+INPUT_FILES_BY_SPORT = {
+    NBA_SPORT: [
+        "normalized_action_nba.json",
+        "normalized_covers_nba.json",
+        "normalized_sportscapping_nba.json",
+        "normalized_betql_spread_nba.json",
+        "normalized_betql_total_nba.json",
+        "normalized_betql_prop_nba.json",
+        "normalized_sportsline_nba.json",
+        "normalized_dimers_nba.json",
+        # Backfill data (historical picks from Action + BetQL)
+        "merged_action_nba.json",
+        "merged_betql_props_nba.json",
+        "merged_betql_spreads_nba.json",
+        "merged_betql_totals_nba.json",
+    ],
+    NCAAB_SPORT: [
+        "normalized_action_ncaab.json",
+        "normalized_covers_ncaab.json",
+        "normalized_sportsline_ncaab.json",
+    ],
+}
+
+# For backward compatibility
+DEFAULT_INPUT_FILES = INPUT_FILES_BY_SPORT[NBA_SPORT]
+
+# Raw file patterns by sport
+RAW_FILES_BY_SPORT = {
+    NBA_SPORT: [
+        "raw_action_nba.json",
+        "raw_covers_nba.json",
+        "raw_betql_prop_nba.json",
+        "raw_betql_sharp_nba.json",
+        "raw_betql_spread_nba.json",
+        "raw_betql_total_nba.json",
+        "raw_sportscapping_nba.json",
+        "raw_sportsline_nba.json",
+        "raw_dimers_nba.json",
+    ],
+    NCAAB_SPORT: [
+        "raw_action_ncaab.json",
+        "raw_covers_ncaab.json",
+        "raw_sportsline_ncaab.json",
+    ],
+}
 
 HARD_DEBUG_META: Dict[str, Any] = {}
 SUPPORT_FIX_COUNTERS: Counter = Counter()
+CURRENT_SPORT: str = NBA_SPORT  # Module-level sport context, set by main()
 
 def ensure_out_dir(out_dir: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
 
 
-def load_records(out_dir: str) -> List[Dict[str, Any]]:
+def load_records(out_dir: str, sport: str = NBA_SPORT) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     loaded = []
-    for fname in DEFAULT_INPUT_FILES:
+    input_files = INPUT_FILES_BY_SPORT.get(sport, DEFAULT_INPUT_FILES)
+    for fname in input_files:
         path = os.path.join(out_dir, fname)
         if not os.path.exists(path):
             continue
@@ -47,12 +86,12 @@ def load_records(out_dir: str) -> List[Dict[str, Any]]:
             if isinstance(data, list):
                 records.extend(data)
                 loaded.append((fname, len(data)))
-    print(f"[DEBUG] load_records dir={out_dir} loaded={loaded}")
+    print(f"[DEBUG] load_records dir={out_dir} sport={sport} loaded={loaded}")
     return records
 
 
-def load_raw_records(out_dir: str) -> List[Dict[str, Any]]:
-    raw_paths = ["raw_action_nba.json", "raw_covers_nba.json", "raw_betql_prop_nba.json", "raw_betql_sharp_nba.json", "raw_betql_spread_nba.json", "raw_betql_total_nba.json", "raw_sportscapping_nba.json", "raw_sportsline_nba.json"]
+def load_raw_records(out_dir: str, sport: str = NBA_SPORT) -> List[Dict[str, Any]]:
+    raw_paths = RAW_FILES_BY_SPORT.get(sport, RAW_FILES_BY_SPORT[NBA_SPORT])
     raw: List[Dict[str, Any]] = []
     loaded = []
     for fname in raw_paths:
@@ -72,27 +111,30 @@ def load_raw_records(out_dir: str) -> List[Dict[str, Any]]:
 
 
 def day_key(event_key: str | None) -> str | None:
-    """Extract day_key from event_key in format NBA:YYYY:MM:DD.
+    """Extract day_key from event_key in format SPORT:YYYY:MM:DD.
 
     Handles two event_key formats:
-    1. "NBA:YYYYMMDD:AWAY@HOME:HHMM" (e.g., "NBA:20260212:MIL@OKC:1700")
-    2. "NBA:YYYY:MM:DD:AWAY@HOME" (e.g., "NBA:2026:02:12:MIL@OKC")
+    1. "SPORT:YYYYMMDD:AWAY@HOME:HHMM" (e.g., "NBA:20260212:MIL@OKC:1700")
+    2. "SPORT:YYYY:MM:DD:AWAY@HOME" (e.g., "NBA:2026:02:12:MIL@OKC")
 
-    Returns day_key in format "NBA:YYYY:MM:DD" or None if parsing fails.
+    Returns day_key in format "SPORT:YYYY:MM:DD" or None if parsing fails.
+    Supports both NBA and NCAAB prefixes.
     """
     if not event_key or not isinstance(event_key, str):
         return None
     parts = event_key.split(":")
     if len(parts) < 2:
         return None
+    # Extract sport prefix (NBA or NCAAB)
+    sport_prefix = parts[0] if parts[0] in (NBA_SPORT, NCAAB_SPORT) else NBA_SPORT
     date_part = parts[1]
     # Format 1: YYYYMMDD (e.g., "20260212") - reformat as YYYY:MM:DD
     if len(date_part) == 8 and date_part.isdigit():
         y, m, d = date_part[:4], date_part[4:6], date_part[6:8]
-        return f"NBA:{y}:{m}:{d}"
+        return f"{sport_prefix}:{y}:{m}:{d}"
     # Format 2: Already in YYYY:MM:DD format (check parts[1], parts[2], parts[3])
     if len(parts) >= 4 and parts[1].isdigit() and parts[2].isdigit() and parts[3].isdigit():
-        return f"NBA:{parts[1]}:{parts[2]}:{parts[3]}"
+        return f"{sport_prefix}:{parts[1]}:{parts[2]}:{parts[3]}"
     return None
 
 
@@ -1990,6 +2032,11 @@ def build_solo_signals(
                 "canonical_url": url,
                 "expert_name": prov.get("expert_name"),
                 "expert_handle": prov.get("expert_handle"),
+                # Dimers-specific fields
+                "probability_pct": prov.get("probability_pct"),
+                "edge_pct": prov.get("edge_pct"),
+                "best_odds": prov.get("best_odds"),
+                "badge": prov.get("badge"),
             }],
             "odds": [odds] if odds else [],
             "odds_list": [odds] if odds else [],
@@ -1997,6 +2044,10 @@ def build_solo_signals(
             "matchup": event.get("matchup_key") or f"{event.get('away_team')}@{event.get('home_team')}",
             "home_team": event.get("home_team"),
             "away_team": event.get("away_team"),
+            # Dimers-specific fields at top level for easy access
+            "probability_pct": prov.get("probability_pct"),
+            "edge_pct": prov.get("edge_pct"),
+            "badge": prov.get("badge"),
         })
 
     return solo_signals
@@ -2681,7 +2732,13 @@ def main(
     run_id: Optional[str] = None,
     data_dir: str = "data",
     out_dir: str = "out",
+    sport: str = NBA_SPORT,
 ) -> None:
+    # Store sport in module-level for helper functions
+    global CURRENT_SPORT
+    CURRENT_SPORT = sport
+    sport_lower = sport.lower()
+
     # refresh dynamic alias map before loading records
     generate_dynamic_alias_map(out_dir)
     # Ensure output collections always exist to keep debug guards safe
@@ -2694,8 +2751,8 @@ def main(
     soft_conflicts: List[Dict[str, Any]] = []
     std_avoid: List[Dict[str, Any]] = []
 
-    records = load_records(out_dir)
-    raw_records = load_raw_records(out_dir)
+    records = load_records(out_dir, sport=sport)
+    raw_records = load_raw_records(out_dir, sport=sport)
     eligible = [r for r in records if r.get("eligible_for_consensus")]
     betql_prop_debug: List[Dict[str, Any]] = []
 
@@ -3113,11 +3170,11 @@ def main(
         }
         for label, obj in guard_items.items():
             _assert_no_sets(obj, label)
-    with open(os.path.join(out_dir, "consensus_nba_hard.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(out_dir, f"consensus_{sport_lower}_hard.json"), "w", encoding="utf-8") as f:
         json.dump(hard_groups, f, ensure_ascii=False, indent=2)
-    with open(os.path.join(out_dir, "consensus_nba_soft.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(out_dir, f"consensus_{sport_lower}_soft.json"), "w", encoding="utf-8") as f:
         json.dump(soft_groups, f, ensure_ascii=False, indent=2)
-    with open(os.path.join(out_dir, "consensus_nba_within.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(out_dir, f"consensus_{sport_lower}_within.json"), "w", encoding="utf-8") as f:
         json.dump(within_groups, f, ensure_ascii=False, indent=2)
 
     unified_signals = build_unified_signals(hard_groups, soft_groups, within_groups)
@@ -3127,7 +3184,7 @@ def main(
     if solo_signals:
         print(f"[SOLO PICKS] Generated {len(solo_signals)} solo pick signals")
         # Write solo signals to separate file for debugging
-        with open(os.path.join(out_dir, "consensus_nba_solo.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(out_dir, f"consensus_{sport_lower}_solo.json"), "w", encoding="utf-8") as f:
             json.dump(solo_signals, f, ensure_ascii=False, indent=2)
         unified_signals.extend(solo_signals)
 
@@ -3155,7 +3212,7 @@ def main(
         if sid:
             sig["signal_id"] = sid
 
-    with open(os.path.join(out_dir, "consensus_nba_v1.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(out_dir, f"consensus_{sport_lower}_v1.json"), "w", encoding="utf-8") as f:
         json.dump(unified_signals, f, ensure_ascii=False, indent=2)
 
     hard_filtered = [g for g in hard_groups if g.get("source_strength", 0) >= 2]
@@ -3406,7 +3463,7 @@ def _run_smoke_tests() -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Compute NBA consensus (hard, soft, within, unified).")
+    parser = argparse.ArgumentParser(description="Compute consensus (hard, soft, within, unified) for NBA or NCAAB.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     parser.add_argument("--find-prop", type=str, help="Debug: regex or pipe-delimited tokens to search for props.")
     parser.add_argument("--find-market", type=str, help="Debug: regex or pipe-delimited tokens to search markets.")
@@ -3415,6 +3472,12 @@ if __name__ == "__main__":
     parser.add_argument("--run-id", type=str, help="Optional run id override.")
     parser.add_argument("--data-dir", type=str, default="data", help="Directory for tracking data (default: data).")
     parser.add_argument("--out-dir", type=str, default="out", help="Directory for snapshot outputs (default: out).")
+    parser.add_argument(
+        "--sport",
+        choices=["NBA", "NCAAB"],
+        default="NBA",
+        help="Sport to compute consensus for (default: NBA)",
+    )
     args = parser.parse_args()
     debug_soft_tokens = [t.strip() for t in args.debug_soft_market.split() if t.strip()] if args.debug_soft_market else None
     _run_smoke_tests()
@@ -3427,4 +3490,5 @@ if __name__ == "__main__":
         run_id=args.run_id,
         data_dir=args.data_dir,
         out_dir=args.out_dir,
+        sport=args.sport,
     )

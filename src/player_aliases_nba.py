@@ -53,8 +53,15 @@ def _derive_dynamic_aliases(out_dir: Path) -> Dict[str, str]:
     Build alias map by comparing abbreviated slugs from action/covers to full slugs from BetQL.
     Only add unambiguous matches.
     """
-    betql_path = out_dir / "normalized_betql_prop_nba.json"
-    action_path = out_dir / "normalized_action_nba.json"
+    # Include both current and merged (backfill) files
+    betql_paths = [
+        out_dir / "normalized_betql_prop_nba.json",
+        out_dir / "merged_betql_props_nba.json",
+    ]
+    action_paths = [
+        out_dir / "normalized_action_nba.json",
+        out_dir / "merged_action_nba.json",
+    ]
     covers_path = out_dir / "normalized_covers_nba.json"
 
     def collect_slugs(path: Path) -> Set[str]:
@@ -80,8 +87,14 @@ def _derive_dynamic_aliases(out_dir: Path) -> Dict[str, str]:
             return slugs
         return slugs
 
-    full_slugs = collect_slugs(betql_path)
-    abbrev_slugs = collect_slugs(action_path) | collect_slugs(covers_path)
+    full_slugs: Set[str] = set()
+    for path in betql_paths:
+        full_slugs |= collect_slugs(path)
+
+    abbrev_slugs: Set[str] = set()
+    for path in action_paths:
+        abbrev_slugs |= collect_slugs(path)
+    abbrev_slugs |= collect_slugs(covers_path)
 
     dynamic: Dict[str, str] = {}
     for short in abbrev_slugs:
@@ -141,13 +154,9 @@ def normalize_player_slug(raw_slug: Optional[str], out_dir: str = "out") -> Opti
         return None
     aliases = load_alias_map(out_dir)
     if slug in aliases:
-        # Always honor static aliases; for dynamically derived aliases, skip if the slug already
-        # looks like an initial+lastname form (e.g., j_brunson) to keep canonical slugs stable.
-        if slug in STATIC_ALIAS_MAP:
-            return aliases[slug]
-        parts = slug.split("_")
-        if not (len(parts) >= 2 and len(parts[0]) == 1):
-            return aliases[slug]
+        # Always apply aliases - both static and dynamically derived
+        # This normalizes abbreviated forms (e.g., p_pritchard -> payton_pritchard)
+        return aliases[slug]
     # If the input already looks like a canonical slug (letters/digits/underscores), keep it.
     if re.fullmatch(r"[a-z][a-z0-9_]*", slug):
         return slug

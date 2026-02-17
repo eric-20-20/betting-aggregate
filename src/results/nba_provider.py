@@ -17,6 +17,7 @@ from . import nba_provider_nba_api as nba_api
 from . import nba_provider_nba_cdn as nba_cdn
 from . import nba_provider_nba_stats as nba_stats
 from . import nba_provider_data_nba_net as nba_net
+from . import nba_provider_bball_ref as lgf_provider  # LeagueGameFinder fallback
 
 def _provider() -> str:
     prov = os.environ.get("RESULTS_PROVIDER")
@@ -203,8 +204,21 @@ def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refre
             meta_copy["matchups_full"] = matchups_full
             meta_copy["games_full"] = games_full
             meta_copy["matchups"] = matchups_full[:10]
+            # Fallback to LeagueGameFinder if standard scoreboard failed
+            lgf_result = lgf_provider.fetch_game_result(event_key, away, home, date_str, refresh_cache=refresh_cache)
+            if lgf_result and lgf_result.get("status") != "ERROR":
+                lgf_result["fallback_from"] = "nba_api_scoreboard"
+                return lgf_result
             return {"status": "ERROR", "notes": "game_not_found", "games_info": meta_copy}
         except Exception as e:
+            # Try LeagueGameFinder as last resort
+            try:
+                lgf_result = lgf_provider.fetch_game_result(event_key, away, home, date_str, refresh_cache=refresh_cache)
+                if lgf_result and lgf_result.get("status") != "ERROR":
+                    lgf_result["fallback_from"] = "nba_api_exception"
+                    return lgf_result
+            except Exception:
+                pass
             return {"status": "ERROR", "notes": "nba_api_exception", "games_info": {"provider": "nba_api", "date": date_str, "fetch_failed": True, "exception": repr(e)}}
 
     if provider == "api_sports":

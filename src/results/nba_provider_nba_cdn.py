@@ -302,6 +302,51 @@ def _resolve_player(players: List[Dict[str, Any]], player_key: str) -> Tuple[Opt
     meta["players_norm_sample"] = [_normalize_key(p.get("name", "")) for p in players[:15]]
     return None, meta
 
+def fetch_game_result(
+    game_id: str,
+    refresh_cache: bool = False,
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Fetch game status and scores from NBA CDN boxscore.
+    Returns (result_dict, meta_dict) where result_dict has:
+        - status: FINAL, IN_PROGRESS, SCHEDULED
+        - home_score, away_score, home_team, away_team
+    """
+    data, meta = _fetch_boxscore_json(game_id, refresh_cache=refresh_cache)
+    if not data or meta.get("fetch_failed"):
+        return None, meta
+
+    game = data.get("game") or {}
+
+    # Game status: 1=SCHEDULED, 2=IN_PROGRESS, 3=FINAL
+    game_status_id = game.get("gameStatus")
+    game_status_text = game.get("gameStatusText") or ""
+
+    if game_status_id == 3 or "final" in game_status_text.lower():
+        status = "FINAL"
+    elif game_status_id == 2:
+        status = "IN_PROGRESS"
+    else:
+        status = "SCHEDULED"
+
+    home_team = game.get("homeTeam") or {}
+    away_team = game.get("awayTeam") or {}
+
+    result = {
+        "status": status,
+        "game_id": game_id,
+        "home_team": home_team.get("teamTricode"),
+        "away_team": away_team.get("teamTricode"),
+        "home_score": home_team.get("score"),
+        "away_score": away_team.get("score"),
+        "game_status_id": game_status_id,
+        "game_status_text": game_status_text,
+        "provider": "nba_cdn",
+    }
+
+    return result, meta
+
+
 def fetch_player_statline(
     game_id: str,
     player_id: Optional[str],

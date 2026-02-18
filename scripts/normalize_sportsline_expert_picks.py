@@ -53,12 +53,18 @@ def parse_datetime(ts: Optional[str]) -> Optional[datetime]:
         return None
 
 
+ABBREV_MAP = {
+    "GS": "GSW", "NO": "NOP", "NY": "NYK", "SA": "SAS", "PHOE": "PHX",
+    "PHO": "PHX", "BK": "BKN", "BKLYN": "BKN", "WSH": "WAS",
+}
+
+
 def map_team(abbrev: Optional[str]) -> Optional[str]:
     """Map team abbreviation to standard code."""
     if not abbrev:
         return None
-    # SportsLine uses standard NBA abbreviations
-    return abbrev.upper()
+    upper = abbrev.upper()
+    return ABBREV_MAP.get(upper, upper)
 
 
 def map_market_type(raw_type: str) -> str:
@@ -133,7 +139,8 @@ def normalize_expert_pick(raw: Dict[str, Any], sport: str = NBA_SPORT, store=Non
         # Build event keys with sport prefix
         day_key = f"{sport}:{scheduled_time.year:04d}:{scheduled_time.month:02d}:{scheduled_time.day:02d}"
         event_key = f"{day_key}:{away_team}@{home_team}"
-        matchup_key = f"{day_key}:{home_team}-{away_team}"
+        t1, t2 = sorted([home_team, away_team])
+        matchup_key = f"{day_key}:{t1}-{t2}"
 
         # Parse market
         market_type = map_market_type(selection.get("marketType", ""))
@@ -265,7 +272,7 @@ def _map_team_name(name: str, away: str, home: str, sport: str = NBA_SPORT, stor
             "utah": "UTA", "jazz": "UTA",
             "oklahoma city": "OKC", "thunder": "OKC",
             "san antonio": "SAS", "spurs": "SAS",
-            "golden state": "GSW", "warriors": "GSW",
+            "golden state": "GSW", "golden st.": "GSW", "golden st": "GSW", "warriors": "GSW",
             "sacramento": "SAC", "kings": "SAC",
             "miami": "MIA", "heat": "MIA",
             "new orleans": "NOP", "pelicans": "NOP",

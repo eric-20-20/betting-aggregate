@@ -176,7 +176,13 @@ def derive_teams(signal: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
 def parse_direction(signal: Dict[str, Any]) -> Optional[str]:
     direction = signal.get("direction")
     if isinstance(direction, str) and direction:
-        return direction.upper()
+        d = direction.upper()
+        # Normalize prefixed directions: PLAYER_OVER -> OVER, PLAYER_UNDER -> UNDER
+        if "OVER" in d:
+            return "OVER"
+        if "UNDER" in d:
+            return "UNDER"
+        return d
     sel = signal.get("selection")
     if isinstance(sel, str) and "::" in sel:
         parts = sel.split("::")
@@ -232,8 +238,13 @@ def event_key_to_date_str(event_key: Optional[str]) -> Optional[str]:
     # Handle both NBA: and NCAAB: prefixes
     if event_key.startswith("NBA:") or event_key.startswith("NCAAB:"):
         parts = event_key.split(":")
+        # Format 1: SPORT:YYYY:MM:DD:... (e.g., "NBA:2026:02:06:MIA@BOS")
         if len(parts) >= 4 and all(p.isdigit() for p in parts[1:4]):
             return f"{parts[1]}-{parts[2]}-{parts[3]}"
+        # Format 2: SPORT:YYYYMMDD:... (e.g., "NBA:20260206:MIA@BOS:2130")
+        if len(parts) >= 2 and len(parts[1]) == 8 and parts[1].isdigit():
+            y, m, d = parts[1][:4], parts[1][4:6], parts[1][6:8]
+            return f"{y}-{m}-{d}"
     return None
 
 
@@ -248,12 +259,22 @@ def derive_date_str(signal: Dict[str, Any]) -> Optional[str]:
         ds = day_key_to_date_str(cgk[1])
         if ds:
             return ds
+    # Try event_key first
     ek = signal.get("event_key")
-    return event_key_to_date_str(ek)
+    ds = event_key_to_date_str(ek)
+    if ds:
+        return ds
+    # Fallback to canonical_event_key
+    cek = signal.get("canonical_event_key")
+    return event_key_to_date_str(cek)
 
 
 def check_eligibility(signal: Dict[str, Any], date_str: Optional[str]) -> Tuple[bool, str, List[str]]:
     """Return (eligible?, reason, missing_fields) before hitting providers."""
+
+    # Skip conflict signals - they are intentionally ungradeable by design
+    if signal.get("signal_type") == "avoid_conflict":
+        return False, "conflict_signal_by_design", []
 
     if date_str is None:
         return False, "bad_date_format", ["date_str"]
@@ -912,6 +933,8 @@ def grade_signal(
         "selection": signal.get("selection"),
         "event_key": signal.get("event_key"),
         "day_key": day_key,
+        "line": line,  # Added for audit/verification purposes
+        "direction": direction,  # Added for totals/props audit
         "urls": urls,
         "notes": ";".join(notes) if notes else "",
         # Contract audit fields

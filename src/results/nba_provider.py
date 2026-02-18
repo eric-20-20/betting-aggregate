@@ -19,6 +19,21 @@ from . import nba_provider_nba_stats as nba_stats
 from . import nba_provider_data_nba_net as nba_net
 from . import nba_provider_bball_ref as lgf_provider  # LeagueGameFinder fallback
 
+# Days in past after which we force refresh cache for SCHEDULED games
+STALE_SCHEDULED_DAYS = 3
+
+
+def _should_force_refresh_stale(date_str: str, game_status: Optional[str]) -> bool:
+    """Return True if game is SCHEDULED but date is old enough to warrant cache refresh."""
+    if game_status != "SCHEDULED":
+        return False
+    try:
+        game_date = datetime.strptime(date_str, "%Y-%m-%d")
+        days_ago = (datetime.now() - game_date).days
+        return days_ago >= STALE_SCHEDULED_DAYS
+    except Exception:
+        return False
+
 def _provider() -> str:
     prov = os.environ.get("RESULTS_PROVIDER")
     if prov:
@@ -193,7 +208,42 @@ def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refre
             if actual_count == 0 and meta_count == 0:
                 return {"status": "NO_GAMES", "notes": "no_games_for_date", "games_info": meta_copy}
             if game_id:
-                score = nba_api.get_game_score(game_id, used_date, refresh_cache=refresh_cache) or {}
+                # Check if game is stale SCHEDULED and needs refresh
+                matched_status = meta_copy.get("matched_status")
+                force_refresh = _should_force_refresh_stale(used_date, matched_status)
+                if force_refresh and not refresh_cache:
+                    # Re-fetch scoreboard with refresh to get updated status
+                    games_fresh, meta_fresh = nba_api.get_games_for_date(used_date, refresh_cache=True)
+                    games_fresh, meta_fresh = _prepare_games_meta(games_fresh, meta_fresh)
+                    meta_copy["heal_meta"] = {"healed": False, "path": "stale_refresh", "reason": "stale_scheduled_refresh"}
+                    # Find the game again in refreshed data
+                    for g in games_fresh:
+                        if str(g.get("game_id")) == game_id:
+                            meta_copy["matched_status"] = g.get("status")
+                            meta_copy["heal_meta"]["healed"] = meta_copy["matched_status"] != "SCHEDULED"
+                            break
+                # If still SCHEDULED after refresh, try CDN fallback first (has player stats), then LGF
+                if meta_copy.get("matched_status") == "SCHEDULED" and force_refresh:
+                    # Try CDN - it has complete data including player stats
+                    cdn_result, cdn_meta = nba_cdn.fetch_game_result(game_id, refresh_cache=refresh_cache)
+                    if cdn_result and cdn_result.get("status") == "FINAL":
+                        # Swap scores when flipped so they align with signal's away/home
+                        if meta_copy.get("match_orientation") == "flipped":
+                            cdn_result["home_score"], cdn_result["away_score"] = cdn_result.get("away_score"), cdn_result.get("home_score")
+                        cdn_result["fallback_from"] = "stale_scheduled_cdn"
+                        cdn_result["games_info"] = meta_copy
+                        cdn_result["cdn_meta"] = cdn_meta
+                        return cdn_result
+                    # If CDN failed, try LGF as last resort
+                    lgf_result = lgf_provider.fetch_game_result(event_key, away, home, date_str, refresh_cache=refresh_cache)
+                    if lgf_result and lgf_result.get("status") != "ERROR" and lgf_result.get("status") == "FINAL":
+                        lgf_result["fallback_from"] = "stale_scheduled_lgf"
+                        lgf_result["games_info"] = meta_copy
+                        return lgf_result
+                score = nba_api.get_game_score(game_id, used_date, refresh_cache=refresh_cache or force_refresh) or {}
+                # Swap scores when flipped so they align with signal's away/home
+                if meta_copy.get("match_orientation") == "flipped":
+                    score["home_score"], score["away_score"] = score.get("away_score"), score.get("home_score")
                 info = score.get("games_info") or {}
                 info.update(meta_copy)
                 score["games_info"] = info

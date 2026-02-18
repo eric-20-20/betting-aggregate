@@ -251,6 +251,16 @@ def _parse_games(scoreboard: Dict[str, Any]) -> List[Dict[str, Any]]:
     for row in header_rows:
         rec = dict(zip(header_cols, row))
         gid = str(rec.get("GAME_ID"))
+        # Parse GAMECODE (format: YYYYMMDD/AWYHOM) as fallback for team codes
+        gamecode = rec.get("GAMECODE") or ""
+        gamecode_away = None
+        gamecode_home = None
+        if "/" in gamecode:
+            teams_part = gamecode.split("/")[1] if len(gamecode.split("/")) > 1 else ""
+            # Teams are 3 chars each: first 3 = away, last 3 = home
+            if len(teams_part) == 6:
+                gamecode_away = teams_part[:3]
+                gamecode_home = teams_part[3:]
         home_map[gid] = {
             "game_id": gid,
             "home_team_id": rec.get("HOME_TEAM_ID"),
@@ -258,6 +268,8 @@ def _parse_games(scoreboard: Dict[str, Any]) -> List[Dict[str, Any]]:
             "status_text": rec.get("GAME_STATUS_TEXT"),
             "status_id": rec.get("GAME_STATUS_ID"),
             "live_period": rec.get("LIVE_PERIOD"),
+            "gamecode_away": gamecode_away,
+            "gamecode_home": gamecode_home,
         }
     for row in line_rows:
         rec = dict(zip(line_cols, row))
@@ -279,11 +291,14 @@ def _parse_games(scoreboard: Dict[str, Any]) -> List[Dict[str, Any]]:
             status = "IN_PROGRESS"
         else:
             status = "SCHEDULED"
+        # Use LineScore team abbrev if available, fall back to GAMECODE parsing
+        home_abbrev = rec.get("home_team_abbrev") or _norm_team(rec.get("gamecode_home") or "")
+        away_abbrev = rec.get("away_team_abbrev") or _norm_team(rec.get("gamecode_away") or "")
         games.append(
             {
                 "game_id": gid,
-                "home_team_abbrev": rec.get("home_team_abbrev"),
-                "away_team_abbrev": rec.get("away_team_abbrev"),
+                "home_team_abbrev": home_abbrev if home_abbrev else None,
+                "away_team_abbrev": away_abbrev if away_abbrev else None,
                 "home_score": rec.get("home_score"),
                 "away_score": rec.get("away_score"),
                 "status": status,

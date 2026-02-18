@@ -239,6 +239,7 @@ class RawPickRecord:
     expert_profile: Optional[str] = None
     expert_slug: Optional[str] = None
     tailing_handle: Optional[str] = None
+    stake_hint: Optional[str] = None
 
 
 def sha256_digest(text: str) -> str:
@@ -555,8 +556,6 @@ def extract_picks_from_html(
                 stake_hint = units_val.strip()
 
             context = pick.get("context") or pick_text
-            if stake_hint:
-                context = f"{context}\n[stake_hint={stake_hint}]"
 
             market_family = "player_prop" if map_prop_stat(normalized_pick) else "standard"
             source_surface = f"{sport.lower()}_game_expert_picks"
@@ -576,6 +575,8 @@ def extract_picks_from_html(
                 expert_profile=container_expert_profile,
                 expert_slug=container_expert_slug,
                 tailing_handle=tailing_handle,
+                odds_hint=pick.get("odds") or None,
+                stake_hint=stake_hint,
             )
             records.append(record)
             if len(debug_samples) < 10:
@@ -739,13 +740,16 @@ def parse_standard_market(raw_pick_text: str) -> dict:
 
 def parse_player_prop(raw_pick_text: str, sport: str = NBA_SPORT) -> dict:
     stat_key = map_prop_stat(raw_pick_text)
+    odds_match = re.search(r"([+-]\d{3,})", raw_pick_text)
+    odds_val = odds_match.group(1) if odds_match else None
+
     if not stat_key:
         return {
             "market_type": "player_prop",
             "side": None,
             "selection": None,
             "line": None,
-            "odds": None,
+            "odds": odds_val,
             "eligible_for_consensus": False,
             "ineligibility_reason": "missing_stat_key",
             "stat_key": None,
@@ -773,7 +777,7 @@ def parse_player_prop(raw_pick_text: str, sport: str = NBA_SPORT) -> dict:
             "side": side,
             "selection": selection,
             "line": float(first_float_match.group(1)) if first_float_match else None,
-            "odds": None,
+            "odds": odds_val,
             "eligible_for_consensus": False,
             "ineligibility_reason": "missing_prop_fields",
             "stat_key": stat_key,
@@ -785,7 +789,7 @@ def parse_player_prop(raw_pick_text: str, sport: str = NBA_SPORT) -> dict:
         "side": side,
         "selection": selection,
         "line": float(first_float_match.group(1)),
-        "odds": None,
+        "odds": odds_val,
         "eligible_for_consensus": True,
         "ineligibility_reason": None,
         "stat_key": stat_key,
@@ -883,6 +887,7 @@ def normalize_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, stat
             "odds": market_details["odds"],
             "stat_key": market_details.get("stat_key"),
             "player_key": market_details.get("player_key"),
+            "stake_hint": raw_pick.stake_hint,
         },
         "eligible_for_consensus": eligible,
         "ineligibility_reason": reason,

@@ -362,6 +362,11 @@ def run_layer2(grades: List[Dict], signals_idx: Dict, score_cache: Dict,
         mt = g.get("market_type", "")
         stored_result = g.get("result")
 
+        # Skip orphan grades (signal no longer in ledger)
+        if not signal:
+            result["skipped_missing_data"] += 1
+            continue
+
         if mt == "player_prop":
             # stat_value is on the grade record
             stat_value = g.get("stat_value")
@@ -702,6 +707,11 @@ def run_layer4(grades: List[Dict], signals_idx: Dict, score_cache: Dict,
             signal_id = g.get("signal_id", "")
             signal = signals_idx.get(signal_id, {})
             stored_result = g.get("result")
+
+            # Skip orphan grades (signal no longer in ledger)
+            if not signal:
+                market_cache_miss += 1
+                continue
 
             if mt in ("spread", "total", "moneyline"):
                 gi = g.get("games_info") or {}

@@ -145,11 +145,21 @@ def odds_for_units(occurrence: Dict[str, Any], grade: Optional[Dict[str, Any]]) 
                 return float(row.get("best_odds"))
             except Exception:
                 pass
-        odds_list = row.get("odds_list") or row.get("odds") or []
-        if isinstance(odds_list, list) and odds_list:
+        odds_val = row.get("odds_list") or row.get("odds")
+        if odds_val is None:
+            continue
+        if isinstance(odds_val, list) and odds_val:
             try:
-                return float(odds_list[0])
+                return float(odds_val[0])
             except Exception:
+                continue
+        # Handle scalar odds (int or string like "-110")
+        if isinstance(odds_val, (int, float)):
+            return float(odds_val)
+        if isinstance(odds_val, str):
+            try:
+                return float(odds_val)
+            except (TypeError, ValueError):
                 continue
     return None
 

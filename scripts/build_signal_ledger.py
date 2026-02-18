@@ -175,6 +175,18 @@ def _safe_float(val: Any) -> Optional[float]:
         return None
 
 
+def _coerce_odds(val: Any) -> Any:
+    """Coerce odds to int when possible, preserving lists."""
+    if val is None:
+        return None
+    if isinstance(val, list):
+        return [_coerce_odds(v) for v in val]
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return val
+
+
 def _median(vals: List[float]) -> Optional[float]:
     if not vals:
         return None
@@ -1007,7 +1019,7 @@ def _history_row_to_occurrence(row: Dict[str, Any], source_tag: str = "betql_his
         "direction": mk.get("side"),
         "atomic_stat": mk.get("stat_key"),
         "line": mk.get("line"),  # Include line at top level for grading
-        "odds": mk.get("odds"),  # Include odds for ROI calculation
+        "odds": _coerce_odds(mk.get("odds")),  # Include odds for ROI calculation
         "observed_at_utc": prov.get("observed_at_utc"),
         "sources_combo": actual_source,
         "sources": [actual_source],

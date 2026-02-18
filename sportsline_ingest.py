@@ -38,7 +38,12 @@ from utils import normalize_text
 
 OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
 DEFAULT_STORAGE_STATE = "data/sportsline_storage_state.json"
-PICKS_URL = "https://www.sportsline.com/nba/picks/"
+
+PICKS_URLS = {
+    "NBA": "https://www.sportsline.com/nba/picks/",
+    "NCAAB": "https://www.sportsline.com/college-basketball/picks/",
+}
+PICKS_URL = PICKS_URLS["NBA"]  # backward compatibility
 
 # Market type tab identifiers
 MARKET_TABS = {
@@ -382,7 +387,8 @@ def extract_picks_from_page(
 
 def ingest_sportsline_nba(
     storage_state: str = DEFAULT_STORAGE_STATE,
-    debug: bool = False
+    debug: bool = False,
+    picks_url: str = PICKS_URL,
 ) -> Tuple[List[RawPickRecord], Dict[str, Any]]:
     """
     Main ingestion function for SportsLine NBA picks.
@@ -420,7 +426,7 @@ def ingest_sportsline_nba(
 
         try:
             page = context.new_page()
-            page.goto(PICKS_URL, wait_until="networkidle", timeout=30000)
+            page.goto(picks_url, wait_until="networkidle", timeout=30000)
 
             # Wait for React hydration
             page.wait_for_timeout(3000)
@@ -450,7 +456,7 @@ def ingest_sportsline_nba(
                     records = extract_picks_from_page(
                         page=page,
                         observed_at=observed_at,
-                        canonical_url=PICKS_URL,
+                        canonical_url=picks_url,
                         market_type=market_type,
                         debug=debug
                     )
@@ -476,7 +482,13 @@ def ingest_sportsline_nba(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Ingest SportsLine NBA picks")
+    parser = argparse.ArgumentParser(description="Ingest SportsLine picks")
+    parser.add_argument(
+        "--sport",
+        choices=["NBA", "NCAAB"],
+        default="NBA",
+        help="Sport to ingest (default: NBA)",
+    )
     parser.add_argument(
         "--storage",
         default=DEFAULT_STORAGE_STATE,
@@ -519,15 +531,20 @@ def main():
         return
 
     # Run ingestion
+    sport = args.sport
+    sport_suffix = sport.lower()
+    picks_url = PICKS_URLS.get(sport, PICKS_URL)
+
     try:
         raw_records, dbg = ingest_sportsline_nba(
             storage_state=args.storage,
-            debug=args.debug
+            debug=args.debug,
+            picks_url=picks_url,
         )
 
         # Write raw output
         ensure_out_dir()
-        raw_path = os.path.join(OUT_DIR, "raw_sportsline_nba.json")
+        raw_path = os.path.join(OUT_DIR, f"raw_sportsline_{sport_suffix}.json")
         write_records(raw_path, raw_records)
 
         print(f"[INGEST] Wrote {len(raw_records)} raw records to {raw_path}")
@@ -539,7 +556,7 @@ def main():
         from src.normalizer_sportsline_nba import normalize_sportsline_records
         normalized = normalize_sportsline_records(raw_records, debug=args.debug)
 
-        norm_path = os.path.join(OUT_DIR, "normalized_sportsline_nba.json")
+        norm_path = os.path.join(OUT_DIR, f"normalized_sportsline_{sport_suffix}.json")
         write_json(norm_path, normalized)
 
         eligible = sum(1 for r in normalized if r.get("eligible_for_consensus"))

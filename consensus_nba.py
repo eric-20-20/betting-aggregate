@@ -29,6 +29,7 @@ INPUT_FILES_BY_SPORT = {
         "normalized_betql_prop_nba.json",
         "normalized_sportsline_nba.json",
         "normalized_dimers_nba.json",
+        "normalized_oddstrader_nba.json",
         # Backfill data (historical picks from Action + BetQL)
         "merged_action_nba.json",
         "merged_betql_props_nba.json",
@@ -39,6 +40,8 @@ INPUT_FILES_BY_SPORT = {
         "normalized_action_ncaab.json",
         "normalized_covers_ncaab.json",
         "normalized_sportsline_ncaab.json",
+        "normalized_dimers_ncaab.json",
+        "normalized_oddstrader_ncaab.json",
     ],
 }
 
@@ -57,11 +60,14 @@ RAW_FILES_BY_SPORT = {
         "raw_sportscapping_nba.json",
         "raw_sportsline_nba.json",
         "raw_dimers_nba.json",
+        "raw_oddstrader_nba.json",
     ],
     NCAAB_SPORT: [
         "raw_action_ncaab.json",
         "raw_covers_ncaab.json",
         "raw_sportsline_ncaab.json",
+        "raw_dimers_ncaab.json",
+        "raw_oddstrader_ncaab.json",
     ],
 }
 

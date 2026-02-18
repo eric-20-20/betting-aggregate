@@ -239,12 +239,24 @@ def report_by_day_of_week(rows: List[Dict[str, Any]], min_n: int) -> Dict[str, A
     return {"report": "by_day_of_week", "rows": results}
 
 
+def _extract_experts(row: Dict[str, Any]) -> List[str]:
+    """Extract expert identifiers from a row, falling back to scalar fields."""
+    experts = row.get("experts") or []
+    if experts:
+        return experts
+    # Fallback: use expert_name or expert scalar field
+    for field in ("expert_name", "expert"):
+        val = row.get(field)
+        if val and isinstance(val, str) and val.strip():
+            return [val.strip()]
+    return []
+
+
 def report_by_expert(rows: List[Dict[str, Any]], min_n: int) -> Dict[str, Any]:
     """Individual expert performance. Only experts with >= min_n picks."""
     groups: Dict[str, List] = defaultdict(list)
     for r in rows:
-        experts = r.get("experts") or []
-        for exp in experts:
+        for exp in _extract_experts(r):
             groups[exp].append(r)
 
     results = []
@@ -254,11 +266,19 @@ def report_by_expert(rows: List[Dict[str, Any]], min_n: int) -> Dict[str, Any]:
             continue
         rec = build_record(grp)
         rec["expert"] = expert
+
+        # How many of this expert's picks are consensus (2+ sources)?
+        consensus_count = sum(1 for r in grp if get_source_count(r) >= 2)
+        rec["consensus_pct"] = round(consensus_count / len(grp), 4) if grp else 0
+        rec["avg_sources"] = round(
+            sum(get_source_count(r) for r in grp) / len(grp), 2
+        ) if grp else 0
+
         flag_sample_size(rec, min_n)
         results.append(rec)
 
-    # Sort by win_pct descending
-    results.sort(key=lambda x: (x.get("win_pct") or 0), reverse=True)
+    # Sort by wilson_lower descending (conservative estimate)
+    results.sort(key=lambda x: (x.get("wilson_lower") or 0), reverse=True)
     return {"report": "by_expert", "rows": results}
 
 

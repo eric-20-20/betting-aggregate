@@ -46,7 +46,11 @@ DIMERS_URLS = {
     NBA_SPORT: {
         "best_bets": "https://www.dimers.com/best-bets/nba",
         "best_props": "https://www.dimers.com/best-props/nba",
-    }
+    },
+    NCAAB_SPORT: {
+        "best_bets": "https://www.dimers.com/best-bets/cbb",
+        "best_props": "https://www.dimers.com/best-props/cbb",
+    },
 }
 
 # Browser user agent
@@ -224,7 +228,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
     parser.add_argument(
         "--sport",
-        choices=["NBA"],
+        choices=["NBA", "NCAAB"],
         default="NBA",
         help="Sport to ingest (default: NBA)",
     )

@@ -293,6 +293,83 @@ def load_betql_backfill(category: str) -> List[Dict[str, Any]]:
     return all_records
 
 
+def load_graded_backfill() -> List[Dict[str, Any]]:
+    """Load graded BetQL backfill from converted schema file.
+
+    This file contains pre-graded player prop picks with results.
+    Source: out/normalized_betql_backfill.jsonl (converted from betql_backfill_grades.jsonl)
+    """
+    graded_file = Path("out/normalized_betql_backfill.jsonl")
+
+    if not graded_file.exists():
+        return []
+
+    all_records = []
+    seen_fingerprints = set()
+
+    records = load_jsonl(graded_file)
+    for r in records:
+        fp = r.get("provenance", {}).get("raw_fingerprint")
+        if fp and fp in seen_fingerprints:
+            continue
+        if fp:
+            seen_fingerprints.add(fp)
+        all_records.append(normalize_record(r))
+
+    return all_records
+
+
+def merge_with_graded_priority(
+    history_records: List[Dict[str, Any]],
+    graded_records: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Merge history and graded records, preferring graded when duplicates exist.
+
+    Duplicates are identified by: day_key + selection + line
+    """
+    # Build lookup for graded records
+    graded_by_bet = {}
+    for r in graded_records:
+        event = r.get("event", {})
+        market = r.get("market", {})
+        day_key = event.get("day_key", "")
+        selection = market.get("selection", "")
+        line = market.get("line")
+        bet_key = f"{day_key}|{selection}|{line}"
+
+        # Only keep if it has a result
+        result = r.get("result")
+        if result and result.get("status"):
+            graded_by_bet[bet_key] = r
+
+    # Process history, replacing with graded when available
+    merged = []
+    replaced = 0
+
+    for r in history_records:
+        event = r.get("event", {})
+        market = r.get("market", {})
+        day_key = event.get("day_key", "")
+        selection = market.get("selection", "")
+        line = market.get("line")
+        bet_key = f"{day_key}|{selection}|{line}"
+
+        if bet_key in graded_by_bet:
+            # Use graded version
+            merged.append(graded_by_bet.pop(bet_key))
+            replaced += 1
+        else:
+            merged.append(r)
+
+    # Add remaining graded records (not in history)
+    new_from_graded = len(graded_by_bet)
+    merged.extend(graded_by_bet.values())
+
+    print(f"    Merged: {replaced} replaced with graded, {new_from_graded} new from graded")
+
+    return merged
+
+
 def build_player_alias_map(
     action_records: List[Dict[str, Any]],
     betql_props: List[Dict[str, Any]],
@@ -385,7 +462,15 @@ def main():
 
     # Load BetQL backfill by category
     betql_props = load_betql_backfill("props")
-    print(f"  BetQL props: {len(betql_props)} records")
+    print(f"  BetQL props (history): {len(betql_props)} records")
+
+    # Load graded backfill and merge
+    graded_props = load_graded_backfill()
+    print(f"  BetQL props (graded backfill): {len(graded_props)} records")
+
+    if graded_props:
+        betql_props = merge_with_graded_priority(betql_props, graded_props)
+        print(f"  BetQL props (after merge): {len(betql_props)} records")
 
     betql_spreads = load_betql_backfill("spreads")
     print(f"  BetQL spreads: {len(betql_spreads)} records")

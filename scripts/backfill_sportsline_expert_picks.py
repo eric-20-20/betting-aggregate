@@ -31,8 +31,8 @@ NBA_SPORT = "NBA"
 NCAAB_SPORT = "NCAAB"
 
 EXPERT_PICKS_URLS = {
-    NBA_SPORT: "https://www.sportsline.com/nba/picks/experts/?sc=",
-    NCAAB_SPORT: "https://www.sportsline.com/college-basketball/picks/experts/?sc=",
+    NBA_SPORT: "https://www.sportsline.com/nba/picks/experts/?sc=p",
+    NCAAB_SPORT: "https://www.sportsline.com/college-basketball/picks/experts/?sc=p",
 }
 
 def get_output_path(sport: str) -> Path:

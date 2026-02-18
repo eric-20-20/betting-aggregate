@@ -1102,6 +1102,9 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 matchup_display = matchup_meta
             elif len(tokens) > 1 and tokens[1] != "UNKNOWN":
                 matchup_display = tokens[1]
+            # Extract team info from cluster entries
+            away_team = next((e.get("away_team") for e in cl if e.get("away_team")), None)
+            home_team = next((e.get("home_team") for e in cl if e.get("home_team")), None)
             results.append(
                 {
                     "canonical_key": match_key,
@@ -1109,6 +1112,8 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                     "event_key": event_meta,
                     "matchup_key": matchup_meta,
                     "matchup": matchup_display,
+                    "away_team": away_team,
+                    "home_team": home_team,
                     "market_type": "player_prop",
                     "player_id": player_id,
                     "atomic_stat": atomic_stat,
@@ -1343,6 +1348,9 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
             },
         )
         group["count_total"] += 1
+        # Update matchup if group doesn't have one but signal does
+        if not group.get("matchup") and sig.get("matchup"):
+            group["matchup"] = sig.get("matchup")
         source_id = sig.get("source_id")
         if source_id:
             group["sources_set"].add(source_id)
@@ -1625,7 +1633,7 @@ def format_solo_row(item: Dict[str, Any]) -> str:
     exp_str = experts[0] if experts else ""
     url = ""
     if item.get("supports"):
-        url = item["supports"][0].get("canonical_url", "")[:60]
+        url = (item["supports"][0].get("canonical_url") or "")[:60]
     return (
         f"{item.get('day_key')} [{mkt}] {item.get('selection')}{line_part} "
         f"source={src_str} expert={exp_str} url={url}..."
@@ -2197,10 +2205,32 @@ def build_unified_signals(
         selection_val, selection_source, selection_example = selection_fields(
             group.get("player_id"), group.get("atomic_stat"), group.get("direction"), supports
         )
+
+        # Extract matchup info from group or supports
+        day_key_val = group.get("day_key")
+        matchup = group.get("matchup")
+        away_team = None
+        home_team = None
+        event_key = None
+
+        # Parse matchup string (format: "AWAY@HOME")
+        if matchup and "@" in str(matchup):
+            parts = str(matchup).split("@")
+            if len(parts) == 2:
+                away_team = parts[0].strip().upper()
+                home_team = parts[1].strip().upper()
+
+        # Build event_key if we have day_key and teams
+        if day_key_val and away_team and home_team:
+            # day_key format: "NBA:YYYY:MM:DD" -> event_key: "NBA:YYYY:MM:DD:AWAY@HOME"
+            event_key = f"{day_key_val}:{away_team}@{home_team}"
+
         return {
             "signal_type": signal_type,
-            "day_key": group.get("day_key"),
-            "event_key": None,
+            "day_key": day_key_val,
+            "event_key": event_key,
+            "away_team": away_team,
+            "home_team": home_team,
             "market_type": "player_prop",
             "player_id": group.get("player_id"),
             "selection": selection_val,
@@ -2684,6 +2714,7 @@ def compute_signal_id(sig: Dict[str, Any]) -> Optional[str]:
     key = {
         "signal_type": sig_type,
         "day_key": sig.get("day_key"),
+        "event_key": sig.get("event_key"),  # Added to ensure unique ID per game
         "market_type": sig.get("market_type"),
         "selection": sig.get("selection"),
         "player_id": sig.get("player_id"),

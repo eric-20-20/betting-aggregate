@@ -110,7 +110,7 @@ def build_signal_key(signal: Dict[str, Any]) -> str:
     selection = signal.get("selection") or ""
     line = signal.get("line") or ""
     atomic_stat = signal.get("atomic_stat") or ""
-    direction = signal.get("direction") or ""
+    direction = (signal.get("direction") or "").upper()
     if market_type == "player_prop":
         raw = f"{game_key}|player_prop|{selection}|{line}"
     else:

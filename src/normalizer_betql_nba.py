@@ -16,7 +16,7 @@ from store import data_store, write_json
 from utils import normalize_text
 
 ALLOWED_STANDARD = {"spread", "total"}
-MIN_PROP_STARS = 4
+MIN_PROP_STARS = 3
 AMBIGUOUS_SLUGS = {"m_bridge", "m_bridges"}
 
 PROP_STAT_MAP = {
@@ -272,8 +272,13 @@ def normalize_betql_prop_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     if player_slug in AMBIGUOUS_SLUGS:
         player_slug = None
     player_key = normalize_player_key(f"NBA:{player_slug}" if player_slug else None)
-    away_team = raw.get("away_team")
-    home_team = raw.get("home_team")
+
+    # Extract nested event object if present (merged BetQL format)
+    event = raw.get("event", {}) or {}
+
+    # Check top-level first, then fall back to nested event object
+    away_team = raw.get("away_team") or event.get("away_team")
+    home_team = raw.get("home_team") or event.get("home_team")
 
     ineligibility_reason = None
     eligible = True
@@ -300,21 +305,29 @@ def normalize_betql_prop_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         eligible, ineligibility_reason = False, ineligibility_reason or "rating_below_threshold"
 
     observed_dt = _parse_dt(raw.get("observed_at_utc"))
-    event_dt = _parse_dt(raw.get("event_start_time_utc")) or observed_dt
-    day_key = None
-    event_key = None
-    matchup_key = None
-    if event_dt:
+    event_dt = _parse_dt(raw.get("event_start_time_utc") or event.get("event_start_time_utc")) or observed_dt
+
+    # Check if nested event has pre-computed keys
+    day_key = raw.get("day_key") or event.get("day_key")
+    event_key = raw.get("event_key") or event.get("event_key")
+    matchup_key = raw.get("matchup_key") or event.get("matchup_key")
+
+    # Fall back to computing from event_dt if not available
+    if not day_key and event_dt:
         day_key = f"NBA:{event_dt.year:04d}:{event_dt.month:02d}:{event_dt.day:02d}"
     if day_key and away_team and home_team:
-        event_key = f"{day_key}:{away_team}@{home_team}"
-        matchup_key = f"{day_key}:{home_team}-{away_team}"
-    matchup_hint = raw.get("matchup_hint")
+        if not event_key:
+            event_key = f"{day_key}:{away_team}@{home_team}"
+        if not matchup_key:
+            t1, t2 = sorted([str(home_team).upper(), str(away_team).upper()])
+            matchup_key = f"{day_key}:{t1}-{t2}"
+    matchup_hint = raw.get("matchup_hint") or event.get("matchup_key")
     if not matchup_key and day_key and matchup_hint and "@" in str(matchup_hint):
         parts = str(matchup_hint).split("@")
         if len(parts) == 2:
             a, h = parts[0].upper(), parts[1].upper()
-            matchup_key = f"{day_key}:{h}-{a}"
+            t1, t2 = sorted([a, h])
+            matchup_key = f"{day_key}:{t1}-{t2}"
 
     selection = None
     side = None
@@ -459,7 +472,8 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     matchup_key = None
     if day_key and away and home:
         event_key = f"{day_key}:{away}@{home}"
-        matchup_key = f"{day_key}:{home}-{away}"
+        t1, t2 = sorted([str(home).upper(), str(away).upper()])
+        matchup_key = f"{day_key}:{t1}-{t2}"
 
     if market_family == "player_prop":
         market_type = "player_prop"
@@ -494,13 +508,13 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
             side = selection
         if surface in {"betql_probet_spread", "betql_probet_total", "betql_sharp_spread", "betql_sharp_total"}:
             pct = raw.get("pro_pct") or 0
-            if pct < 10:
+            if pct < 5:
                 eligible, inelig_reason = False, "sharp_pct_below_threshold"
         if surface in {"betql_model_spread", "betql_model_total"}:
             rating = raw.get("rating_stars")
             if rating is None:
                 eligible, inelig_reason = False, "missing_rating"
-            elif rating < 4:
+            elif rating < 3:
                 eligible, inelig_reason = False, "rating_below_threshold"
         if selection is None and market_type == "spread":
             eligible, inelig_reason = False, "unparsed_team"
@@ -544,6 +558,8 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "tailing_handle",
         "source_updated_at_utc",
         "matchup_hint",
+        "rating_stars",
+        "pro_pct",
     ]
     provenance = {k: raw.get(k) for k in prov_fields}
 

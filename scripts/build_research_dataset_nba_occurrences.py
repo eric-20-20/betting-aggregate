@@ -278,9 +278,30 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
     for sid, glist in grades_by_id.items():
         best_grade_by_id[sid] = best_grade(glist)
 
+    # Deduplicate by signal_id, keeping the LATEST occurrence
+    # This prevents the same signal from appearing multiple times when
+    # it was observed in multiple consensus runs
+    latest_by_signal: Dict[str, Dict[str, Any]] = {}
+    occurrence_counts: Dict[str, int] = Counter()
+    for occ in signals:
+        sid = occ.get("signal_id")
+        if not sid:
+            continue
+        occurrence_counts[sid] += 1
+        ts = parse_iso(occ.get("observed_at_utc"))
+        existing = latest_by_signal.get(sid)
+        if existing is None:
+            latest_by_signal[sid] = occ
+        else:
+            existing_ts = parse_iso(existing.get("observed_at_utc"))
+            if ts and existing_ts and ts > existing_ts:
+                latest_by_signal[sid] = occ
+
+    print(f"[occ] Deduplicated: {len(signals)} occurrences -> {len(latest_by_signal)} unique signals")
+
     out_rows: List[Dict[str, Any]] = []
 
-    for occ in signals:
+    for occ in latest_by_signal.values():
         sid = occ.get("signal_id")
         if not sid:
             continue
@@ -352,6 +373,7 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
             "grade_best_odds": grade.get("best_odds"),
             "odds_for_units": odds_val,
             "roi_eligible": grade_status == "GRADED" and odds_val is not None,
+            "occurrence_count": occurrence_counts.get(sid, 1),  # How many times this signal was observed
         }
 
         # Carry over odds_list for reference if present

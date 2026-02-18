@@ -590,7 +590,7 @@ def extract_picks_from_html(
             )
 
     if debug:
-        print(f"[DEBUG] action cards_found={len(containers)} matches={len(records)} samples={debug_samples}")
+        print(f"[DEBUG] action cards_found={len(containers_with_experts)} matches={len(records)} samples={debug_samples}")
 
     return records, card_infos
 

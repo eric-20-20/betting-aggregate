@@ -98,7 +98,7 @@ def canonicalize_game_keys(
 
     teams_sorted = sorted([away, home])
     event_key = f"{day_key}:{away}@{home}"
-    matchup_key = f"{day_key}:{home}-{away}"
+    matchup_key = f"{day_key}:{teams_sorted[0]}-{teams_sorted[1]}"
     canonical_game_key = (sport, day_key, teams_sorted[0], teams_sorted[1])
     return event_key, matchup_key, canonical_game_key
 

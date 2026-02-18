@@ -251,7 +251,11 @@ def normalize_dimers_prop(raw: Dict[str, Any]) -> Dict[str, Any]:
     event_dt = _parse_event_date(raw.get("event_date_hint"), raw.get("observed_at_utc", ""))
     day_key = f"NBA:{event_dt.year:04d}:{event_dt.month:02d}:{event_dt.day:02d}"
     event_key = f"{day_key}:{away_team}@{home_team}" if away_team and home_team else None
-    matchup_key = f"{day_key}:{home_team}-{away_team}" if home_team and away_team else None
+    if home_team and away_team:
+        t1, t2 = sorted([str(home_team).upper(), str(away_team).upper()])
+        matchup_key = f"{day_key}:{t1}-{t2}"
+    else:
+        matchup_key = None
 
     # Build selection and side
     direction_upper = direction.upper() if direction else None
@@ -345,7 +349,11 @@ def normalize_dimers_game_bet(raw: Dict[str, Any]) -> Dict[str, Any]:
     event_dt = _parse_event_date(raw.get("event_date_hint"), raw.get("observed_at_utc", ""))
     day_key = f"NBA:{event_dt.year:04d}:{event_dt.month:02d}:{event_dt.day:02d}"
     event_key = f"{day_key}:{away_team}@{home_team}" if away_team and home_team else None
-    matchup_key = f"{day_key}:{home_team}-{away_team}" if home_team and away_team else None
+    if home_team and away_team:
+        t1, t2 = sorted([str(home_team).upper(), str(away_team).upper()])
+        matchup_key = f"{day_key}:{t1}-{t2}"
+    else:
+        matchup_key = None
 
     # Determine market type and build selection
     market_type = raw.get("market_type", "unknown")
@@ -357,7 +365,7 @@ def normalize_dimers_game_bet(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     if market_type == "moneyline":
         if team_code:
-            selection = f"{team_code}_ml"
+            selection = team_code
             side = "team"
     elif market_type == "spread":
         # Extract spread line from pick text
@@ -368,7 +376,7 @@ def normalize_dimers_game_bet(raw: Dict[str, Any]) -> Dict[str, Any]:
             except ValueError:
                 line = None
         if team_code:
-            selection = f"{team_code}_spread"
+            selection = team_code
             side = "team"
     elif market_type == "total":
         # Extract total line and direction
@@ -379,7 +387,7 @@ def normalize_dimers_game_bet(raw: Dict[str, Any]) -> Dict[str, Any]:
                 line = float(total_match.group(2))
             except ValueError:
                 line = None
-            selection = "game_total"
+            selection = side.upper()
 
     # Parse odds
     odds = _parse_odds(raw.get("best_odds"))

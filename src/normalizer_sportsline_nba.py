@@ -108,7 +108,8 @@ def _build_event_keys(
 
     if away_team and home_team:
         event_key = f"{day_key}:{away_team}@{home_team}"
-        matchup_key = f"{day_key}:{home_team}-{away_team}"
+        t1, t2 = sorted([str(home_team).upper(), str(away_team).upper()])
+        matchup_key = f"{day_key}:{t1}-{t2}"
 
     return event_key, day_key, matchup_key
 

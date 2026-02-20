@@ -170,7 +170,7 @@ def _stat_from_player(player: Dict[str, Any], stat_key: str) -> Optional[float]:
         pts = s.get("points") or 0
         reb = s.get("reboundsTotal") or s.get("rebounds") or 0
         return float(pts + reb)
-    if stat_key in {"pra", "pts_reb_ast", "pts_reb_assists"}:
+    if stat_key in {"pra", "pts_reb_ast", "pts_reb_assists", "points_assists_rebounds"}:
         pts = s.get("points") or 0
         reb = s.get("reboundsTotal") or s.get("rebounds") or 0
         ast = s.get("assists") or 0

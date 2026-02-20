@@ -94,15 +94,15 @@ def _parse_teams_from_canonical(url: Optional[str]) -> tuple[Optional[str], Opti
     return None, None
 
 
-def _build_day_and_event(dt: Optional[datetime], away: Optional[str], home: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+def _build_day_and_event(dt: Optional[datetime], away: Optional[str], home: Optional[str], sport: str = "NBA") -> tuple[Optional[str], Optional[str]]:
     if not dt:
         return None, None
-    # Convert to US Eastern time for NBA game day assignment
-    # Games at 9pm ET on Feb 12 should be day_key NBA:2026:02:12, not Feb 13
+    # Convert to US Eastern time for game day assignment
+    # Games at 9pm ET on Feb 12 should be day_key SPORT:2026:02:12, not Feb 13
     from zoneinfo import ZoneInfo
     eastern = ZoneInfo("America/New_York")
     dt_eastern = dt.astimezone(eastern)
-    day_key = f"NBA:{dt_eastern.year:04d}:{dt_eastern.month:02d}:{dt_eastern.day:02d}"
+    day_key = f"{sport}:{dt_eastern.year:04d}:{dt_eastern.month:02d}:{dt_eastern.day:02d}"
     if away and home:
         return day_key, f"{day_key}:{away}@{home}"
     return day_key, day_key
@@ -113,7 +113,8 @@ def build_event_key(raw: Dict[str, Any]) -> Optional[str]:
     dt = _parse_dt(raw.get("event_start_time_utc")) or _parse_dt(raw.get("observed_at_utc"))
     away = raw.get("away_team")
     home = raw.get("home_team")
-    _, ev = _build_day_and_event(dt, away, home)
+    sport = raw.get("sport") or "NBA"
+    _, ev = _build_day_and_event(dt, away, home, sport=sport)
     return ev
 
 
@@ -267,7 +268,8 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     home_team = _normalize_team(home_raw) if home_raw else None
 
     dt = _parse_dt(raw.get("event_start_time_utc")) or _parse_dt(raw.get("observed_at_utc"))
-    day_key, event_key = _build_day_and_event(dt, away_team, home_team)
+    sport = raw.get("sport") or "NBA"
+    day_key, event_key = _build_day_and_event(dt, away_team, home_team, sport=sport)
     matchup_key = build_matchup_key(day_key, away_team, home_team)
 
     is_prop_pick = is_covers_player_prop(pick_text, block_text) if raw.get("source_id") == "covers" else False

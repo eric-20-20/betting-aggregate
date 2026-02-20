@@ -21,7 +21,7 @@ import os
 import sys
 import copy
 from collections import Counter, defaultdict
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Set
 
@@ -345,6 +345,49 @@ def check_eligibility(signal: Dict[str, Any], date_str: Optional[str]) -> Tuple[
     return True, "", []
 
 
+def _try_all_games_player_fallback(
+    signal: Dict[str, Any],
+    date_str: Optional[str],
+    refresh_cache: bool,
+    provider: Any,
+) -> Optional[Dict[str, Any]]:
+    """Search all games on a date (and +/-1 day) for a player's statline.
+
+    Returns the statline dict (with value, game_id, matched_away, matched_home)
+    or None if player not found in any game.
+    """
+    if not date_str:
+        return None
+    stat_key = extract_stat_key(signal)
+    if not stat_key:
+        return None
+    player_id = signal.get("player_id")
+    if not player_id and isinstance(signal.get("selection"), str):
+        player_id = signal["selection"].split("::")[0]
+    if not player_id:
+        return None
+
+    # Try primary date first, then +/-1 day
+    dates_to_try = [date_str]
+    try:
+        base = datetime.strptime(date_str, "%Y-%m-%d")
+        dates_to_try.append((base - timedelta(days=1)).strftime("%Y-%m-%d"))
+        dates_to_try.append((base + timedelta(days=1)).strftime("%Y-%m-%d"))
+    except Exception:
+        pass
+
+    for ds in dates_to_try:
+        try:
+            result = nba_provider.search_all_games_for_player_statline(
+                player_id, stat_key, ds, refresh_cache=refresh_cache,
+            )
+        except Exception:
+            continue
+        if result is not None:
+            return result
+    return None
+
+
 def grade_signal(
     signal: Dict[str, Any],
     graded_at: str,
@@ -534,6 +577,52 @@ def grade_signal(
     if debug and games_info and date_str and games_info.get("date") and games_info.get("date") != date_str:
         notes.append(f"meta_date_mismatch:{games_info.get('date')}!= {date_str}")
     if status_raw == "ERROR":
+        error_notes = game_result.get("notes") or ";".join(notes) or "game_not_found"
+        # For player props with wrong matchup, try searching all games for the player
+        if market == "player_prop" and "game_not_found" in str(error_notes):
+            fallback_stat = _try_all_games_player_fallback(
+                signal, date_str, refresh_cache, provider
+            )
+            if fallback_stat is not None:
+                # Successfully found player in another game — grade the prop
+                line = pick_line(signal)
+                direction = parse_direction(signal)
+                stat_key = extract_stat_key(signal)
+                val = fallback_stat.get("value")
+                if val is None and stat_key:
+                    val = fallback_stat.get(stat_key)
+                if val is not None and line is not None and direction:
+                    try:
+                        val_num = float(val)
+                    except (TypeError, ValueError):
+                        val_num = None
+                    if val_num is not None:
+                        if direction == "OVER":
+                            result = "WIN" if val_num > line else "PUSH" if val_num == line else "LOSS"
+                        else:
+                            result = "WIN" if val_num < line else "PUSH" if val_num == line else "LOSS"
+                        if counters is not None:
+                            counters["prop_fallback_all_games_graded"] += 1
+                        return attach_event_keys(
+                            {
+                                "signal_id": sid,
+                                "graded_at_utc": graded_at,
+                                "status": "GRADED",
+                                "result": result,
+                                "units": None,
+                                "market_type": market,
+                                "selection": signal.get("selection"),
+                                "event_key": signal.get("event_key"),
+                                "day_key": day_key,
+                                "urls": urls,
+                                "notes": "graded_via_all_games_search",
+                                "games_info": games_info,
+                                "actual_stat_value": val_num,
+                                "fallback_game_id": fallback_stat.get("game_id"),
+                                "fallback_matched_away": fallback_stat.get("matched_away"),
+                                "fallback_matched_home": fallback_stat.get("matched_home"),
+                            }
+                        )
         return attach_event_keys(
             {
                 "signal_id": sid,
@@ -546,7 +635,7 @@ def grade_signal(
                 "event_key": signal.get("event_key"),
                 "day_key": day_key,
                 "urls": urls,
-                "notes": game_result.get("notes") or ";".join(notes) or "game_not_found",
+                "notes": error_notes,
                 "games_info": games_info,
             }
         )
@@ -1177,8 +1266,8 @@ def main() -> None:
     # Determine sport and load appropriate provider
     sport = args.sport
     if sport == NCAAB_SPORT:
-        from src.results import ncaab_provider  # type: ignore
-        results_provider = ncaab_provider
+        from src.results import ncaab_provider_espn  # type: ignore
+        results_provider = ncaab_provider_espn
     else:
         results_provider = nba_provider
 
@@ -1427,15 +1516,22 @@ def main() -> None:
                         }
                     )
 
+    # Prune orphaned grades (signal_ids no longer in the current ledger)
+    current_signal_ids = {s.get("signal_id") for s in signals if s.get("signal_id")}
+    pruned = {sid: g for sid, g in latest_by_signal.items() if sid in current_signal_ids}
+    orphan_count = len(latest_by_signal) - len(pruned)
+    if orphan_count:
+        print(f"[grader] Pruned {orphan_count} orphaned grades (no matching signal in ledger)")
+
     if not args.dry_run:
         if new_rows:
             append_jsonl(grades_occ_path, new_rows)
-        write_jsonl(grades_latest_path, latest_by_signal.values())
+        write_jsonl(grades_latest_path, pruned.values())
 
     # Validation output
-    status_counts = Counter(row.get("status") for row in latest_by_signal.values())
-    result_counts = Counter(row.get("result") for row in latest_by_signal.values() if row.get("result"))
-    market_counts = Counter(row.get("market_type") for row in latest_by_signal.values())
+    status_counts = Counter(row.get("status") for row in pruned.values())
+    result_counts = Counter(row.get("result") for row in pruned.values() if row.get("result"))
+    market_counts = Counter(row.get("market_type") for row in pruned.values())
     print("Grade counts by status:", dict(status_counts))
     print("Result counts:", dict(result_counts))
     print("Grade counts by market_type:", dict(market_counts))

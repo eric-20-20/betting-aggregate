@@ -30,6 +30,7 @@ INPUT_FILES_BY_SPORT = {
         "normalized_sportsline_nba.json",
         "normalized_dimers_nba.json",
         "normalized_oddstrader_nba.json",
+        "normalized_oddstrader_prop_nba.json",
         # Backfill data (historical picks from Action + BetQL)
         "merged_action_nba.json",
         "merged_betql_props_nba.json",
@@ -42,6 +43,7 @@ INPUT_FILES_BY_SPORT = {
         "normalized_sportsline_ncaab.json",
         "normalized_dimers_ncaab.json",
         "normalized_oddstrader_ncaab.json",
+        "normalized_oddstrader_prop_ncaab.json",
     ],
 }
 
@@ -61,6 +63,7 @@ RAW_FILES_BY_SPORT = {
         "raw_sportsline_nba.json",
         "raw_dimers_nba.json",
         "raw_oddstrader_nba.json",
+        "raw_oddstrader_prop_nba.json",
     ],
     NCAAB_SPORT: [
         "raw_action_ncaab.json",
@@ -68,6 +71,7 @@ RAW_FILES_BY_SPORT = {
         "raw_sportsline_ncaab.json",
         "raw_dimers_ncaab.json",
         "raw_oddstrader_ncaab.json",
+        "raw_oddstrader_prop_ncaab.json",
     ],
 }
 
@@ -327,6 +331,8 @@ def _normalize_prop_stat_key(stat_raw: Optional[str]) -> Optional[str]:
         "reb+ast": "reb_ast",
         "ra": "reb_ast",
         "stl+blk": "steals_blocks",
+        "stl_blk": "steals_blocks",
+        "steals_blocks": "steals_blocks",
         "threes_made": "threes",
         "made_threes": "threes",
         "made threes": "threes",
@@ -396,6 +402,7 @@ def betql_prop_to_standard_pick(raw: Dict[str, Any]) -> Dict[str, Any]:
         "day_key": None,
         "matchup_key": None,
         "event_start_time_utc": None,
+        "player_team": raw.get("player_team") or raw.get("team_panel_abbrev"),
     }
 
     market = {
@@ -496,7 +503,7 @@ def _infer_source_from_url(url: Optional[str]) -> Optional[str]:
     if "covers.com" in low:
         return "covers"
     if "actionnetwork" in low:
-        return "actionnetwork"
+        return "action"
     return None
 
 
@@ -990,6 +997,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 "direction": direction,
                 "away_team": (event or {}).get("away_team"),
                 "home_team": (event or {}).get("home_team"),
+                "player_team": (event or {}).get("player_team"),
                 "player_id": player_id,
                 "day_key": day,
                 "matchup_key": matchup_key,
@@ -1111,6 +1119,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
             # Extract team info from cluster entries
             away_team = next((e.get("away_team") for e in cl if e.get("away_team")), None)
             home_team = next((e.get("home_team") for e in cl if e.get("home_team")), None)
+            player_team = next((e.get("player_team") for e in cl if e.get("player_team")), None)
             results.append(
                 {
                     "canonical_key": match_key,
@@ -1120,6 +1129,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                     "matchup": matchup_display,
                     "away_team": away_team,
                     "home_team": home_team,
+                    "player_team": player_team,
                     "market_type": "player_prop",
                     "player_id": player_id,
                     "atomic_stat": atomic_stat,
@@ -1163,7 +1173,8 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
     return results
 
 
-ALLOWED_ATOMIC = {"points", "rebounds", "assists", "threes_made"}
+ALLOWED_ATOMIC = {"points", "rebounds", "assists", "threes_made", "threes",
+                  "pts_reb", "pts_ast", "reb_ast", "pts_reb_ast"}
 
 
 def parse_selection_from_record(rec: Dict[str, Any]) -> Optional[Tuple[str, str, str]]:
@@ -1222,9 +1233,15 @@ def build_atomic_signals(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if event.get("away_team") and event.get("home_team"):
             matchup = f"{str(event['away_team']).upper()}@{str(event['home_team']).upper()}"
         stat_key = normalize_stat_key(stat_key)
-        for atomic in mapping_atomic_stats(stat_key):
-            if atomic not in ALLOWED_ATOMIC:
-                continue
+        # Treat combo stats as their own category — do NOT decompose.
+        # A reb_ast pick at 12.5 should remain as reb_ast, not split into
+        # separate rebounds and assists signals with the combo line.
+        if stat_key in ALLOWED_ATOMIC:
+            atomics_to_emit = [stat_key]
+        else:
+            decomposed = mapping_atomic_stats(stat_key)
+            atomics_to_emit = [a for a in decomposed if a in ALLOWED_ATOMIC]
+        for atomic in atomics_to_emit:
             signals.append(
                 {
                     "day_key": dk,
@@ -3384,7 +3401,8 @@ def main(
     # Tracking writes
     if track:
         rid = run_id or default_run_id()
-        run_dir = os.path.join(data_dir, "runs", rid)
+        runs_subdir = "runs_ncaab" if sport == NCAAB_SPORT else "runs"
+        run_dir = os.path.join(data_dir, runs_subdir, rid)
         ensure_dir(run_dir)
 
         raw_path = os.path.join(run_dir, "raw_records.jsonl")

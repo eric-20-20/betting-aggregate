@@ -485,6 +485,34 @@ def canonicalize_prop_selection(
     return None
 
 
+def _extract_player_team(signal: Dict[str, Any]) -> Optional[str]:
+    """Extract player_team from signal, checking top-level, supports, and nested event."""
+    pt = signal.get("player_team")
+    if pt:
+        return str(pt).upper()
+    for sup in signal.get("supports") or []:
+        pt = sup.get("player_team")
+        if pt:
+            return str(pt).upper()
+    return None
+
+
+def _resolve_prop_matchup_from_player_team(
+    player_team: Optional[str],
+    day_key: Optional[str],
+    date_schedule: Dict[str, List[Tuple[str, str]]],
+) -> Tuple[Optional[str], Optional[str], str]:
+    """Given player's team and date, find the correct game from known schedule."""
+    if not player_team or not day_key:
+        return None, None, "no_player_team_or_day"
+    pt = player_team.upper()
+    games = date_schedule.get(day_key, [])
+    for away, home in games:
+        if pt == away or pt == home:
+            return away, home, "player_team_schedule"
+    return None, None, "player_team_not_in_schedule"
+
+
 def _resolve_prop_matchup_from_urls(supports: List[Dict[str, Any]], sport: str = NBA_SPORT) -> Tuple[Optional[str], Optional[str], str]:
     """
     Try to recover away/home from Action or Covers URLs.
@@ -596,6 +624,10 @@ def collect_occurrences(
     props_history_end: str | None = None,
     include_action_history: bool = False,
     action_history_path: Path | None = None,
+    include_oddstrader_history: bool = False,
+    oddstrader_history_root: Path | None = None,
+    oddstrader_history_start: str | None = None,
+    oddstrader_history_end: str | None = None,
     sport: str = NBA_SPORT,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int], List[Dict[str, Any]]]:
     occurrences: List[Dict[str, Any]] = []
@@ -782,6 +814,16 @@ def collect_occurrences(
                         if val is not None:
                             line_candidates.append(val)
                             line_sources.add(f"{sup.get('source_id') or 'unknown'}:{label}")
+                # Also try the signal's own selection and raw_pick_text
+                for key, label in (
+                    ("selection", "signal.selection"),
+                    ("raw_pick_text", "signal.raw_pick_text"),
+                ):
+                    txt = signal.get(key)
+                    val = parse_spread_number(txt)
+                    if val is not None:
+                        line_candidates.append(val)
+                        line_sources.add(f"{signal.get('source_id') or 'unknown'}:{label}")
                 if line_candidates:
                     spreads_with_support_lines += 1
                     unique_lines = sorted({round(v, 3) for v in line_candidates})
@@ -814,6 +856,10 @@ def collect_occurrences(
                 if not sid:
                     sid = signal.get("source_id")
                 surf = sup.get("source_surface") or signal.get("source_surface")
+                expert_name = sup.get("expert_name")
+                # Default BetQL player props to "BetQL Model" when no expert
+                if not expert_name and sid == "betql" and (signal.get("market_type") or "") == "player_prop":
+                    expert_name = "BetQL Model"
                 normalized_supports.append(
                     {
                         "source_id": sid,
@@ -828,9 +874,45 @@ def collect_occurrences(
                         "stat_key": sup.get("stat_key"),
                         "atomic_stat": sup.get("atomic_stat"),
                         "display_player_id": sup.get("display_player_id"),
+                        "expert_name": expert_name,
                     }
                 )
             signal["supports"] = normalized_supports
+
+            # Filter out cross-category supports from old decomposed-combo runs.
+            # A signal with atomic_stat="rebounds" should not keep supports with
+            # stat_key="reb_ast" (combo line ≠ atomic line).
+            _COMBO_STATS = {"pts_reb_ast", "pts_reb", "pts_ast", "reb_ast"}
+            _PURE_ATOMICS = {"points", "rebounds", "assists", "threes", "threes_made"}
+            sig_atomic = signal.get("atomic_stat")
+            if sig_atomic and signal.get("market_type") == "player_prop":
+                cleaned = []
+                for sup in signal["supports"]:
+                    sk = sup.get("stat_key")
+                    if not sk:
+                        cleaned.append(sup)
+                        continue
+                    # Pure atomic signal should not have combo supports
+                    if sig_atomic in _PURE_ATOMICS and sk in _COMBO_STATS:
+                        continue
+                    # Combo signal should not have mismatched atomic supports
+                    if sig_atomic in _COMBO_STATS and sk in _PURE_ATOMICS:
+                        continue
+                    cleaned.append(sup)
+                if cleaned:
+                    signal["supports"] = cleaned
+                    # Recalculate line from remaining supports (old signals
+                    # may have median of combo + atomic lines mixed together)
+                    sup_lines = [sup.get("line") for sup in cleaned if sup.get("line") is not None]
+                    if sup_lines:
+                        from statistics import median as _stat_median
+                        new_line = _stat_median(sup_lines)
+                        signal["line"] = new_line
+                        signal["line_median"] = new_line
+                else:
+                    # All supports were cross-category (old decomposed artifact).
+                    # Clear supports so this signal won't produce valid grades.
+                    signal["supports"] = []
 
             sup_surfaces = {sup.get("source_surface") for sup in signal.get("supports") or [] if sup.get("source_surface")}
             sup_ids = {sup.get("source_id") for sup in signal.get("supports") or [] if sup.get("source_id")}
@@ -844,6 +926,14 @@ def collect_occurrences(
                     signal["source_surface"] = "multi"
                 else:
                     signal["source_surface"] = signal.get("source_surface") or "unknown"
+            # Re-derive source_id from normalized supports when pre-normalization
+            # value doesn't match (e.g., "actionnetwork" corrected to "action")
+            cur_sid = signal.get("source_id")
+            if cur_sid and sup_ids and cur_sid not in sup_ids:
+                if len(sup_ids) == 1:
+                    signal["source_id"] = next(iter(sup_ids))
+                else:
+                    signal["source_id"] = "multi"
             if not signal.get("source_id"):
                 if len(sup_ids) == 1:
                     signal["source_id"] = next(iter(sup_ids))
@@ -929,6 +1019,72 @@ def collect_occurrences(
             sport=sport,
         )
         occurrences.extend(prop_rows)
+    # Optionally ingest OddsTrader history picks as occurrences
+    if include_oddstrader_history and oddstrader_history_root and oddstrader_history_start and oddstrader_history_end:
+        ot_rows = _load_oddstrader_history(
+            Path(oddstrader_history_root),
+            oddstrader_history_start,
+            oddstrader_history_end,
+            sport=sport,
+        )
+        occurrences.extend(ot_rows)
+    # Second pass: resolve player prop matchups using player_team + schedule
+    date_schedule: Dict[str, List[Tuple[str, str]]] = {}
+    for sport_key, day, away, home in set(std_with_keys):
+        pair = (away.upper(), home.upper())
+        games = date_schedule.setdefault(day, [])
+        if pair not in games:
+            games.append(pair)
+    prop_matchup_resolved_pt = 0
+    prop_matchup_corrected_pt = 0
+    for occ in occurrences:
+        if occ.get("market_type") != "player_prop":
+            continue
+        player_team = _extract_player_team(occ)
+        if not player_team:
+            continue
+        norm_day = occ.get("day_key")
+        if not norm_day:
+            continue
+        has_away = bool(occ.get("away_team"))
+        has_home = bool(occ.get("home_team"))
+
+        # Case 1: missing matchup fields — fill them
+        if not has_away or not has_home:
+            away_res, home_res, method = _resolve_prop_matchup_from_player_team(
+                player_team, norm_day, date_schedule
+            )
+            if away_res and home_res:
+                occ["away_team"] = away_res
+                occ["home_team"] = home_res
+                ev_key, mu_key, cgk = canonicalize_game_keys(norm_day, away_res, home_res, sport)
+                occ["event_key"] = ev_key or occ.get("event_key")
+                occ["matchup_key"] = mu_key or occ.get("matchup_key")
+                occ["canonical_game_key"] = cgk
+                occ["prop_game_resolved_via"] = method
+                prop_matchup_resolved_pt += 1
+            continue
+
+        # Case 2: has matchup but player_team not in it — wrong matchup, correct it
+        current_teams = {str(occ["away_team"]).upper(), str(occ["home_team"]).upper()}
+        if player_team not in current_teams:
+            away_res, home_res, method = _resolve_prop_matchup_from_player_team(
+                player_team, norm_day, date_schedule
+            )
+            if away_res and home_res:
+                occ["away_team"] = away_res
+                occ["home_team"] = home_res
+                ev_key, mu_key, cgk = canonicalize_game_keys(norm_day, away_res, home_res, sport)
+                occ["event_key"] = ev_key
+                occ["matchup_key"] = mu_key
+                occ["canonical_game_key"] = cgk
+                occ["prop_game_resolved_via"] = "player_team_corrected"
+                prop_matchup_corrected_pt += 1
+
+    print(f"[player_team] Resolved missing matchups: {prop_matchup_resolved_pt}")
+    print(f"[player_team] Corrected wrong matchups: {prop_matchup_corrected_pt}")
+    print(f"[player_team] Date schedule: {len(date_schedule)} dates, {sum(len(v) for v in date_schedule.values())} games")
+
     # audit printout
     print("Ledger build day_key format counts:", dict(day_format_counter))
     print(f"Ledger build canonical_game_key populated: {canonical_key_populated}")
@@ -1104,6 +1260,30 @@ def _load_betql_history(
     return rows
 
 
+def _load_oddstrader_history(
+    root: Path,
+    start_str: str,
+    end_str: str,
+    sport: str = NBA_SPORT,
+) -> List[Dict[str, Any]]:
+    """Load OddsTrader backfill files from data/history/oddstrader/{sport}/YYYY-MM-DD.jsonl."""
+    rows: List[Dict[str, Any]] = []
+    days = _history_date_range(start_str, end_str)
+    sport_dir = root / sport.lower()
+    for day in days:
+        path = sport_dir / f"{day.isoformat()}.jsonl"
+        if not path.exists():
+            continue
+        for rec in read_jsonl(path):
+            try:
+                occ = _history_row_to_occurrence(rec, source_tag="oddstrader_history", sport=sport)
+                rows.append(occ)
+            except Exception:
+                continue
+    print(f"OddsTrader history: loaded {len(rows)} records from {sport_dir} ({start_str} to {end_str})")
+    return rows
+
+
 def pick_latest(occurrences: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     latest: Dict[str, Dict[str, Any]] = {}
     for row in occurrences:
@@ -1161,12 +1341,36 @@ def main() -> None:
         default=None,
         help="Path to normalized Action backfill JSONL (if not provided, defaults to out/normalized_action_nba_backfill.jsonl).",
     )
+    parser.add_argument(
+        "--include-oddstrader-history",
+        action="store_true",
+        help="Include OddsTrader backfill history files.",
+    )
+    parser.add_argument(
+        "--oddstrader-history-root",
+        default="data/history/oddstrader",
+        help="Root for OddsTrader backfill history (default: data/history/oddstrader).",
+    )
+    parser.add_argument("--oddstrader-history-start", help="Start date YYYY-MM-DD for OddsTrader history inclusion.")
+    parser.add_argument("--oddstrader-history-end", help="End date YYYY-MM-DD for OddsTrader history inclusion.")
+    parser.add_argument(
+        "--include-dimers-history",
+        action="store_true",
+        help="Include normalized Dimers backfill JSONL (default data/latest/normalized_dimers_backfill.jsonl).",
+    )
+    parser.add_argument(
+        "--dimers-history-path",
+        default=None,
+        help="Path to normalized Dimers backfill JSONL (if not provided, defaults to data/latest/normalized_dimers_backfill.jsonl).",
+    )
     args = parser.parse_args()
     sport = args.sport
     if args.include_betql_history and (not args.history_start or not args.history_end):
         raise SystemExit("history-start and history-end are required when --include-betql-history is set")
     if args.include_betql_game_props_history and (not args.props_history_start or not args.props_history_end):
         raise SystemExit("props-history-start and props-history-end are required when --include-betql-game-props-history is set")
+    if args.include_oddstrader_history and (not args.oddstrader_history_start or not args.oddstrader_history_end):
+        raise SystemExit("oddstrader-history-start and oddstrader-history-end are required when --include-oddstrader-history is set")
     occurrences, counters, bad_examples = collect_occurrences(
         debug=args.debug,
         include_betql_history=args.include_betql_history,
@@ -1179,6 +1383,10 @@ def main() -> None:
         props_history_end=args.props_history_end,
         include_action_history=args.include_action_history,
         action_history_path=Path(args.action_history_path) if args.action_history_path else None,
+        include_oddstrader_history=args.include_oddstrader_history,
+        oddstrader_history_root=Path(args.oddstrader_history_root) if args.oddstrader_history_root else None,
+        oddstrader_history_start=args.oddstrader_history_start,
+        oddstrader_history_end=args.oddstrader_history_end,
         sport=sport,
     )
 
@@ -1220,6 +1428,25 @@ def main() -> None:
                         print(f"[WARN] Failed to convert Action row: {e}")
                     continue
             print(f"Loaded {loaded} records from Action history: {path}")
+
+    # Load Dimers normalized backfill if requested
+    if args.include_dimers_history:
+        default_dimers_path = "data/latest/normalized_dimers_backfill.jsonl"
+        path = Path(args.dimers_history_path) if args.dimers_history_path else Path(default_dimers_path)
+        if not path.exists():
+            print(f"[WARN] Skipping missing Dimers history file: {path}")
+        else:
+            loaded = 0
+            for row in read_jsonl(path):
+                try:
+                    occ = _history_row_to_occurrence(row, source_tag="dimers_history", sport=sport)
+                    occurrences.append(occ)
+                    loaded += 1
+                except Exception as e:
+                    if args.debug:
+                        print(f"[WARN] Failed to convert Dimers row: {e}")
+                    continue
+            print(f"Loaded {loaded} records from Dimers history: {path}")
 
     before = len(occurrences)
     deduped_map = {}

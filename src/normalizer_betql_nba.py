@@ -350,6 +350,9 @@ def normalize_betql_prop_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "rating_stars": rating_val,
     }
 
+    # player_team is the team the player actually plays for (from BetQL scraper)
+    player_team = raw.get("player_team") or raw.get("team_panel_abbrev") or (event.get("player_team") if isinstance(event, dict) else None)
+
     event = {
         "sport": "NBA",
         "event_key": event_key,
@@ -358,6 +361,7 @@ def normalize_betql_prop_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "away_team": away_team,
         "home_team": home_team,
         "event_start_time_utc": raw.get("event_start_time_utc"),
+        "player_team": player_team,
     }
 
     market = {

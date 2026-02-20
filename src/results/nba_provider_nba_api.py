@@ -54,6 +54,9 @@ TEAM_ABBR_MAP = {
     "PHO": "PHX",
     "CHO": "CHA",
     "SA": "SAS",
+    "GS": "GSW",
+    "NY": "NYK",
+    "NO": "NOP",
 }
 
 # in-memory caches per run
@@ -355,6 +358,11 @@ STAT_KEY_MAP = {
     "steals": "STL",
     "blocks": "BLK",
     "turnovers": "TOV",
+    # Combo stats — sentinel values; handled by combo logic below
+    "pts_reb": "PTS_REB",
+    "pts_ast": "PTS_AST",
+    "reb_ast": "REB_AST",
+    "pts_reb_ast": "PTS_REB_AST",
 }
 
 
@@ -613,21 +621,25 @@ def get_player_stat(game_id: str, player_key: str, stat_key: str, date_str: str,
             return target_row.get(col)
         return None
 
-    val = _val(stat_col)
-    if val is None and stat_col == "TOV":
-        val = _val("TO")
-
-    # combo handling
-    if val is None and stat_key.lower() in {"pts_reb", "pts_ast", "reb_ast"}:
+    # Handle combo stats first — compute from components
+    val = None
+    sk_lower = stat_key.lower()
+    if sk_lower in {"pts_reb", "pts_ast", "reb_ast", "pts_reb_ast", "points_assists_rebounds"}:
         pts = _val("PTS") or 0
         reb = _val("REB") or 0
         ast = _val("AST") or 0
-        if stat_key.lower() == "pts_reb":
+        if sk_lower == "pts_reb":
             val = pts + reb
-        elif stat_key.lower() == "pts_ast":
+        elif sk_lower == "pts_ast":
             val = pts + ast
-        elif stat_key.lower() == "reb_ast":
+        elif sk_lower == "reb_ast":
             val = reb + ast
+        elif sk_lower in {"pts_reb_ast", "points_assists_rebounds"}:
+            val = pts + reb + ast
+    else:
+        val = _val(stat_col)
+        if val is None and stat_col == "TOV":
+            val = _val("TO")
 
     if val is None:
         meta["player_notes"] = "stat_missing"
@@ -715,6 +727,7 @@ def extract_stat_from_row(row: Dict[str, Any], stat_key: str) -> Optional[Any]:
         "pts_reb": None,
         "pts_ast": None,
         "reb_ast": None,
+        "pts_reb_ast": None,
     }
     if key == "pts_reb":
         return (stats.get("points") or 0) + (stats.get("reboundsTotal") or stats.get("rebounds") or 0)
@@ -722,4 +735,6 @@ def extract_stat_from_row(row: Dict[str, Any], stat_key: str) -> Optional[Any]:
         return (stats.get("points") or 0) + (stats.get("assists") or 0)
     if key == "reb_ast":
         return (stats.get("reboundsTotal") or stats.get("rebounds") or 0) + (stats.get("assists") or 0)
+    if key in {"pts_reb_ast", "points_assists_rebounds"}:
+        return (stats.get("points") or 0) + (stats.get("reboundsTotal") or stats.get("rebounds") or 0) + (stats.get("assists") or 0)
     return stat_map.get(key)

@@ -23,8 +23,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 DEFAULT_SIGNALS_PATH = Path("data/ledger/signals_occurrences.jsonl")
-DEFAULT_GRADES_PATH = Path("data/ledger/grades_latest.jsonl")
+DEFAULT_GRADES_PATH = Path("data/ledger/grades_occurrences.jsonl")
 DEFAULT_OUTPUT_PATH = Path("data/analysis/graded_occurrences_latest.jsonl")
+SIGNALS_LATEST_PATH = Path("data/ledger/signals_latest.jsonl")
 
 
 def read_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -309,6 +310,26 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
 
     print(f"[occ] Deduplicated: {len(signals)} occurrences -> {len(latest_by_signal)} unique signals")
 
+    # Filter to only signal_ids that exist in the current ledger.
+    # Old runs may have produced signals (e.g., from combo stat decomposition bug)
+    # that were later removed. Exclude those orphans from reporting.
+    current_ids: set = set()
+    if SIGNALS_LATEST_PATH.exists():
+        with SIGNALS_LATEST_PATH.open() as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    row = json.loads(line)
+                    sid = row.get("signal_id")
+                    if sid:
+                        current_ids.add(sid)
+    if current_ids:
+        before = len(latest_by_signal)
+        latest_by_signal = {k: v for k, v in latest_by_signal.items() if k in current_ids}
+        pruned = before - len(latest_by_signal)
+        if pruned:
+            print(f"[occ] Pruned {pruned} orphaned signals not in current ledger")
+
     out_rows: List[Dict[str, Any]] = []
 
     for occ in latest_by_signal.values():
@@ -335,7 +356,7 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
         row: Dict[str, Any] = {
             "occurrence_id": occ.get("occurrence_id"),
             "signal_id": sid,
-            "source_id": occ.get("source_id"),
+            "source_id": occ_source_id,
             "source_surface": occ.get("source_surface"),
             "experts": occ.get("experts") or [],
             "expert": occ.get("expert") or occ.get("expert_name"),

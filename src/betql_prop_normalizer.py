@@ -130,6 +130,7 @@ def normalize_betql_prop_pick(raw: Dict[str, object]) -> Dict[str, object]:
             "away_team": away_team,
             "home_team": home_team,
             "event_start_time_utc": raw.get("event_start_time_utc") or event.get("event_start_time_utc"),
+            "player_team": raw.get("player_team") or raw.get("team_panel_abbrev") or event.get("player_team"),
         },
         "market": {
             "market_type": "player_prop",

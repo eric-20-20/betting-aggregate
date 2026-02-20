@@ -18,6 +18,9 @@ Outputs:
   - data/reports/by_expert_record.json
   - data/reports/by_source_participation_record.json
   - data/reports/by_sources_combo_record.json
+  - data/reports/by_stat_type.json
+  - data/reports/by_stat_type_source.json
+  - data/reports/by_line_bucket.json
 
 Run:
     python3 scripts/report_records.py
@@ -710,6 +713,44 @@ def build_sample_snippet(row: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in snippet.items() if v is not None}
 
 
+def _line_bucket(r: Dict[str, Any]) -> str:
+    """Bucket a signal's line value by market type."""
+    line = r.get("line")
+    market = r.get("market_type", "")
+    if line is None:
+        return "no_line"
+    try:
+        line = float(line)
+    except (TypeError, ValueError):
+        return "no_line"
+    if market == "spread":
+        a = abs(line)
+        if a <= 2.5:
+            return "0-2.5"
+        if a <= 5.5:
+            return "3-5.5"
+        if a <= 9.5:
+            return "6-9.5"
+        return "10+"
+    if market == "total":
+        if line < 215:
+            return "<215"
+        if line <= 225:
+            return "215-225"
+        if line <= 235:
+            return "225-235"
+        return "235+"
+    if market == "player_prop":
+        if line <= 10.5:
+            return "0-10.5"
+        if line <= 20.5:
+            return "11-20.5"
+        if line <= 30.5:
+            return "21-30.5"
+        return "31+"
+    return "other"
+
+
 def annotate_anomalies(groups: List[Dict[str, Any]], samples_map: Dict[Any, List[Dict[str, Any]]]) -> None:
     for g in groups:
         key = g.get("key")
@@ -751,7 +792,7 @@ def by_source_record_market(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     graded = graded_occurrence_rows(rows)
     grouped, samples = accumulate_records_with_samples(
         graded,
-        key_fn=lambda r: (r.get("source_id") or "unknown", r.get("market_type") or "unknown"),
+        key_fn=lambda r: (r.get("occ_source_id") or r.get("source_id") or "unknown", r.get("market_type") or "unknown"),
     )
     annotate_anomalies(grouped, samples)
     for g in grouped:
@@ -825,6 +866,179 @@ def by_sources_combo_record(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"rows": grouped}
 
 
+def by_stat_type(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    graded = graded_occurrence_rows(rows)
+    props = [r for r in graded if (r.get("market_type") or "") == "player_prop"]
+    grouped, samples = accumulate_records_with_samples(
+        props,
+        key_fn=lambda r: r.get("atomic_stat") or "unknown",
+    )
+    annotate_anomalies(grouped, samples)
+    for g in grouped:
+        if "key" in g:
+            g["stat_type"] = g.pop("key")
+    grouped.sort(key=lambda r: (-r.get("n", 0), r.get("stat_type", "")))
+    return grouped
+
+
+def by_stat_type_source(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    graded = graded_occurrence_rows(rows)
+    props = [r for r in graded if (r.get("market_type") or "") == "player_prop"]
+    grouped, samples = accumulate_records_with_samples(
+        props,
+        key_fn=lambda r: (r.get("atomic_stat") or "unknown", r.get("occ_source_id") or r.get("source_id") or "unknown"),
+    )
+    annotate_anomalies(grouped, samples)
+    for g in grouped:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 2:
+            g["stat_type"], g["source_id"] = key
+        else:
+            g["key"] = key
+    grouped.sort(key=lambda r: (-r.get("n", 0), r.get("stat_type", ""), r.get("source_id", "")))
+    return grouped
+
+
+def by_line_bucket(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    graded = graded_occurrence_rows(rows)
+    grouped, samples = accumulate_records_with_samples(
+        graded,
+        key_fn=lambda r: (r.get("market_type") or "unknown", _line_bucket(r)),
+    )
+    annotate_anomalies(grouped, samples)
+    for g in grouped:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 2:
+            g["market_type"], g["line_bucket"] = key
+        else:
+            g["key"] = key
+    grouped.sort(key=lambda r: (-r.get("n", 0), r.get("market_type", ""), r.get("line_bucket", "")))
+    return grouped
+
+
+def _derive_sources_combo(r: Dict[str, Any]) -> str:
+    return r.get("signal_sources_combo") or r.get("sources_combo") or "unknown"
+
+
+def _derive_direction(r: Dict[str, Any]) -> str:
+    d = r.get("direction") or ""
+    d = d.upper()
+    if "OVER" in d:
+        return "OVER"
+    if "UNDER" in d:
+        return "UNDER"
+    return d or "unknown"
+
+
+def cross_tabulation(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build a multi-dimensional cross-tabulation report.
+
+    Generates records keyed by (sources_combo, market_type, stat_type, direction)
+    so any combination of filters can be applied downstream.
+
+    Also generates useful pre-aggregated slices:
+    - by_combo_market: sources_combo x market_type
+    - by_combo_stat: sources_combo x stat_type (props only)
+    - by_combo_market_stat: sources_combo x market_type x stat_type
+    - by_source_stat: each source (participation) x stat_type
+    - by_source_market: each source (participation) x market_type
+    """
+    graded = graded_occurrence_rows(rows)
+
+    # --- Full cross-tab (combo x market x stat x direction) ---
+    full_grouped, _ = accumulate_records_with_samples(
+        graded,
+        key_fn=lambda r: (
+            _derive_sources_combo(r),
+            r.get("market_type") or "unknown",
+            r.get("atomic_stat") or "all",
+            _derive_direction(r),
+        ),
+    )
+    full_rows = []
+    for g in full_grouped:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 4:
+            g["sources_combo"], g["market_type"], g["stat_type"], g["direction"] = key
+        full_rows.append(g)
+    full_rows.sort(key=lambda r: (-r.get("n", 0),))
+
+    # --- combo x market ---
+    combo_market, _ = accumulate_records_with_samples(
+        graded,
+        key_fn=lambda r: (_derive_sources_combo(r), r.get("market_type") or "unknown"),
+    )
+    cm_rows = []
+    for g in combo_market:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 2:
+            g["sources_combo"], g["market_type"] = key
+        cm_rows.append(g)
+    cm_rows.sort(key=lambda r: (-r.get("n", 0),))
+
+    # --- combo x stat (props only) ---
+    props = [r for r in graded if (r.get("market_type") or "") == "player_prop"]
+    combo_stat, _ = accumulate_records_with_samples(
+        props,
+        key_fn=lambda r: (_derive_sources_combo(r), r.get("atomic_stat") or "unknown"),
+    )
+    cs_rows = []
+    for g in combo_stat:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 2:
+            g["sources_combo"], g["stat_type"] = key
+        cs_rows.append(g)
+    cs_rows.sort(key=lambda r: (-r.get("n", 0),))
+
+    # --- source participation x market ---
+    exploded_sm: List[Dict[str, Any]] = []
+    for r in graded:
+        sp = r.get("signal_sources_present") or r.get("sources_present") or []
+        if not sp:
+            sp = ["unknown"]
+        for src in sp:
+            exploded_sm.append({**r, "_src": src})
+    src_market, _ = accumulate_records_with_samples(
+        exploded_sm,
+        key_fn=lambda r: (r["_src"], r.get("market_type") or "unknown"),
+    )
+    sm_rows = []
+    for g in src_market:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 2:
+            g["source_id"], g["market_type"] = key
+        sm_rows.append(g)
+    sm_rows.sort(key=lambda r: (-r.get("n", 0),))
+
+    # --- source participation x stat (props only) ---
+    exploded_ss: List[Dict[str, Any]] = []
+    for r in props:
+        sp = r.get("signal_sources_present") or r.get("sources_present") or []
+        if not sp:
+            sp = ["unknown"]
+        for src in sp:
+            exploded_ss.append({**r, "_src": src})
+    src_stat, _ = accumulate_records_with_samples(
+        exploded_ss,
+        key_fn=lambda r: (r["_src"], r.get("atomic_stat") or "unknown"),
+    )
+    ss_rows = []
+    for g in src_stat:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 2:
+            g["source_id"], g["stat_type"] = key
+        ss_rows.append(g)
+    ss_rows.sort(key=lambda r: (-r.get("n", 0),))
+
+    return {
+        "full": full_rows,
+        "by_combo_market": cm_rows,
+        "by_combo_stat": cs_rows,
+        "by_source_market": sm_rows,
+        "by_source_stat": ss_rows,
+    }
+
+
 def build_meta(rows: List[Dict[str, Any]], dataset_path: Path = DATASET_PATH) -> Dict[str, Any]:
     graded_rows = sum(1 for r in rows if r.get("grade_status") == "GRADED")
     reportable_rows = sum(1 for r in rows if r.get("grade_status") == "GRADED" and is_reportable(r))
@@ -874,6 +1088,10 @@ def main() -> None:
     by_source_participation_record_path = report_dir / "by_source_participation_record.json"
     by_sources_combo_record_path = report_dir / "by_sources_combo_record.json"
     spread_mismatch_samples_path = report_dir / "spread_mismatch_samples.json"
+    by_stat_type_path = report_dir / "by_stat_type.json"
+    by_stat_type_source_path = report_dir / "by_stat_type_source.json"
+    by_line_bucket_path = report_dir / "by_line_bucket.json"
+    cross_tab_path = report_dir / "cross_tabulation.json"
 
     print(f"Processing {sport} reports...")
     rows = read_jsonl(dataset_path)
@@ -932,6 +1150,11 @@ def main() -> None:
         spread_mismatch_samples_path,
         {"meta": meta_occ, "rows": spread_mismatch_samples(rows_occ)},
     )
+    write_json(by_stat_type_path, {"meta": meta_occ, "rows": by_stat_type(rows_occ)})
+    write_json(by_stat_type_source_path, {"meta": meta_occ, "rows": by_stat_type_source(rows_occ)})
+    write_json(by_line_bucket_path, {"meta": meta_occ, "rows": by_line_bucket(rows_occ)})
+    cross_tab_data = cross_tabulation(rows_occ)
+    write_json(cross_tab_path, {"meta": meta_occ, **cross_tab_data})
 
     print(f"Reports written to {report_dir}:")
     for path in [
@@ -949,6 +1172,10 @@ def main() -> None:
         by_source_participation_record_path,
         by_sources_combo_record_path,
         spread_mismatch_samples_path,
+        by_stat_type_path,
+        by_stat_type_source_path,
+        by_line_bucket_path,
+        cross_tab_path,
     ]:
         print(f"  - {path}")
 

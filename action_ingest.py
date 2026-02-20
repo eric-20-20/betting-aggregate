@@ -385,7 +385,10 @@ def extract_picks_from_html(
         re.IGNORECASE,
     )
 
-    generic_name_tokens = {"sports", "picks", "betting", "analysis", "follow", "instagram", "expert", "senior", "editor", "odds"}
+    # Only filter names that are exactly a generic word, not account names containing one
+    generic_exact_names = {"sports", "picks", "betting", "analysis", "follow", "instagram",
+                           "expert", "senior", "editor", "odds", "sports picks",
+                           "betting picks", "expert picks", "nba picks", "nba betting"}
 
     def is_generic_name(name: Optional[str]) -> bool:
         if not name:
@@ -393,9 +396,8 @@ def extract_picks_from_html(
         lowered = name.strip().lower()
         if not lowered or len(lowered) < 3:
             return True
-        for token in generic_name_tokens:
-            if token in lowered:
-                return True
+        if lowered in generic_exact_names:
+            return True
         return False
 
     def clean_expert_name(name: Optional[str]) -> Optional[str]:
@@ -422,6 +424,9 @@ def extract_picks_from_html(
         expert_slug = None
         if expert_profile:
             expert_slug = expert_profile.rstrip("/").split("/")[-1]
+        # Fallback: use slug as expert_name when display name was filtered
+        if not expert_name and expert_slug:
+            expert_name = expert_slug
         return expert_name, expert_profile, expert_slug
 
     def extract_pick_strings(card: BeautifulSoup) -> List[dict]:

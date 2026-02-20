@@ -495,3 +495,48 @@ def fetch_player_statline(event_key: str, player_id: str, stat_key: str, date_st
     if res:
         return res
     return None
+
+
+def search_all_games_for_player_statline(
+    player_id: str,
+    stat_key: str,
+    date_str: str,
+    refresh_cache: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Search all games on a date for a player's statline (fallback for wrong matchup).
+
+    Returns dict with value, game_id, matched_away, matched_home, provider keys,
+    or None if player not found in any game.
+    """
+    try:
+        games, meta_raw = nba_api.get_games_for_date(date_str, refresh_cache=refresh_cache)
+    except Exception:
+        return None
+    if not games:
+        return None
+    for g in games:
+        game_id = str(g.get("game_id") or "")
+        if not game_id:
+            continue
+        g_status = g.get("status")
+        if g_status and g_status not in ("FINAL", "Final", "final", "Final/OT"):
+            continue
+        try:
+            stat, cdn_meta = nba_cdn.fetch_player_statline(
+                game_id, player_id, stat_key, refresh_cache=refresh_cache
+            )
+        except Exception:
+            continue
+        if stat and not stat.get("player_not_found"):
+            away_g = str(g.get("away_team_abbrev") or "").upper()
+            home_g = str(g.get("home_team_abbrev") or "").upper()
+            stat["provider"] = "nba_cdn"
+            stat["fallback_from"] = "all_games_search"
+            return {
+                "game_id": game_id,
+                "matched_away": away_g,
+                "matched_home": home_g,
+                **stat,
+                "meta": cdn_meta,
+            }
+    return None

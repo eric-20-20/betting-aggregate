@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "EdgePicks | Multi-Source Consensus NBA Picks",
+  title: "The Aggregate | Multi-Source Consensus NBA Picks",
   description:
     "Daily NBA picks scored against 8 historical dimensions. Aggregated from 7+ expert sources with full transparency.",
 };

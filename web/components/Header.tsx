@@ -10,7 +10,7 @@ export default function Header() {
     <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-50">
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2">
-          <span className="text-emerald-400 font-bold text-lg">EdgePicks</span>
+          <span className="text-emerald-400 font-bold text-lg">The Aggregate</span>
         </Link>
 
         <nav className="flex items-center gap-6">

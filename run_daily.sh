@@ -58,55 +58,62 @@ if [ "$SKIP_INGEST" = false ]; then
     echo ""
     echo "── NBA Step 1: Ingesting picks ──"
 
-    echo "  [1/9] Action Network..."
+    echo "  [1/10] Action Network..."
     python3 action_ingest.py $DEBUG 2>&1 | tail -3 || echo "  ⚠ Action ingest failed (continuing)"
 
-    echo "  [2/9] Covers..."
+    echo "  [2/10] Covers..."
     python3 covers_ingest.py $DEBUG 2>&1 | tail -3 || echo "  ⚠ Covers ingest failed (continuing)"
 
-    echo "  [3/9] SportsLine..."
+    echo "  [3/10] SportsLine..."
     if [ -f data/sportsline_storage_state.json ]; then
         python3 sportsline_ingest.py --storage data/sportsline_storage_state.json $DEBUG 2>&1 | tail -3 || echo "  ⚠ SportsLine ingest failed (continuing)"
     else
         echo "  ⚠ SportsLine skipped (no storage state at data/sportsline_storage_state.json)"
     fi
 
-    echo "  [4/9] Dimers..."
+    echo "  [4/10] Dimers..."
     if [ -f dimers_storage_state.json ]; then
         python3 dimers_ingest.py --storage-state dimers_storage_state.json $DEBUG 2>&1 | tail -3 || echo "  ⚠ Dimers ingest failed (continuing)"
     else
         echo "  ⚠ Dimers skipped (no storage state at dimers_storage_state.json)"
     fi
 
-    echo "  [5/9] OddsTrader..."
-    python3 oddstrader_ingest.py $DEBUG 2>&1 | tail -3 || echo "  ⚠ OddsTrader ingest failed (continuing)"
+    echo "  [5/10] OddsTrader..."
+    python3 oddstrader_ingest.py --props $DEBUG 2>&1 | tail -3 || echo "  ⚠ OddsTrader ingest failed (continuing)"
 
-    echo "  [6/9] BetQL Spreads..."
+    echo "  [6/10] BetQL Spreads..."
     if [ -f data/betql_storage_state.json ]; then
         python3 scripts/probe_betql_spread_nba.py $DEBUG 2>&1 | tail -3 || echo "  ⚠ BetQL Spreads failed (continuing)"
     else
         echo "  ⚠ BetQL Spreads skipped (no storage state)"
     fi
 
-    echo "  [7/9] BetQL Totals..."
+    echo "  [7/10] BetQL Totals..."
     if [ -f data/betql_storage_state.json ]; then
         python3 scripts/probe_betql_totals_nba.py $DEBUG 2>&1 | tail -3 || echo "  ⚠ BetQL Totals failed (continuing)"
     else
         echo "  ⚠ BetQL Totals skipped (no storage state)"
     fi
 
-    echo "  [8/9] BetQL Sharp..."
+    echo "  [8/10] BetQL Sharp..."
     if [ -f data/betql_storage_state.json ]; then
         python3 scripts/probe_betql_sharp_nba.py $DEBUG 2>&1 | tail -3 || echo "  ⚠ BetQL Sharp failed (continuing)"
     else
         echo "  ⚠ BetQL Sharp skipped (no storage state)"
     fi
 
-    echo "  [9/9] BetQL Props..."
+    echo "  [9/10] BetQL Props..."
     if [ -f data/betql_storage_state.json ]; then
         python3 scripts/probe_betql_prop_picks_nba.py $DEBUG 2>&1 | tail -3 || echo "  ⚠ BetQL Props failed (continuing)"
     else
         echo "  ⚠ BetQL Props skipped (no storage state)"
+    fi
+
+    echo "  [10/10] VegasInsider..."
+    if [ -f data/vegasinsider_storage_state.json ]; then
+        python3 vegasinsider_ingest.py --storage data/vegasinsider_storage_state.json $DEBUG 2>&1 | tail -3 || echo "  ⚠ VegasInsider ingest failed (continuing)"
+    else
+        echo "  ⚠ VegasInsider skipped (no storage state at data/vegasinsider_storage_state.json)"
     fi
 else
     echo ""
@@ -134,6 +141,12 @@ python3 scripts/build_signal_ledger.py $DEBUG \
     --props-history-start 2025-02-09 \
     --props-history-end "$DATE" \
     --include-action-history \
+    --include-oddstrader-history \
+    --oddstrader-history-start 2025-10-22 \
+    --oddstrader-history-end "$DATE" \
+    --include-dimers-history \
+    --include-normalized-jsonl data/latest/normalized_sportsline_nba_expert_picks.jsonl \
+    --include-normalized-jsonl data/latest/normalized_covers_backfill.jsonl \
     2>&1 | tail -10
 
 echo ""
@@ -148,6 +161,18 @@ echo ""
 echo "── NBA Step 7: Generating reports ──"
 python3 scripts/report_records.py 2>&1 | tail -5
 python3 scripts/report_trends.py 2>&1 | tail -5
+
+echo ""
+echo "── NBA Step 8: Scoring today's signals ──"
+python3 scripts/score_signals.py 2>&1 | tail -20
+
+echo ""
+echo "── NBA Step 9: Auditing consensus integrity ──"
+python3 scripts/audit_consensus.py 2>&1
+
+echo ""
+echo "── NBA Step 10: Exporting web data ──"
+python3 scripts/export_web_data.py 2>&1 | tail -5
 
 fi  # end RUN_NBA
 

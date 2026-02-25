@@ -1,7 +1,7 @@
 import type { Play } from "@/lib/types";
 import { formatOdds, formatPickSelection, formatWinPct } from "@/lib/format";
 import TierBadge from "./TierBadge";
-import SourceBadge from "./SourceBadge";
+import ConsensusIndicator from "./ConsensusIndicator";
 import FactorBar from "./FactorBar";
 
 export default function PickCard({ play }: { play: Play }) {
@@ -25,11 +25,9 @@ export default function PickCard({ play }: { play: Play }) {
             <span className="text-gray-500 text-sm shrink-0">{matchup}</span>
           </div>
 
-          {/* Sources + odds row */}
+          {/* Consensus + odds row */}
           <div className="flex items-center gap-2 mt-2 flex-wrap">
-            {signal.sources_present.map((src) => (
-              <SourceBadge key={src} source={src} />
-            ))}
+            <ConsensusIndicator count={signal.sources_count} />
             {odds && (
               <span className="text-gray-400 text-sm ml-1">({odds})</span>
             )}

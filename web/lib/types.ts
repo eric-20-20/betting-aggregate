@@ -1,4 +1,4 @@
-// TypeScript types matching the pipeline JSON output
+// TypeScript types matching the sanitized pipeline JSON output
 
 export interface PlaysMeta {
   generated_at_utc: string;
@@ -18,13 +18,12 @@ export interface Signal {
   signal_id: string;
   selection: string;
   market_type: "player_prop" | "spread" | "total" | "moneyline";
-  sources_combo: string;
-  sources_present: string[];
+  sources_count: number;        // number of agreeing sources (anonymized)
+  consensus_strength: string;   // "1_source", "2_source", "3+_source"
   line: number | null;
   score: number;
   direction: string;
   atomic_stat: string | null;
-  experts: string[];
   best_odds: number | null;
   away_team: string;
   home_team: string;
@@ -83,29 +82,21 @@ export interface LockedPick {
   positive_dimensions: number;
 }
 
-// Report types
+// Report types (no ROI — only win/loss/win_pct)
 export interface ReportRow {
   n: number;
   wins: number;
   losses: number;
   pushes?: number;
   win_pct: number;
-  roi: number;
-  avg_odds?: number;
-  net_units?: number;
-  bets_with_units?: number;
 }
 
-export interface SourceRecord extends ReportRow {
-  source_id: string;
+export interface ConsensusStrengthRecord extends ReportRow {
+  consensus_strength: string;
 }
 
-export interface ComboRecord extends ReportRow {
-  sources_combo: string;
-}
-
-export interface ExpertRecord extends ReportRow {
-  expert_name: string; // mapped from "expert" in JSON
+export interface MarketTypeRecord extends ReportRow {
+  market_type: string;
 }
 
 export interface StatTypeRecord extends ReportRow {
@@ -118,8 +109,6 @@ export interface TrendEntry {
   n: number;
   win_pct: number;
   wilson_lower: number;
-  roi: number;
-  net_units: number;
   edge_over_50: number;
   sample_flag: string;
 }

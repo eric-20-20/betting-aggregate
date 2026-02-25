@@ -5,9 +5,9 @@ import path from "path";
 import type {
   PublicPicksFile,
   PlaysFile,
-  SourceRecord,
-  ComboRecord,
-  ExpertRecord,
+  ConsensusStrengthRecord,
+  MarketTypeRecord,
+  StatTypeRecord,
   TrendEntry,
 } from "./types";
 
@@ -62,32 +62,28 @@ export async function getFullPicks(date: string): Promise<PlaysFile | null> {
   );
 }
 
-// Report data loaders — unwrap nested JSON structures from report_records.py
+// Report data loaders — all source-anonymous, ROI-free
 
-export async function getSourceRecords(): Promise<SourceRecord[]> {
-  const data = await readJSON<{ rows: SourceRecord[] }>(
-    path.join(PUBLIC_DATA_DIR, "reports", "by_source_record.json")
+export async function getConsensusStrengthRecords(): Promise<ConsensusStrengthRecord[]> {
+  const data = await readJSON<{ rows: ConsensusStrengthRecord[] }>(
+    path.join(PUBLIC_DATA_DIR, "reports", "consensus_strength.json")
   );
   return data?.rows || [];
 }
 
-export async function getComboRecords(): Promise<ComboRecord[]> {
-  const data = await readJSON<{ rows: ComboRecord[] }>(
-    path.join(PUBLIC_DATA_DIR, "reports", "by_sources_combo_record.json")
+export async function getMarketTypeRecords(): Promise<MarketTypeRecord[]> {
+  const data = await readJSON<{ by_market: MarketTypeRecord[] }>(
+    path.join(PUBLIC_DATA_DIR, "reports", "market_type.json")
   );
-  return data?.rows || [];
+  return data?.by_market || [];
 }
 
-export async function getExpertRecords(): Promise<ExpertRecord[]> {
+export async function getStatTypeRecords(): Promise<StatTypeRecord[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const data = await readJSON<{ rows_filtered: any[] }>(
-    path.join(PUBLIC_DATA_DIR, "reports", "by_expert_record.json")
+  const data = await readJSON<{ rows: any[] }>(
+    path.join(PUBLIC_DATA_DIR, "reports", "by_stat_type.json")
   );
-  // Map "expert" key to "expert_name" for our type
-  return (data?.rows_filtered || []).map((r) => ({
-    ...r,
-    expert_name: r.expert || r.expert_name,
-  }));
+  return data?.rows || [];
 }
 
 export async function getTopTrends(): Promise<TrendEntry[]> {

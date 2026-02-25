@@ -15,13 +15,13 @@ export default async function HomePage() {
       {/* Hero */}
       <section className="py-16 text-center">
         <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
-          Multi-Source Consensus{" "}
+          Data-Driven{" "}
           <span className="text-emerald-400">NBA Picks</span>
         </h1>
         <p className="text-gray-400 text-lg max-w-2xl mx-auto mb-8">
-          We aggregate picks from 7+ expert sources, find where they agree, and
-          score each pick against 8 historical dimensions. No gut feelings —
-          just data.
+          Our model analyzes thousands of public betting signals, finds where
+          independent sources agree, and scores each pick against 8 historical
+          dimensions. No gut feelings — just data.
         </p>
         <div className="flex justify-center gap-4">
           <Link
@@ -48,7 +48,7 @@ export default async function HomePage() {
             value={String(tierCounts.A)}
             accent="emerald"
           />
-          <StatCard label="Sources" value="7+" />
+          <StatCard label="Graded Picks" value="20K+" />
           <StatCard label="Scoring Factors" value="8" />
         </section>
       )}
@@ -61,18 +61,18 @@ export default async function HomePage() {
         <div className="grid md:grid-cols-4 gap-4">
           <StepCard
             step="1"
-            title="Aggregate"
-            desc="We scrape 7+ expert sources daily — Action Network, BetQL, Covers, Dimers, SportsLine, OddsTrader, and more."
+            title="Collect Signals"
+            desc="We ingest thousands of public betting signals daily from across the sports betting landscape."
           />
           <StepCard
             step="2"
-            title="Consensus"
-            desc="When multiple sources agree on the same pick, we flag it as a consensus signal with higher confidence."
+            title="Find Consensus"
+            desc="When multiple independent sources agree on the same pick, we flag it as a consensus signal with higher confidence."
           />
           <StepCard
             step="3"
             title="Score"
-            desc="Each pick is scored against 8 historical dimensions — combo win rate, stat type, line bucket, expert record, and more."
+            desc="Each pick is scored against 8 historical dimensions — consensus strength, market type, stat category, line value, and more."
           />
           <StepCard
             step="4"

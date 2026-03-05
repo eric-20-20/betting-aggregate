@@ -27,7 +27,7 @@ export const authOptions: NextAuthOptions = {
             params: { scope: "openid profile email" },
           },
           idToken: true,
-          checks: ["pkce", "state"],
+          checks: ["pkce", "state", "nonce"],
           profile(profile: {
             sub: string;
             name?: string;
@@ -62,5 +62,15 @@ export const authOptions: NextAuthOptions = {
     },
   },
   secret: process.env.NEXTAUTH_SECRET,
-  useSecureCookies: process.env.NODE_ENV === "production",
+  cookies: {
+    nonce: {
+      name: `__Secure-next-auth.nonce`,
+      options: {
+        httpOnly: true,
+        sameSite: "lax" as const,
+        path: "/",
+        secure: true,
+      },
+    },
+  },
 };

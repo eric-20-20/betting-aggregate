@@ -18,10 +18,10 @@ const accessCache = new Map<string, CacheEntry>();
  * Results are cached for 5 minutes to avoid excessive API calls.
  */
 export async function hasAccess(whopUserId: string): Promise<boolean> {
-  if (!WHOP_API_KEY || !WHOP_PRODUCT_ID) return false;
-
-  // Owner bypass
+  // Owner bypass — check before API key guard so owner always has access
   if (WHOP_OWNER_USER_ID && whopUserId === WHOP_OWNER_USER_ID) return true;
+
+  if (!WHOP_API_KEY || !WHOP_PRODUCT_ID) return false;
 
   // Check cache first
   const cached = accessCache.get(whopUserId);

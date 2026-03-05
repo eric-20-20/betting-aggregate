@@ -95,39 +95,89 @@ def append_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
             f.write("\n")
 
 
-def american_odds_to_units(odds: Optional[Any], outcome: str) -> Optional[float]:
+def odds_to_stake_units(odds: Optional[Any], source_units: Optional[float] = None) -> float:
+    """Return stake size in units, using source-provided size or odds-based default.
+
+    Priority: source-provided unit_size > odds-based implied > flat 1.0u default.
     """
-    Return profit units for a 1u stake given American odds and outcome WIN/LOSS/PUSH.
+    # 1. Use source-provided unit size if valid
+    if source_units is not None:
+        try:
+            su = float(source_units)
+            if 0.1 <= su <= 5.0:
+                return round(su, 2)
+        except (TypeError, ValueError):
+            pass
+
+    # 2. No odds → flat 1u default
+    if odds is None:
+        return 1.0
+
+    try:
+        o = float(odds)
+    except (TypeError, ValueError):
+        return 1.0
+    if o == 0:
+        return 1.0
+
+    # 3. Derive from implied probability: favorites get ~1u+, longshots get less
+    if o > 0:
+        prob = 100.0 / (o + 100.0)
+    else:
+        prob = abs(o) / (abs(o) + 100.0)
+
+    # Scale so -110 (prob=0.524) ≈ 1.05u
+    stake = round(prob * 2, 2)
+    return max(0.25, min(2.0, stake))
+
+
+def american_odds_to_units(odds: Optional[Any], outcome: str, stake: float = 1.0) -> Optional[float]:
+    """
+    Return profit/loss units given American odds, outcome, and stake size.
+
+    WIN:  +win_units * stake  (e.g., -110 WIN at 1.05u → +0.955)
+    LOSS: -stake              (e.g., +500 LOSS at 0.33u → -0.33)
+    PUSH: 0.0
     """
     if outcome == "PUSH":
         return 0.0
     if odds is None:
-        return None
+        # No odds: WIN profit unknown, LOSS = -stake
+        return round(-stake, 3) if outcome == "LOSS" else None
     try:
         o = float(odds)
     except (TypeError, ValueError):
-        return None
+        return round(-stake, 3) if outcome == "LOSS" else None
     if o == 0:
-        return None
+        return round(-stake, 3) if outcome == "LOSS" else None
     win_units = (o / 100.0) if o > 0 else (100.0 / abs(o))
     if outcome == "WIN":
-        return round(win_units, 3)
+        return round(win_units * stake, 3)
     if outcome == "LOSS":
-        return -1.0
+        return round(-stake, 3)
     return None
+
+
+COMBO_STAT_KEYS = {"pts_reb", "pts_ast", "reb_ast", "pts_reb_ast"}
 
 
 def extract_stat_key(signal: Dict[str, Any]) -> Optional[str]:
-    # prefer atomic_stat, else selection parsing NBA:player::stat::dir
-    stat = signal.get("atomic_stat")
-    if isinstance(stat, str) and stat:
-        return stat
+    # Parse stat key from selection (NBA:player::stat::dir)
     sel = signal.get("selection")
+    stat_from_sel = None
     if isinstance(sel, str) and "::" in sel:
         parts = sel.split("::")
         if len(parts) >= 3:
-            return parts[1]
-    return None
+            stat_from_sel = parts[1]
+    # For combo stats, always use the selection key — atomic_stat may
+    # contain only one component (e.g. "points" instead of "pts_reb")
+    if stat_from_sel and stat_from_sel in COMBO_STAT_KEYS:
+        return stat_from_sel
+    # For single stats, prefer atomic_stat if available
+    stat = signal.get("atomic_stat")
+    if isinstance(stat, str) and stat:
+        return stat
+    return stat_from_sel
 
 
 def parse_event_teams(event_key: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
@@ -976,7 +1026,9 @@ def grade_signal(
             "notes": "unsupported_market",
         }
 
-    units = american_odds_to_units(odds, result) if result else None
+    source_units = signal.get("unit_size")
+    stake = odds_to_stake_units(odds, source_units)
+    units = american_odds_to_units(odds, result, stake=stake) if result else None
     if odds is None:
         notes.append("missing_odds")
 
@@ -1018,6 +1070,9 @@ def grade_signal(
         "status": status_val,
         "result": result,
         "units": units,
+        "stake": stake,
+        "odds": int(odds) if odds is not None else None,
+        "unit_source": "source" if source_units is not None else ("implied" if odds is not None else "default"),
         "market_type": market,
         "selection": signal.get("selection"),
         "event_key": signal.get("event_key"),
@@ -1121,6 +1176,8 @@ def _stable_grade_fingerprint(row: Dict[str, Any]) -> Dict[str, Any]:
         "urls": urls,
         "games_info": _stable_games_info(row.get("games_info")),
         "player_meta": _stable_player_meta(row.get("player_meta")),
+        "units": row.get("units"),
+        "stake": row.get("stake"),
     }
 
 
@@ -1401,13 +1458,18 @@ def main() -> None:
             if pregraded_result and pregraded_result in {"WIN", "LOSS", "PUSH"}:
                 # Use pre-graded result directly instead of fetching from provider
                 odds = merged.get("odds")
-                units = american_odds_to_units(odds, pregraded_result) if pregraded_result else None
+                pre_source_units = merged.get("unit_size")
+                pre_stake = odds_to_stake_units(odds, pre_source_units)
+                units = american_odds_to_units(odds, pregraded_result, stake=pre_stake) if pregraded_result else None
                 grade_row = {
                     "signal_id": sid,
                     "graded_at_utc": now,
                     "status": pregraded_result,
                     "result": pregraded_result,
                     "units": units,
+                    "stake": pre_stake,
+                    "odds": int(odds) if odds is not None else None,
+                    "unit_source": "source" if pre_source_units else ("implied" if odds is not None else "default"),
                     "market_type": merged.get("market_type"),
                     "selection": merged.get("selection"),
                     "event_key": merged.get("event_key"),

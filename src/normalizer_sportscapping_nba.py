@@ -312,9 +312,23 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _safe_write_normalized(out_path: str, records: list, source_label: str = "") -> None:
+    """Write normalized records, but protect existing data from empty overwrite."""
+    if not records and os.path.exists(out_path):
+        try:
+            with open(out_path, "r") as f:
+                existing = json.load(f)
+            if existing:
+                print(f"  [PROTECTED] {source_label or out_path}: scraper returned 0 records, keeping existing {len(existing)} records")
+                return
+        except (json.JSONDecodeError, OSError):
+            pass
+    write_json(out_path, records)
+
+
 def normalize_file(raw_path: str, out_path: str) -> List[Dict[str, Any]]:
     if not os.path.exists(raw_path):
-        write_json(out_path, [])
+        _safe_write_normalized(out_path, [], os.path.basename(out_path))
         return []
     try:
         with open(raw_path, "r", encoding="utf-8") as f:
@@ -328,7 +342,7 @@ def normalize_file(raw_path: str, out_path: str) -> List[Dict[str, Any]]:
             if isinstance(item, dict):
                 normalized.append(normalize_raw_record(item))
 
-    write_json(out_path, normalized)
+    _safe_write_normalized(out_path, normalized, "sportscapping")
     return normalized
 
 

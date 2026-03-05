@@ -1,15 +1,41 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
+import time
 from pathlib import Path
 from typing import Tuple
 
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, Playwright
 
+_log = logging.getLogger(__name__)
+
 
 def require_storage_state(path: str = "data/betql_storage_state.json") -> str:
     if not os.path.exists(path):
         raise ValueError(f"BetQL storage state missing at {path}. Please login and save state first.")
+    # Check if auth token is expired
+    try:
+        with open(path) as f:
+            state = json.load(f)
+        for cookie in state.get("cookies", []):
+            if cookie.get("name") == "node_auth_token":
+                expires = cookie.get("expires", -1)
+                if expires > 0 and expires < time.time():
+                    from datetime import datetime
+                    exp_dt = datetime.fromtimestamp(expires)
+                    raise ValueError(
+                        f"BetQL auth token expired on {exp_dt:%Y-%m-%d %H:%M}. "
+                        f"Re-login with: python3 scripts/betql_login_save_state.py"
+                    )
+                days_left = (expires - time.time()) / 86400 if expires > 0 else -1
+                if 0 < days_left < 1:
+                    _log.warning("BetQL auth token expires in %.1f hours — consider re-logging in soon", days_left * 24)
+                return path
+        _log.warning("No node_auth_token cookie found in storage state — auth may fail")
+    except (json.JSONDecodeError, KeyError):
+        _log.warning("Could not parse storage state at %s", path)
     return path
 
 

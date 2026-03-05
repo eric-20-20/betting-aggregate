@@ -364,6 +364,14 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "event_start_time_utc": raw.get("event_start_time_utc"),
     }
 
+    # Extract unit_size from stake_hint (e.g., "0.7u" → 0.7)
+    unit_size = None
+    stake_hint = raw.get("stake_hint")
+    if stake_hint:
+        _m = re.match(r"(\d+(?:\.\d+)?)\s*u", str(stake_hint), re.IGNORECASE)
+        if _m:
+            unit_size = float(_m.group(1))
+
     market = {
         "market_type": market_type,
         "market_family": raw.get("market_family"),
@@ -373,6 +381,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "line": line,
         "odds": odds,
         "side": direction,
+        "unit_size": unit_size,
     }
 
     provenance = {
@@ -820,9 +829,23 @@ def is_covers_player_prop(raw_pick_text: str, raw_block: str) -> bool:
     return has_stat or has_label
 
 
+def _safe_write_normalized(out_path: str, records: list, source_label: str = "") -> None:
+    """Write normalized records, but protect existing data from empty overwrite."""
+    if not records and os.path.exists(out_path):
+        try:
+            with open(out_path, "r") as f:
+                existing = json.load(f)
+            if existing:
+                print(f"  [PROTECTED] {source_label or out_path}: scraper returned 0 records, keeping existing {len(existing)} records")
+                return
+        except (json.JSONDecodeError, OSError):
+            pass
+    write_json(out_path, records)
+
+
 def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Dict[str, Any]]:
     if not os.path.exists(raw_path):
-        write_json(out_path, [])
+        _safe_write_normalized(out_path, [], os.path.basename(out_path))
         return []
 
     try:
@@ -1101,7 +1124,7 @@ def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Di
             ]
             print(f"[DEBUG covers] missing props samples: {samples}")
 
-    write_json(out_path, normalized)
+    _safe_write_normalized(out_path, normalized, os.path.basename(out_path))
     return normalized
 
 

@@ -7,6 +7,13 @@ import PickCard from "@/components/PickCard";
 import PickCardLocked from "@/components/PickCardLocked";
 import PaywallPrompt from "@/components/PaywallPrompt";
 
+const TIER_DESCRIPTIONS: Record<string, string> = {
+  A: "Strong Edge",
+  B: "Positive Edge",
+  C: "Marginal",
+  D: "Low Confidence",
+};
+
 type SubscriberProps = {
   isSubscriber: true;
   allPlays: Play[];
@@ -94,9 +101,9 @@ function SubscriberView({
         return (
           <div key={tier} className="mb-6">
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
-              Tier {tier} ({tierPlays.length})
+              Tier {tier} — {TIER_DESCRIPTIONS[tier] || tier} ({tierPlays.length})
             </h3>
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {tierPlays.map((play) => (
                 <PickCard key={play.signal.signal_id} play={play} />
               ))}
@@ -159,7 +166,7 @@ function FreeView({
           <h2 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
             <span className="text-emerald-400">Free Preview</span>
           </h2>
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {filteredTeasers.map((play) => (
               <PickCard key={play.signal.signal_id} play={play} />
             ))}
@@ -177,9 +184,9 @@ function FreeView({
         return (
           <div key={tier} className="mb-6">
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
-              Tier {tier} ({tierPicks.length})
+              Tier {tier} — {TIER_DESCRIPTIONS[tier] || tier} ({tierPicks.length})
             </h3>
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {tierPicks.map((pick, i) => (
                 <PickCardLocked key={`${tier}-${i}`} pick={pick} />
               ))}

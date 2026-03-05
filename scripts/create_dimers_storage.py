@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""
+Create Dimers storage state for authenticated scraping.
+
+This script opens a browser window for you to log in to Dimers.
+After logging in, close the browser to save the session.
+
+Usage:
+    python3 scripts/create_dimers_storage.py
+
+The storage state will be saved to: dimers_storage_state.json
+"""
+
+import sys
+
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    print("Error: playwright is not installed")
+    print("Install with: pip install playwright && playwright install chromium")
+    sys.exit(1)
+
+STORAGE_PATH = "dimers_storage_state.json"
+LOGIN_URL = "https://www.dimers.com/best-bets/nba"
+
+
+def main():
+    print("=" * 60)
+    print("Dimers Storage State Creator")
+    print("=" * 60)
+    print()
+    print("A browser window will open to the Dimers best-bets page.")
+    print("Please log in with your Dimers Pro account.")
+    print()
+    print("After logging in successfully:")
+    print("  - Verify you see 'Dimers Pro' and unlocked bets")
+    print("  - Then CLOSE the browser window to save the session")
+    print()
+    print("=" * 60)
+    print()
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
+
+        print(f"Opening: {LOGIN_URL}")
+        page.goto(LOGIN_URL)
+
+        print()
+        print("Waiting for you to log in and close the browser...")
+        print("(The session will be saved when you close the browser window)")
+        print()
+
+        # Wait for browser to close
+        try:
+            page.wait_for_event("close", timeout=600000)  # 10 minute timeout
+        except Exception:
+            pass
+
+        # Save storage state
+        context.storage_state(path=STORAGE_PATH)
+
+        try:
+            context.close()
+            browser.close()
+        except Exception:
+            pass
+
+    print()
+    print("=" * 60)
+    print(f"Storage state saved to: {STORAGE_PATH}")
+    print()
+    print("You can now run:")
+    print("  python3 dimers_ingest.py --debug")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()

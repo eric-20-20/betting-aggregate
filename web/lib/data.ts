@@ -9,6 +9,9 @@ import type {
   MarketTypeRecord,
   StatTypeRecord,
   TrendEntry,
+  RecentTrendsReport,
+  HistoryIndex,
+  HistoryDayFile,
 } from "./types";
 
 // Re-export format helpers so server pages can still use `import { formatWinPct } from "@/lib/data"`
@@ -112,4 +115,26 @@ export async function getTierPerformance(): Promise<TierPerformance[]> {
     path.join(PUBLIC_DATA_DIR, "reports", "tier_performance.json")
   );
   return data || [];
+}
+
+export async function getRecentTrends(): Promise<RecentTrendsReport | null> {
+  return readJSON<RecentTrendsReport>(
+    path.join(PUBLIC_DATA_DIR, "reports", "recent_trends.json")
+  );
+}
+
+// History data loaders (paid members only — reads from private dir)
+
+export async function getHistoryIndex(): Promise<HistoryIndex | null> {
+  return readJSON<HistoryIndex>(
+    path.join(PRIVATE_DATA_DIR, "history", "index.json")
+  );
+}
+
+export async function getHistoryDay(
+  date: string
+): Promise<HistoryDayFile | null> {
+  return readJSON<HistoryDayFile>(
+    path.join(PRIVATE_DATA_DIR, "history", `history_${date}.json`)
+  );
 }

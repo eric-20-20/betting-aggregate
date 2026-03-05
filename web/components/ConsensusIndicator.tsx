@@ -1,6 +1,6 @@
 export default function ConsensusIndicator({ count }: { count: number }) {
   const dots = Math.min(count, 3);
-  const label = count >= 3 ? "3+ sources" : `${count} source${count !== 1 ? "s" : ""}`;
+  const label = count >= 3 ? "3+ data points" : `${count} data point${count !== 1 ? "s" : ""}`;
 
   const dotColor =
     count >= 3

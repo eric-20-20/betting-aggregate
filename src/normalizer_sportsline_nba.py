@@ -17,10 +17,10 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from store import data_store, write_json
+from store import data_store, get_data_store, write_json
 from utils import normalize_text
 
-ALLOWED_MARKETS = {"spread", "total", "moneyline"}
+ALLOWED_MARKETS = {"spread", "total", "moneyline", "player_prop", "1st_half_spread", "team_total"}
 
 
 def _parse_dt(val: Any) -> Optional[datetime]:
@@ -39,55 +39,57 @@ def _parse_dt(val: Any) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
-def _map_team(alias: Optional[str]) -> Optional[str]:
+def _map_team(alias: Optional[str], store=None, sport: str = "NBA") -> Optional[str]:
     """Map team name or abbreviation to standard team code."""
     if not alias:
         return None
-    codes = data_store.lookup_team_code(alias)
+    store = store or data_store
+    norm = normalize_text(alias)
+    codes = store.lookup_team_code(norm)
     if len(codes) == 1:
         return next(iter(codes))
-    fallback = {
-        "bucks": "MIL",
-        "76ers": "PHI",
-        "sixers": "PHI",
-        "knicks": "NYK",
-        "nets": "BKN",
-        "trail blazers": "POR",
-        "blazers": "POR",
-        "suns": "PHX",
-        "spurs": "SAS",
-        "warriors": "GSW",
-        "pelicans": "NOP",
-        "lakers": "LAL",
-        "clippers": "LAC",
-        "celtics": "BOS",
-        "heat": "MIA",
-        "bulls": "CHI",
-        "cavaliers": "CLE",
-        "cavs": "CLE",
-        "pistons": "DET",
-        "raptors": "TOR",
-        "mavericks": "DAL",
-        "mavs": "DAL",
-        "wolves": "MIN",
-        "timberwolves": "MIN",
-        "thunder": "OKC",
-        "magic": "ORL",
-        "rockets": "HOU",
-        "jazz": "UTA",
-        "kings": "SAC",
-        "hawks": "ATL",
-        "hornets": "CHA",
-        "grizzlies": "MEM",
-        "nuggets": "DEN",
-        "pacers": "IND",
-        "wizards": "WAS",
+    if norm != alias:
+        codes = store.lookup_team_code(alias)
+        if len(codes) == 1:
+            return next(iter(codes))
+    # NBA-specific city/nickname fallbacks — only for NBA sport
+    if sport != "NBA":
+        if len(alias) <= 4:
+            upper = alias.upper()
+            if upper in store.teams:
+                return upper
+        return None
+    nba_fallback = {
+        "bucks": "MIL", "76ers": "PHI", "sixers": "PHI", "knicks": "NYK",
+        "nets": "BKN", "trail blazers": "POR", "blazers": "POR", "suns": "PHX",
+        "spurs": "SAS", "warriors": "GSW", "pelicans": "NOP", "lakers": "LAL",
+        "clippers": "LAC", "celtics": "BOS", "heat": "MIA", "bulls": "CHI",
+        "cavaliers": "CLE", "cavs": "CLE", "pistons": "DET", "raptors": "TOR",
+        "mavericks": "DAL", "mavs": "DAL", "wolves": "MIN",
+        "timberwolves": "MIN", "thunder": "OKC", "magic": "ORL",
+        "rockets": "HOU", "jazz": "UTA", "kings": "SAC", "hawks": "ATL",
+        "hornets": "CHA", "grizzlies": "MEM", "nuggets": "DEN",
+        "pacers": "IND", "wizards": "WAS",
+        "milwaukee": "MIL", "philadelphia": "PHI", "new york": "NYK",
+        "brooklyn": "BKN", "portland": "POR", "phoenix": "PHX",
+        "san antonio": "SAS", "golden state": "GSW", "golden st.": "GSW",
+        "golden st": "GSW", "new orleans": "NOP",
+        "l.a. lakers": "LAL", "l a lakers": "LAL", "los angeles lakers": "LAL",
+        "l.a. clippers": "LAC", "l a clippers": "LAC",
+        "los angeles clippers": "LAC", "boston": "BOS", "miami": "MIA",
+        "chicago": "CHI", "cleveland": "CLE", "detroit": "DET",
+        "toronto": "TOR", "dallas": "DAL", "minnesota": "MIN",
+        "oklahoma city": "OKC", "orlando": "ORL", "houston": "HOU",
+        "utah": "UTA", "sacramento": "SAC", "atlanta": "ATL",
+        "charlotte": "CHA", "memphis": "MEM", "denver": "DEN",
+        "indiana": "IND", "washington": "WAS",
     }
-    norm = normalize_text(alias)
-    if norm in fallback:
-        return fallback[norm]
-    if len(alias) <= 3:
-        return alias.upper()
+    if norm in nba_fallback:
+        return nba_fallback[norm]
+    if len(alias) <= 4:
+        upper = alias.upper()
+        if upper in store.teams:
+            return upper
     return None
 
 
@@ -95,14 +97,19 @@ def _build_event_keys(
     observed_dt: Optional[datetime],
     event_dt: Optional[datetime],
     away_team: Optional[str],
-    home_team: Optional[str]
+    home_team: Optional[str],
+    sport: str = "NBA",
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Build event_key, day_key, and matchup_key from datetime and teams."""
+    from zoneinfo import ZoneInfo
+
     dt = event_dt or observed_dt
     if not dt:
         return None, None, None
 
-    day_key = f"NBA:{dt.year:04d}:{dt.month:02d}:{dt.day:02d}"
+    # Use Eastern time for day_key (NBA convention)
+    dt_eastern = dt.astimezone(ZoneInfo("America/New_York"))
+    day_key = f"{sport}:{dt_eastern.year:04d}:{dt_eastern.month:02d}:{dt_eastern.day:02d}"
     event_key = day_key
     matchup_key = None
 
@@ -114,23 +121,26 @@ def _build_event_keys(
     return event_key, day_key, matchup_key
 
 
-def normalize_sportsline_record(raw: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_sportsline_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict[str, Any]:
     """
     Normalize a single SportsLine pick record.
 
     Args:
         raw: Raw pick record from sportsline_ingest.py
+        sport: Sport identifier ("NBA" or "NCAAB")
 
     Returns:
         Normalized record with provenance, event, market, and eligibility fields
     """
+    store = get_data_store(sport)
+
     # Parse timestamps
     observed_dt = _parse_dt(raw.get("observed_at_utc"))
     event_dt = _parse_dt(raw.get("event_start_time_utc")) or observed_dt
 
     # Map teams
-    away_team = _map_team(raw.get("away_team"))
-    home_team = _map_team(raw.get("home_team"))
+    away_team = _map_team(raw.get("away_team"), store=store, sport=sport)
+    home_team = _map_team(raw.get("home_team"), store=store, sport=sport)
 
     # Try to extract teams from matchup_hint if not already set
     if not (away_team and home_team) and raw.get("matchup_hint"):
@@ -138,12 +148,12 @@ def normalize_sportsline_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         parts = re.split(r"@|vs|v", hint, flags=re.IGNORECASE)
         parts = [p.strip() for p in parts if p.strip()]
         if len(parts) >= 2:
-            away_team = away_team or _map_team(parts[0])
-            home_team = home_team or _map_team(parts[1])
+            away_team = away_team or _map_team(parts[0], store=store, sport=sport)
+            home_team = home_team or _map_team(parts[1], store=store, sport=sport)
 
     # Build event keys
     event_key, day_key, matchup_key = _build_event_keys(
-        observed_dt, event_dt, away_team, home_team
+        observed_dt, event_dt, away_team, home_team, sport=sport
     )
 
     # Market parsing
@@ -163,12 +173,12 @@ def normalize_sportsline_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     elif not away_team or not home_team:
         eligible = False
         inelig_reason = "unparsed_team"
-    elif market_type == "spread":
+    elif market_type in ("spread", "1st_half_spread"):
         if not selection:
             eligible = False
             inelig_reason = "missing_selection"
         else:
-            selection = _map_team(selection) or selection
+            selection = _map_team(selection, store=store, sport=sport) or selection
             side = selection
     elif market_type == "total":
         if not selection:
@@ -180,19 +190,46 @@ def normalize_sportsline_record(raw: Dict[str, Any]) -> Dict[str, Any]:
             if selection not in {"OVER", "UNDER"}:
                 eligible = False
                 inelig_reason = "invalid_direction"
+    elif market_type == "team_total":
+        if not selection:
+            eligible = False
+            inelig_reason = "missing_selection"
+        else:
+            side = raw.get("side")
+            # selection comes pre-built as "TEAM_OVER" or "TEAM_UNDER"
     elif market_type == "moneyline":
         if not selection:
             eligible = False
             inelig_reason = "missing_selection"
         else:
-            selection = _map_team(selection) or selection
+            selection = _map_team(selection, store=store, sport=sport) or selection
             side = selection
+    elif market_type == "player_prop":
+        player_name = raw.get("player_name")
+        stat_key = raw.get("stat_key")
+        side = raw.get("side")
+        if not player_name:
+            eligible = False
+            inelig_reason = "unparsed_player"
+        elif not stat_key:
+            eligible = False
+            inelig_reason = "unparsed_stat"
+        elif side not in ("OVER", "UNDER"):
+            eligible = False
+            inelig_reason = "unparsed_direction"
+        elif line is None:
+            eligible = False
+            inelig_reason = "unparsed_line"
+        else:
+            player_slug = re.sub(r"[^a-z0-9]+", "_", player_name.lower()).strip("_")
+            player_key = f"{sport}:{player_slug}"
+            selection = f"{player_key}::{stat_key}::{side}"
 
     # Build provenance
     provenance = {
         "source_id": "sportsline",
-        "source_surface": raw.get("source_surface") or "sportsline_nba_picks",
-        "sport": "NBA",
+        "source_surface": raw.get("source_surface") or f"sportsline_{sport.lower()}_picks",
+        "sport": sport,
         "observed_at_utc": raw.get("observed_at_utc"),
         "canonical_url": raw.get("canonical_url"),
         "raw_fingerprint": raw.get("raw_fingerprint"),
@@ -207,7 +244,7 @@ def normalize_sportsline_record(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     # Build event
     event = {
-        "sport": "NBA",
+        "sport": sport,
         "event_key": event_key,
         "day_key": day_key,
         "matchup_key": matchup_key,
@@ -217,15 +254,25 @@ def normalize_sportsline_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     # Build market
+    pp_player_key = None
+    pp_stat_key = None
+    pp_market_family = "standard"
+    if market_type == "player_prop" and eligible:
+        player_slug = re.sub(r"[^a-z0-9]+", "_", raw.get("player_name", "").lower()).strip("_")
+        pp_player_key = f"{sport}:{player_slug}"
+        pp_stat_key = raw.get("stat_key")
+        pp_market_family = "player_prop"
+
     market = {
         "market_type": market_type,
-        "market_family": "standard",
+        "market_family": pp_market_family,
         "selection": selection,
         "side": side,
         "line": line,
         "odds": odds,
-        "player_key": None,
-        "stat_key": None,
+        "player_key": pp_player_key,
+        "stat_key": pp_stat_key,
+        "unit_size": raw.get("unit_size"),
     }
 
     # Build eligibility
@@ -246,7 +293,8 @@ def normalize_sportsline_record(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 def normalize_sportsline_records(
     raw_records: List[Dict[str, Any]],
-    debug: bool = False
+    debug: bool = False,
+    sport: str = "NBA",
 ) -> List[Dict[str, Any]]:
     """
     Normalize a list of SportsLine raw records.
@@ -254,6 +302,7 @@ def normalize_sportsline_records(
     Args:
         raw_records: List of raw pick records
         debug: Enable debug output
+        sport: Sport identifier ("NBA" or "NCAAB")
 
     Returns:
         List of normalized records
@@ -265,7 +314,7 @@ def normalize_sportsline_records(
         if not isinstance(raw, dict):
             continue
 
-        rec = normalize_sportsline_record(raw)
+        rec = normalize_sportsline_record(raw, sport=sport)
 
         if rec.get("eligible_for_consensus"):
             normalized.append(rec)

@@ -15,6 +15,19 @@ if REPO_ROOT not in sys.path:
 from store import data_store, write_json
 from utils import normalize_text
 
+def _safe_write_normalized(out_path: str, records: list, source_label: str = "") -> None:
+    """Write normalized records, but protect existing data from empty overwrite."""
+    if not records and os.path.exists(out_path):
+        try:
+            with open(out_path, "r") as f:
+                existing = json.load(f)
+            if existing:
+                print(f"  [PROTECTED] {source_label or out_path}: scraper returned 0 records, keeping existing {len(existing)} records")
+                return
+        except (json.JSONDecodeError, OSError):
+            pass
+    write_json(out_path, records)
+
 ALLOWED_STANDARD = {"spread", "total"}
 MIN_PROP_STARS = 3
 AMBIGUOUS_SLUGS = {"m_bridge", "m_bridges"}
@@ -394,7 +407,7 @@ def normalize_betql_prop_record(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 def normalize_props_file(raw_path: str, out_path: str, debug: bool = False) -> List[Dict[str, Any]]:
     if not os.path.exists(raw_path):
-        write_json(out_path, [])
+        _safe_write_normalized(out_path, [], os.path.basename(out_path))
         return []
     try:
         with open(raw_path, "r", encoding="utf-8") as f:
@@ -440,7 +453,7 @@ def normalize_props_file(raw_path: str, out_path: str, debug: bool = False) -> L
         deduped[key] = rec
 
     normalized = list(deduped.values())
-    write_json(out_path, normalized)
+    _safe_write_normalized(out_path, normalized, "betql_props")
     if debug:
         total = len(raw_records) if isinstance(raw_records, list) else 0
         elig = len(normalized)
@@ -598,7 +611,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Dict[str, Any]]:
     if not os.path.exists(raw_path):
-        write_json(out_path, [])
+        _safe_write_normalized(out_path, [], os.path.basename(out_path))
         return []
     try:
         with open(raw_path, "r", encoding="utf-8") as f:
@@ -636,7 +649,7 @@ def normalize_file(raw_path: str, out_path: str, debug: bool = False) -> List[Di
                 mk["line"] = model_lines[key]
                 if debug:
                     print(f"[DEBUG] BetQL probet line backfilled: {key[0]} {key[1]} {key[2]} line={model_lines[key]}")
-    write_json(out_path, normalized)
+    _safe_write_normalized(out_path, normalized, os.path.basename(out_path))
     if debug and skipped:
         print(f"[DEBUG] normalize_file skipped={skipped} records (unknown/invalid shape)")
     return normalized

@@ -114,18 +114,23 @@ def click_load_more_until_done(page: Page, max_clicks: int = 20, debug: bool = F
     return clicks
 
 
-def scroll_to_load_all(page: Page, max_scrolls: int = 10, debug: bool = False) -> int:
+def scroll_to_load_all(page: Page, max_scrolls: int = 25, debug: bool = False) -> int:
     """Scroll page to trigger lazy loading."""
     scrolls = 0
     last_height = 0
+    stable_count = 0
 
     for _ in range(max_scrolls):
         try:
             current_height = page.evaluate("document.body.scrollHeight")
             if current_height == last_height:
-                break
+                stable_count += 1
+                if stable_count >= 3:
+                    break
+            else:
+                stable_count = 0
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(2000)
             scrolls += 1
             last_height = current_height
             if debug:
@@ -153,31 +158,21 @@ def extract_best_bets(page: Page, canonical_url: str, debug: bool = False) -> Li
         'Jazz', 'Wizards'
     ]
 
-    # Use JavaScript to extract bet data directly from the DOM
+    # Use JavaScript to extract bet data from Dimers' Angular bet-row components.
+    # Each bet card is an <app-value-bet-row class="value-bet"> element.
     bets_data = page.evaluate("""
         (nbaTeams) => {
             const bets = [];
-            const processedFingerprints = new Set();
+            const cards = document.querySelectorAll('app-value-bet-row.value-bet');
 
-            // Find all bet card containers - look for specific card structure
-            // Dimers cards typically have a consistent structure with prob/edge display
-            const allElements = document.querySelectorAll('*');
-
-            for (const el of allElements) {
+            for (const el of cards) {
                 const text = el.textContent || '';
 
-                // Must have Probability and Edge indicators
-                if (!text.includes('Probability') || !text.includes('Edge')) continue;
+                // Filter for NBA teams only
+                const isNBA = nbaTeams.some(team => text.includes(team));
+                if (!isNBA) continue;
 
-                // Check size - bet cards are typically 150-500px height
-                const rect = el.getBoundingClientRect();
-                if (rect.height < 100 || rect.height > 500 || rect.width < 250) continue;
-
-                // Skip promotional/DFS content
-                if (text.includes('DFS') || text.includes('Claim Now') || text.includes('Deposit')) continue;
-                if (text.includes('Fantasy') || text.includes('Lineup')) continue;
-
-                // Extract probability and edge first to create fingerprint
+                // Extract probability (may be locked behind paywall)
                 let probability = null;
                 const probMatch = text.match(/Probability[^\\d]*(\\d+\\.?\\d*)\\s*%/i);
                 if (probMatch) probability = parseFloat(probMatch[1]);
@@ -186,9 +181,7 @@ def extract_best_bets(page: Page, canonical_url: str, debug: bool = False) -> Li
                 const edgeMatch = text.match(/Edge[^\\d]*(\\d+\\.?\\d*)\\s*%/i);
                 if (edgeMatch) edge = parseFloat(edgeMatch[1]);
 
-                if (probability === null && edge === null) continue;
-
-                // Extract matchup - look for "Team vs Team" or "Team @ Team"
+                // Extract matchup — look for "Team vs. Team"
                 let matchup = null;
                 let awayTeam = null;
                 let homeTeam = null;
@@ -198,19 +191,6 @@ def extract_best_bets(page: Page, canonical_url: str, debug: bool = False) -> Li
                     homeTeam = matchupMatch[2].trim();
                     matchup = awayTeam + ' vs. ' + homeTeam;
                 }
-
-                // Filter for NBA teams only
-                const isNBA = nbaTeams.some(team =>
-                    text.includes(team) ||
-                    (awayTeam && awayTeam.includes(team)) ||
-                    (homeTeam && homeTeam.includes(team))
-                );
-                if (!isNBA) continue;
-
-                // Create fingerprint based on probability + edge + matchup to dedupe
-                const fingerprint = `${probability}-${edge}-${matchup}`;
-                if (processedFingerprints.has(fingerprint)) continue;
-                processedFingerprints.add(fingerprint);
 
                 // Extract odds
                 let odds = null;
@@ -263,12 +243,12 @@ def extract_best_bets(page: Page, canonical_url: str, debug: bool = False) -> Li
 
                 // Badge extraction
                 let badge = null;
-                const badges = ['Sweet Spot', 'High Edge', 'Value Play', 'Best Value'];
+                const badges = ['Sweet Spot', 'High Edge', 'Value Play', 'Best Value', 'Best Bet'];
                 for (const b of badges) {
                     if (text.includes(b)) { badge = b; break; }
                 }
 
-                // Only include if we have required data
+                // Include if we have matchup data and a pick
                 if (matchup && (teamPick || pickText)) {
                     bets.push({
                         text: text.slice(0, 500),

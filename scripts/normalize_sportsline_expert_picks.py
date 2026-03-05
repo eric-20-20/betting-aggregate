@@ -235,7 +235,7 @@ def normalize_expert_pick(raw: Dict[str, Any], sport: str = NBA_SPORT, store=Non
                 "player_id": player_id,
                 "player_name": player_name,
                 "stat_key": stat_key,
-                "unit": raw.get("unit", 1.0),
+                "unit_size": raw.get("unit", 1.0),
             },
             "result": {
                 "status": result_status,

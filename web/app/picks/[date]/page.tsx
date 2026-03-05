@@ -7,14 +7,24 @@ import PicksClientWrapper from "./PicksClientWrapper";
 
 export default async function PicksDatePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ date: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { date } = await params;
+  const query = await searchParams;
 
   // Determine if this is a subscriber
   let isSubscriber = false;
-  if (isAuthEnabled) {
+
+  // Owner bypass: ?admin=<ADMIN_SECRET>
+  const adminSecret = process.env.ADMIN_SECRET;
+  if (adminSecret && query.admin === adminSecret) {
+    isSubscriber = true;
+  }
+
+  if (!isSubscriber && isAuthEnabled) {
     const session = await getServerSession(authOptions);
     const whopUserId = (session as any)?.whopUserId as string | undefined;
     if (whopUserId) {

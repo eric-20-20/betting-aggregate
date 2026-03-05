@@ -9,6 +9,7 @@ Inputs:
 Outputs:
   - data/reports/coverage_summary.json
   - data/reports/by_sources_combo_market.json
+  - data/reports/by_sources_combo_market_direction.json
   - data/reports/by_sources_combo_score_bucket.json
   - data/reports/by_expert.json
   - data/reports/by_source_participation_counts.json
@@ -31,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -147,6 +149,7 @@ def init_metrics() -> Dict[str, Any]:
         "bets_with_units": 0,
         "losses": 0,
         "net_units": 0.0,
+        "total_stake": 0.0,
         "n": 0,
         "odds_sum": 0.0,
         "odds_count": 0,
@@ -156,10 +159,22 @@ def init_metrics() -> Dict[str, Any]:
     }
 
 
+def wilson_lower(wins: int, n: int, z: float = 1.96) -> float:
+    """Wilson score lower bound — conservative win% estimate."""
+    if n == 0:
+        return 0.0
+    p = wins / n
+    denom = 1 + z * z / n
+    center = p + z * z / (2 * n)
+    spread = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (center - spread) / denom
+
+
 def finalize_metrics(m: Dict[str, Any]) -> Dict[str, Any]:
     denom = m["wins"] + m["losses"]
     m["win_pct"] = (m["wins"] / denom) if denom > 0 else None
-    m["roi"] = (m["net_units"] / m["bets_with_units"]) if m["bets_with_units"] > 0 else None
+    m["wilson_lower"] = round(wilson_lower(m["wins"], denom), 4) if denom > 0 else None
+    m["roi"] = (m["net_units"] / m["total_stake"]) if m["total_stake"] > 0 else None
     m["avg_odds"] = (m["odds_sum"] / m["odds_count"]) if m["odds_count"] > 0 else None
     return m
 
@@ -182,10 +197,12 @@ def accumulate_group(rows: Iterable[Dict[str, Any]], key_fn) -> List[Dict[str, A
             m["pushes"] += 1
 
         units = row.get("units")
+        stake = row.get("stake", 1.0)
         if units is not None:
             try:
                 m["net_units"] += float(units)
                 m["bets_with_units"] += 1
+                m["total_stake"] += float(stake) if stake is not None else 1.0
             except Exception:
                 m["units_missing_count"] += 1
         else:
@@ -346,8 +363,8 @@ def coverage_report(rows: List[Dict[str, Any]], meta: Dict[str, Any], occurrence
 
     report = {
         "meta": meta,
-        "grade_status_counts": dict(counts_status),
-        "market_type_counts": dict(counts_market),
+        "grade_status_counts": {str(k) if k is not None else "None": v for k, v in counts_status.items()},
+        "market_type_counts": {str(k) if k is not None else "None": v for k, v in counts_market.items()},
         "ineligible_missing_fields_top": ineligible_missing.most_common(10),
         "error_notes_top": error_notes.most_common(10),
     }
@@ -412,6 +429,56 @@ def by_sources_combo_market(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     )
 
 
+def by_sources_combo_market_direction(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Like by_sources_combo_market but with direction as a third key dimension.
+
+    Produces (sources_combo, market_type, direction) grouping so the scoring
+    pipeline can distinguish combos that are strong on OVER vs UNDER.
+    """
+    graded = [r for r in rows if r.get("grade_status") == "GRADED" and is_reportable(r)]
+    agg: Dict[Any, Dict[str, Any]] = {}
+    for row in graded:
+        combo = row.get("sources_combo") or "unknown"
+        market = row.get("market_type") or "unknown"
+        direction = _derive_direction(row)
+        key = (combo, market, direction)
+        if key not in agg:
+            agg[key] = init_metrics()
+        m = agg[key]
+        m["n"] += 1
+        result = row.get("result")
+        if result == "WIN":
+            m["wins"] += 1
+        elif result == "LOSS":
+            m["losses"] += 1
+        elif result == "PUSH":
+            m["pushes"] += 1
+        units = row.get("units")
+        stake = row.get("stake", 1.0)
+        if units is not None:
+            try:
+                m["net_units"] += float(units)
+                m["bets_with_units"] += 1
+                m["total_stake"] += float(stake) if stake is not None else 1.0
+            except Exception:
+                m["units_missing_count"] += 1
+        else:
+            m["units_missing_count"] += 1
+        odds = pick_odds(row)
+        if odds is not None:
+            m["odds_sum"] += odds
+            m["odds_count"] += 1
+
+    output: List[Dict[str, Any]] = []
+    for (combo, market, direction), metrics in agg.items():
+        finalized = finalize_metrics(metrics)
+        finalized["sources_combo"] = combo
+        finalized["market_type"] = market
+        finalized["direction"] = direction
+        output.append(finalized)
+    return sorted(output, key=lambda r: (-r.get("n", 0), r.get("sources_combo", ""), r.get("market_type", "")))
+
+
 def by_sources_combo_score_bucket(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     graded = [r for r in rows if r.get("grade_status") == "GRADED" and is_reportable(r)]
     return accumulate_group(
@@ -462,6 +529,7 @@ def aggregate_score_groups(rows: List[Dict[str, Any]], key_fn) -> List[Dict[str,
                 "win_pct": None,
                 "net_units": 0.0,
                 "bets_with_units": 0,
+                "total_stake": 0.0,
                 "roi": None,
                 "units_null_graded": 0,
                 "score_bucket_order": None,
@@ -480,6 +548,9 @@ def aggregate_score_groups(rows: List[Dict[str, Any]], key_fn) -> List[Dict[str,
             elif result == "PUSH":
                 m["pushes"] += 1
 
+            stake = r.get("stake", 1.0)
+            m["total_stake"] += float(stake) if stake is not None else 1.0
+
             units = r.get("units")
             if units is None:
                 m["units_null_graded"] += 1
@@ -497,7 +568,7 @@ def aggregate_score_groups(rows: List[Dict[str, Any]], key_fn) -> List[Dict[str,
     for m in agg.values():
         denom = m["wins"] + m["losses"]
         m["win_pct"] = (m["wins"] / denom) if denom > 0 else None
-        m["roi"] = (m["net_units"] / m["bets_with_units"]) if m["bets_with_units"] > 0 else None
+        m["roi"] = (m["net_units"] / m["total_stake"]) if m["total_stake"] > 0 else None
     out: List[Dict[str, Any]] = []
     for key, metrics in agg.items():
         if isinstance(key, tuple):
@@ -650,10 +721,12 @@ def accumulate_records_with_samples(rows: Iterable[Dict[str, Any]], key_fn):
             m["pushes"] += 1
 
         units = row.get("units")
+        stake = row.get("stake", 1.0)
         if units is not None:
             try:
                 m["net_units"] += float(units)
                 m["bets_with_units"] += 1
+                m["total_stake"] += float(stake) if stake is not None else 1.0
             except Exception:
                 m["units_missing_count"] += 1
         else:
@@ -920,6 +993,15 @@ def _derive_sources_combo(r: Dict[str, Any]) -> str:
     return r.get("signal_sources_combo") or r.get("sources_combo") or "unknown"
 
 
+def _derive_consensus_strength(r: Dict[str, Any]) -> str:
+    """Derive consensus strength label from sources count."""
+    sp = r.get("signal_sources_present") or r.get("sources_present") or []
+    count = len(sp) if isinstance(sp, list) else 1
+    if count >= 4:
+        return "4+_sources"
+    return f"{count}_source"
+
+
 def _derive_direction(r: Dict[str, Any]) -> str:
     d = r.get("direction") or ""
     d = d.upper()
@@ -990,6 +1072,23 @@ def cross_tabulation(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         cs_rows.append(g)
     cs_rows.sort(key=lambda r: (-r.get("n", 0),))
 
+    # --- combo x market x stat ---
+    combo_market_stat, _ = accumulate_records_with_samples(
+        graded,
+        key_fn=lambda r: (
+            _derive_sources_combo(r),
+            r.get("market_type") or "unknown",
+            r.get("atomic_stat") or "all",
+        ),
+    )
+    cms_rows = []
+    for g in combo_market_stat:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 3:
+            g["sources_combo"], g["market_type"], g["stat_type"] = key
+        cms_rows.append(g)
+    cms_rows.sort(key=lambda r: (-r.get("n", 0),))
+
     # --- source participation x market ---
     exploded_sm: List[Dict[str, Any]] = []
     for r in graded:
@@ -1030,10 +1129,29 @@ def cross_tabulation(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         ss_rows.append(g)
     ss_rows.sort(key=lambda r: (-r.get("n", 0),))
 
+    # --- consensus x market x stat ---
+    consensus_market_stat, _ = accumulate_records_with_samples(
+        graded,
+        key_fn=lambda r: (
+            _derive_consensus_strength(r),
+            r.get("market_type") or "unknown",
+            r.get("atomic_stat") or "all",
+        ),
+    )
+    cmsstat_rows = []
+    for g in consensus_market_stat:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 3:
+            g["consensus_strength"], g["market_type"], g["stat_type"] = key
+        cmsstat_rows.append(g)
+    cmsstat_rows.sort(key=lambda r: (-r.get("n", 0),))
+
     return {
         "full": full_rows,
         "by_combo_market": cm_rows,
         "by_combo_stat": cs_rows,
+        "by_combo_market_stat": cms_rows,
+        "by_consensus_market_stat": cmsstat_rows,
         "by_source_market": sm_rows,
         "by_source_stat": ss_rows,
     }
@@ -1076,6 +1194,7 @@ def main() -> None:
     # Sport-specific report paths
     coverage_path = report_dir / "coverage_summary.json"
     by_sources_market_path = report_dir / "by_sources_combo_market.json"
+    by_sources_market_dir_path = report_dir / "by_sources_combo_market_direction.json"
     by_score_bucket_path = report_dir / "by_sources_combo_score_bucket.json"
     by_expert_path = report_dir / "by_expert.json"
     by_score_bucket_simple_path = report_dir / "by_score_bucket.json"
@@ -1104,6 +1223,7 @@ def main() -> None:
 
     write_json(coverage_path, coverage_report(rows, meta, rows_occ))
     write_json(by_sources_market_path, {"meta": meta, "rows": by_sources_combo_market(rows)})
+    write_json(by_sources_market_dir_path, {"meta": meta, "rows": by_sources_combo_market_direction(rows)})
     write_json(by_score_bucket_path, {"meta": meta, "rows": by_sources_combo_score_bucket(rows)})
     expert_data = by_expert(rows, MIN_SAMPLE_SIZE_EXPERT)
     expert_meta = {**meta, **(expert_data.get("meta") or {})}
@@ -1160,6 +1280,7 @@ def main() -> None:
     for path in [
         coverage_path,
         by_sources_market_path,
+        by_sources_market_dir_path,
         by_score_bucket_path,
         by_expert_path,
         by_score_bucket_simple_path,

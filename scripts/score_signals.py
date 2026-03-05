@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
-"""Score today's signals across historical dimensions and produce tiered plays of the day.
+"""Score today's signals using Wilson-based combo×market ranking.
 
-Each signal is scored across 7 dimensions using pre-computed report JSONs as lookup
-tables. Edge contributions (wilson_lower - 0.50) are summed into a composite score,
-and signals are assigned tiers A/B/C/D based on the composite and number of positive
-dimensions.
+Primary signal = Wilson lower bound from the best matching source combo × market
+historical record. Picks are ranked by this score and assigned tiers A/B/C/D.
+Recent trends apply a small additive modifier.
 
 Usage:
     python3 scripts/score_signals.py
     python3 scripts/score_signals.py --date 2026-02-20
     python3 scripts/score_signals.py --date 2026-02-20 --verbose
-    python3 scripts/score_signals.py --min-n 50
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import re
 from datetime import datetime, date, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 
@@ -27,17 +26,383 @@ REPORTS_DIR = Path("data/reports")
 SIGNALS_PATH = Path("data/ledger/signals_latest.jsonl")
 PLAYS_DIR = Path("data/plays")
 
+CURRENT_LINES_PATH = Path("data/cache/current_lines.json")
+RECENT_TRENDS_PATH = REPORTS_DIR / "recent_trends_lookup.json"
+CACHE_DIR = Path("data/cache/results")
+
 CROSS_TAB_PATH = REPORTS_DIR / "cross_tabulation.json"
 CONSENSUS_PATH = REPORTS_DIR / "trends" / "consensus_strength.json"
 LINE_BUCKET_PATH = REPORTS_DIR / "by_line_bucket.json"
 STAT_TYPE_PATH = REPORTS_DIR / "by_stat_type.json"
 DAY_OF_WEEK_PATH = REPORTS_DIR / "trends" / "by_day_of_week.json"
 EXPERT_PATH = REPORTS_DIR / "by_expert_record.json"
+MARKET_TYPE_PATH = REPORTS_DIR / "trends" / "market_type.json"
+
+
+def get_sport_paths(sport: str) -> Tuple[Path, Path, Path]:
+    """Return (reports_dir, signals_path, plays_dir) for the given sport."""
+    if sport == "NCAAB":
+        return (
+            Path("data/reports/ncaab"),
+            Path("data/ledger/ncaab/signals_latest.jsonl"),
+            Path("data/plays/ncaab"),
+        )
+    return (
+        Path("data/reports"),
+        Path("data/ledger/signals_latest.jsonl"),
+        Path("data/plays"),
+    )
 
 EXCLUDED_SIGNAL_TYPES = {"avoid_conflict"}
 
-MIN_SAMPLE_DEFAULT = 30
-EDGE_THRESHOLD = 0.005  # |edge| > this to count as positive/negative
+# ── Wilson-based scoring constants ────────────────────────────────────────
+
+MIN_SAMPLE_PRIMARY = 15   # min n to accept a primary combo lookup
+MIN_SAMPLE_TREND = 5      # min decided bets for recent trend modifier
+
+# Tier thresholds (Wilson lower bound)
+WILSON_TIER_A = 0.52      # strong edge
+WILSON_TIER_B = 0.46      # positive edge
+WILSON_TIER_C = 0.45      # marginal — not exported
+WILSON_HARD_EXCLUDE = 0.42  # hard-exclude if n >= 30 and Wilson below this
+
+# A-tier: pattern registry (replaces old combo×market gate)
+# Old thresholds removed — A-tier now driven by PATTERN_REGISTRY below
+
+# Recency modifiers (additive)
+TREND_BOOST_HOT = 0.03    # recent wp >= 60%
+TREND_BOOST_WARM = 0.02   # recent wp >= 55%
+TREND_PENALTY_COOL = -0.01  # recent wp <= 45%
+TREND_PENALTY_COLD = -0.02  # recent wp <= 40%
+
+# Multi-factor modifiers (additive)
+EXPERT_BOOST = 0.015       # best expert >55% wp (n>=30)
+EXPERT_PENALTY = -0.015    # worst expert <45% wp (n>=30)
+EXPERT_MIN_N = 30
+STAT_TYPE_BOOST = 0.01     # stat wp >52%
+STAT_TYPE_PENALTY = -0.01  # stat wp <47%
+DAY_BOOST_THURS = 0.01
+DAY_PENALTY_FRI = -0.01
+LINE_BUCKET_BOOST = 0.01   # bucket wp >51%
+LINE_BUCKET_PENALTY = -0.01  # bucket wp <48%
+
+# ── Quality filters ──────────────────────────────────────────────────────
+
+EXCLUDED_STAT_TYPES = {"steals", "unknown", "pts_reb"}
+
+# Direction-aware stat exclusions: exclude (stat, direction) combos that are bad,
+# while allowing the other direction through (e.g. pts_reb_ast UNDER is 57.9%).
+EXCLUDED_STAT_DIR: Set[Tuple[str, str]] = {
+    ("reb_ast", "OVER"),       # 35-32 (52%), small sample — not reliable
+    ("pts_reb_ast", "OVER"),   # 203-247 (45.1%) — clearly negative edge
+}
+MAX_PROP_LINE = 30.5
+MIN_DAILY_PICKS = 3
+
+# ── Pattern Registry ─────────────────────────────────────────────────────
+# Curated profitable patterns from analysis of 6,547 graded signals.
+# Ordered most-specific first — first match wins.
+# Source matching: source_pair = both must be present; source_contains = all must be present.
+
+PATTERN_REGISTRY: List[Dict[str, Any]] = [
+    # ── Patterns validated on full graded_occurrences dataset (2026-03-04) ──
+    # Ordered most-specific first — first match wins.
+    # Dataset: 21,765 graded occurrences across 2023-24 and 2025-26 NBA seasons.
+
+    # nukethebooks solo UNDER props: 184W-118L (60.9%) — strongest direction
+    # Consistent across all months: Nov(76%), Dec(57%), Jan(62%), Feb(61%), Mar(60%)
+    {
+        "id": "nukethebooks_solo_props_under",
+        "label": "nukethebooks player prop UNDER",
+        "exact_combo": "juicereel_nukethebooks",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "hist": {"record": "184-118", "win_pct": 0.609, "n": 302},
+        "tier_eligible": "A",
+    },
+
+    # nukethebooks solo OVER props: 231W-178L (56.5%) — real but smaller edge
+    # Consistent: Nov(65%), Dec(64%), Jan(52%), Feb(54%)
+    {
+        "id": "nukethebooks_solo_props_over",
+        "label": "nukethebooks player prop OVER",
+        "exact_combo": "juicereel_nukethebooks",
+        "market_type": "player_prop",
+        "direction": "OVER",
+        "hist": {"record": "231-178", "win_pct": 0.565, "n": 409},
+        "tier_eligible": "B",
+    },
+
+    # betql + oddstrader UNDER totals: 40W-22L (64.5%) n=62
+    # Seasons: Feb25(77%), Nov25(47%), Dec25(70%), Feb26(40%) — some inconsistency
+    # B-tier until we have a full season of data
+    {
+        "id": "betql_oddstrader_total_under",
+        "label": "betql + oddstrader total UNDER",
+        "source_pair": ["betql", "oddstrader"],
+        "market_type": "total",
+        "direction": "UNDER",
+        "min_sources": 2,
+        "hist": {"record": "40-22", "win_pct": 0.645, "n": 62},
+        "tier_eligible": "B",
+    },
+
+    # 4-source total UNDER (action+betql+dimers+oddstrader): 592W-514L (53.5%) n=1106
+    # Oct25 was 40% drag; Nov-Feb: 54%, 54%, 59%, 54% — consistently above 50% after Oct
+    # Large sample but modest edge. B-tier.
+    {
+        "id": "four_source_total_under",
+        "label": "UNDER total (action+betql+dimers+oddstrader)",
+        "source_contains": ["action", "betql", "dimers", "oddstrader"],
+        "market_type": "total",
+        "direction": "UNDER",
+        "min_sources": 4,
+        "hist": {"record": "592-514", "win_pct": 0.535, "n": 1106},
+        "tier_eligible": "B",
+    },
+
+    # 5-source UNDER totals (includes covers): 47W-29L (61.8%) n=76
+    # Only 2 months of data: Jan26(72%), Feb26(32%) — heavily inconsistent
+    # B-tier pending more data
+    {
+        "id": "five_source_total_under",
+        "label": "UNDER total (5+ sources)",
+        "source_contains": ["action", "betql", "covers", "dimers", "oddstrader"],
+        "market_type": "total",
+        "direction": "UNDER",
+        "min_sources": 5,
+        "hist": {"record": "47-29", "win_pct": 0.618, "n": 76},
+        "tier_eligible": "B",
+    },
+
+    # 5+ source OVER totals: 20-9 (69.0%) n=29 — all records from Feb 2026 only.
+    # Short window (single month), not yet reliable for A-tier.
+    {
+        "id": "five_source_total_over",
+        "label": "OVER total (5+ sources)",
+        "market_type": "total",
+        "direction": "OVER",
+        "min_sources": 5,
+        "hist": {"record": "20-9", "win_pct": 0.690, "n": 29},
+        "tier_eligible": "B",
+    },
+
+    # action solo UNDER props: 447W-287L (60.9%) n=734, Wilson=0.573
+    # Consistent across all months; stronger than nukethebooks UNDER (Wilson=0.553).
+    # Large sample (n=734) across 12+ months — reliable A-tier solo.
+    {
+        "id": "action_solo_props_under",
+        "label": "action player prop UNDER",
+        "exact_combo": "action",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "hist": {"record": "447-287", "win_pct": 0.609, "n": 734},
+        "tier_eligible": "A",
+    },
+
+    # sxebets (JuiceReel) solo UNDER props: 567W-470L (54.7%) n=1037, Wilson=0.516
+    # Large sample, consistent positive edge for UNDER props.
+    {
+        "id": "sxebets_solo_props_under",
+        "label": "juicereel_sxebets player prop UNDER",
+        "exact_combo": "juicereel_sxebets",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "hist": {"record": "567-470", "win_pct": 0.547, "n": 1037},
+        "tier_eligible": "B",
+    },
+
+    # betql solo UNDER props: 1022W-888L (53.5%) n=1910, Wilson=0.513
+    # Largest single-source sample; consistent UNDER edge.
+    {
+        "id": "betql_solo_props_under",
+        "label": "betql player prop UNDER",
+        "exact_combo": "betql",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "hist": {"record": "1022-888", "win_pct": 0.535, "n": 1910},
+        "tier_eligible": "B",
+    },
+
+    # action + betql total OVER: 72W-55L (56.7%) n=127, Wilson=0.480
+    # 2-source total OVER combo with real edge; currently gets no pattern credit.
+    {
+        "id": "action_betql_total_over",
+        "label": "action + betql total OVER",
+        "source_pair": ["action", "betql"],
+        "market_type": "total",
+        "direction": "OVER",
+        "min_sources": 2,
+        "hist": {"record": "72-55", "win_pct": 0.567, "n": 127},
+        "tier_eligible": "B",
+    },
+
+    # action + oddstrader spread: 80W-55L (59.3%) n=135, Wilson=0.508
+    # Spreads are a blind spot — no patterns exist for them. This is the clearest
+    # 2-source spread edge in the data with n>=100 and Wilson>0.50.
+    # No "direction" key — spread direction is a team abbrev, not OVER/UNDER.
+    {
+        "id": "action_oddstrader_spread",
+        "label": "action + oddstrader spread",
+        "source_pair": ["action", "oddstrader"],
+        "market_type": "spread",
+        "min_sources": 2,
+        "hist": {"record": "80-55", "win_pct": 0.593, "n": 135},
+        "tier_eligible": "B",
+    },
+
+    # action solo spread: 148W-116L (56.3%) n=264, Wilson=0.502
+    # action is A-tier for props UNDER; also holds a real edge in spreads.
+    # No "direction" key — spread direction is team-specific, not OVER/UNDER.
+    {
+        "id": "action_solo_spread",
+        "label": "action spread",
+        "exact_combo": "action",
+        "market_type": "spread",
+        "hist": {"record": "148-116", "win_pct": 0.563, "n": 264},
+        "tier_eligible": "B",
+    },
+
+    # ── BetQL team-specific spread patterns ──────────────────────────────────
+    # BetQL is not reliable overall on spreads (~50%) but is highly accurate on
+    # specific teams. Patterns use the "team" key to match signal.selection.
+    # Data: graded_occurrences_latest.jsonl (2026-03-04), n=10+ per team.
+
+    # betql OKC spread: 93W-32L (74.4%) n=125, Wilson=0.661 — A-tier eligible
+    {
+        "id": "betql_spread_okc",
+        "label": "betql spread OKC",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "OKC",
+        "hist": {"record": "93-32", "win_pct": 0.744, "n": 125},
+        "tier_eligible": "A",
+    },
+    # betql MIN spread: 62W-22L (73.8%) n=84, Wilson=0.635 — A-tier eligible
+    {
+        "id": "betql_spread_min",
+        "label": "betql spread MIN",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "MIN",
+        "hist": {"record": "62-22", "win_pct": 0.738, "n": 84},
+        "tier_eligible": "A",
+    },
+    # betql LAC spread: 72W-32L (69.2%) n=104, Wilson=0.598 — A-tier eligible
+    {
+        "id": "betql_spread_lac",
+        "label": "betql spread LAC",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "LAC",
+        "hist": {"record": "72-32", "win_pct": 0.692, "n": 104},
+        "tier_eligible": "A",
+    },
+    # betql BOS spread: 68W-30L (69.4%) n=98, Wilson=0.597 — A-tier eligible
+    {
+        "id": "betql_spread_bos",
+        "label": "betql spread BOS",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "BOS",
+        "hist": {"record": "68-30", "win_pct": 0.694, "n": 98},
+        "tier_eligible": "A",
+    },
+    # betql PHX spread: 48W-25L (65.8%) n=73, Wilson=0.543 — B-tier
+    {
+        "id": "betql_spread_phx",
+        "label": "betql spread PHX",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "PHX",
+        "hist": {"record": "48-25", "win_pct": 0.658, "n": 73},
+        "tier_eligible": "B",
+    },
+    # betql DET spread: 59W-33L (64.1%) n=92, Wilson=0.540 — B-tier
+    {
+        "id": "betql_spread_det",
+        "label": "betql spread DET",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "DET",
+        "hist": {"record": "59-33", "win_pct": 0.641, "n": 92},
+        "tier_eligible": "B",
+    },
+    # betql HOU spread: 73W-47L (60.8%) n=120, Wilson=0.519 — B-tier
+    {
+        "id": "betql_spread_hou",
+        "label": "betql spread HOU",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "HOU",
+        "hist": {"record": "73-47", "win_pct": 0.608, "n": 120},
+        "tier_eligible": "B",
+    },
+    # betql GSW spread: 72W-47L (60.5%) n=119, Wilson=0.515 — B-tier
+    {
+        "id": "betql_spread_gsw",
+        "label": "betql spread GSW",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "GSW",
+        "hist": {"record": "72-47", "win_pct": 0.605, "n": 119},
+        "tier_eligible": "B",
+    },
+
+    # ── OddsTrader team-specific moneyline patterns ───────────────────────────
+    # OddsTrader moneylines are generally poor, but strong on specific teams.
+    # Patterns use the "team" key to match signal.selection.
+
+    # oddstrader SAS moneyline: 26W-8L (76.5%) n=34, Wilson=0.600 — B-tier
+    {
+        "id": "oddstrader_ml_sas",
+        "label": "oddstrader moneyline SAS",
+        "exact_combo": "oddstrader",
+        "market_type": "moneyline",
+        "team": "SAS",
+        "hist": {"record": "26-8", "win_pct": 0.765, "n": 34},
+        "tier_eligible": "B",
+    },
+    # oddstrader HOU moneyline: 21W-6L (77.8%) n=27, Wilson=0.592 — B-tier
+    {
+        "id": "oddstrader_ml_hou",
+        "label": "oddstrader moneyline HOU",
+        "exact_combo": "oddstrader",
+        "market_type": "moneyline",
+        "team": "HOU",
+        "hist": {"record": "21-6", "win_pct": 0.778, "n": 27},
+        "tier_eligible": "B",
+    },
+    # oddstrader NYK moneyline: 28W-10L (73.7%) n=38, Wilson=0.580 — B-tier
+    {
+        "id": "oddstrader_ml_nyk",
+        "label": "oddstrader moneyline NYK",
+        "exact_combo": "oddstrader",
+        "market_type": "moneyline",
+        "team": "NYK",
+        "hist": {"record": "28-10", "win_pct": 0.737, "n": 38},
+        "tier_eligible": "B",
+    },
+    # oddstrader SAS spread: 16W-5L (76.2%) n=21, Wilson=0.549 — B-tier
+    {
+        "id": "oddstrader_spread_sas",
+        "label": "oddstrader spread SAS",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "SAS",
+        "hist": {"record": "16-5", "win_pct": 0.762, "n": 21},
+        "tier_eligible": "B",
+    },
+]
+
+# Known bad combos by market type — exclude from scoring regardless of other criteria
+# These have large sample sizes showing negative/coin-flip results
+EXCLUDED_COMBOS_BY_MARKET: set = {
+    # JuiceReel solo moneylines: juicereel_nukethebooks ~38%, juicereel_sxebets ~40%
+    # Both are below the 42% hard-exclude threshold with large samples
+    ("juicereel_nukethebooks", "moneyline"),
+    ("juicereel_sxebets", "moneyline"),
+}
 
 
 # ── Utility functions ──────────────────────────────────────────────────────
@@ -90,7 +455,7 @@ def line_bucket(line: Optional[float], market_type: str) -> str:
 
 
 def parse_day_key(day_key: Optional[str]) -> Optional[date]:
-    """Parse 'NBA:YYYY:MM:DD' into a date object."""
+    """Parse 'NBA:YYYY:MM:DD' or 'NCAAB:YYYY:MM:DD' into a date object."""
     if not day_key or not isinstance(day_key, str):
         return None
     parts = day_key.split(":")
@@ -123,11 +488,29 @@ def strip_expert_prefix(expert_str: str) -> str:
 def consensus_strength_key(sources_present: List[str]) -> str:
     """Map source count to consensus_strength lookup key."""
     n = len(sources_present) if sources_present else 1
-    if n >= 3:
+    if n >= 4:
+        return "4+_sources"
+    if n == 3:
         return "3_source"
     if n == 2:
         return "2_source"
     return "1_source"
+
+
+def _normalize_direction(signal: Dict[str, Any]) -> Optional[str]:
+    """Normalize direction to 'OVER'/'UNDER' for props/totals, None for spreads/ML.
+
+    Handles known case inconsistency ('under' vs 'UNDER' from different normalizers).
+    """
+    market = signal.get("market_type", "")
+    if market not in ("player_prop", "total"):
+        return None
+    d = (signal.get("direction") or "").upper()
+    if "OVER" in d:
+        return "OVER"
+    if "UNDER" in d:
+        return "UNDER"
+    return None
 
 
 # ── Lookup table loaders ──────────────────────────────────────────────────
@@ -200,26 +583,133 @@ def _load_combo_stat(cross_tab: Dict) -> Dict[Tuple[str, str], Dict]:
     return table
 
 
-def load_lookup_tables() -> Dict[str, Any]:
+def _load_combo_market_stat(cross_tab: Dict) -> Dict[Tuple[str, str, str], Dict]:
+    table: Dict[Tuple[str, str, str], Dict] = {}
+    for row in cross_tab.get("by_combo_market_stat", []):
+        key = (
+            row.get("sources_combo", ""),
+            row.get("market_type", ""),
+            row.get("stat_type", "all"),
+        )
+        table[key] = _make_entry(row, 0)
+    return table
+
+
+def _load_consensus_market_stat(cross_tab: Dict) -> Dict[Tuple[str, str, str], Dict]:
+    """Load cross_tabulation by_consensus_market_stat → {(strength, market, stat): entry}."""
+    table: Dict[Tuple[str, str, str], Dict] = {}
+    for row in cross_tab.get("by_consensus_market_stat", []):
+        key = (
+            row.get("consensus_strength", ""),
+            row.get("market_type", ""),
+            row.get("stat_type", "all"),
+        )
+        table[key] = _make_entry(row, 0)
+    return table
+
+
+def _load_combo_overall(data: Dict) -> Dict[str, Dict]:
+    """Load by_sources_combo_record.json → {sources_combo: entry}."""
+    table: Dict[str, Dict] = {}
+    for row in data.get("rows", []):
+        key = row.get("sources_combo", "")
+        if key:
+            table[key] = _make_entry(row, 0)
+    return table
+
+
+def _load_consensus_market(data: Dict) -> Dict[Tuple[str, str], Dict]:
+    """Load market_type.json by_market_x_consensus → {(strength, market): entry}."""
+    table: Dict[Tuple[str, str], Dict] = {}
+    for row in data.get("by_market_x_consensus", []):
+        key = (row.get("consensus_strength", ""), row.get("market_type", ""))
+        table[key] = _make_entry(row, 0)
+    return table
+
+
+COMBO_RECORD_PATH = REPORTS_DIR / "by_sources_combo_record.json"
+COMBO_MARKET_SIGNALS_PATH = REPORTS_DIR / "by_sources_combo_market.json"
+
+
+def _load_combo_market_signals(data: Dict) -> Dict[Tuple[str, str], Dict]:
+    """Load by_sources_combo_market.json (signal-based) → {(combo, market): entry}."""
+    table: Dict[Tuple[str, str], Dict] = {}
+    for row in data.get("rows", []):
+        key = (row.get("sources_combo", ""), row.get("market_type", ""))
+        table[key] = _make_entry(row, 0)
+    return table
+
+
+def _load_combo_market_direction(data: Dict) -> Dict[Tuple[str, str, str], Dict]:
+    """Load by_sources_combo_market_direction.json → {(combo, market, direction): entry}."""
+    table: Dict[Tuple[str, str, str], Dict] = {}
+    for row in data.get("rows", []):
+        key = (
+            row.get("sources_combo", ""),
+            row.get("market_type", ""),
+            row.get("direction", ""),
+        )
+        table[key] = _make_entry(row, 0)
+    return table
+
+
+def load_lookup_tables(reports_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Load all report JSONs into lookup dictionaries."""
+    rd = reports_dir or REPORTS_DIR
     tables: Dict[str, Any] = {}
     loaded = 0
 
-    if CROSS_TAB_PATH.exists():
-        ct = json.loads(CROSS_TAB_PATH.read_text())
+    # Primary: signals-based combo × market (from by_sources_combo_market.json)
+    cms_path = rd / "by_sources_combo_market.json"
+    if cms_path.exists():
+        tables["combo_market_signals"] = _load_combo_market_signals(json.loads(cms_path.read_text()))
+        loaded += 1
+    else:
+        tables["combo_market_signals"] = {}
+
+    # Direction-aware: combo × market × direction
+    cmd_path = rd / "by_sources_combo_market_direction.json"
+    if cmd_path.exists():
+        tables["combo_market_direction"] = _load_combo_market_direction(json.loads(cmd_path.read_text()))
+        loaded += 1
+    else:
+        tables["combo_market_direction"] = {}
+
+    cross_tab_path = rd / "cross_tabulation.json"
+    if cross_tab_path.exists():
+        ct = json.loads(cross_tab_path.read_text())
         tables["combo_market"] = _load_combo_market(ct)
         tables["combo_stat"] = _load_combo_stat(ct)
+        tables["combo_market_stat"] = _load_combo_market_stat(ct)
+        tables["consensus_market_stat"] = _load_consensus_market_stat(ct)
         loaded += 1
     else:
         tables["combo_market"] = {}
         tables["combo_stat"] = {}
+        tables["combo_market_stat"] = {}
+        tables["consensus_market_stat"] = {}
+
+    combo_record_path = rd / "by_sources_combo_record.json"
+    if combo_record_path.exists():
+        tables["combo_overall"] = _load_combo_overall(json.loads(combo_record_path.read_text()))
+        loaded += 1
+    else:
+        tables["combo_overall"] = {}
+
+    market_type_path = rd / "trends" / "market_type.json"
+    if market_type_path.exists():
+        mt = json.loads(market_type_path.read_text())
+        tables["consensus_market"] = _load_consensus_market(mt)
+        loaded += 1
+    else:
+        tables["consensus_market"] = {}
 
     for name, path, loader in [
-        ("consensus", CONSENSUS_PATH, _load_consensus),
-        ("line_bucket", LINE_BUCKET_PATH, _load_line_bucket),
-        ("stat_type", STAT_TYPE_PATH, _load_stat_type),
-        ("day_of_week", DAY_OF_WEEK_PATH, _load_day_of_week),
-        ("experts", EXPERT_PATH, _load_experts),
+        ("consensus", rd / "trends" / "consensus_strength.json", _load_consensus),
+        ("line_bucket", rd / "by_line_bucket.json", _load_line_bucket),
+        ("stat_type", rd / "by_stat_type.json", _load_stat_type),
+        ("day_of_week", rd / "trends" / "by_day_of_week.json", _load_day_of_week),
+        ("experts", rd / "by_expert_record.json", _load_experts),
     ]:
         if path.exists():
             tables[name] = loader(json.loads(path.read_text()))
@@ -233,13 +723,14 @@ def load_lookup_tables() -> Dict[str, Any]:
 
 # ── Signal loading ─────────────────────────────────────────────────────────
 
-def load_signals(date_str: str) -> List[Dict[str, Any]]:
+def load_signals(date_str: str, sport: str = "NBA", signals_path: Optional[Path] = None) -> List[Dict[str, Any]]:
     """Load signals for a specific date from signals_latest.jsonl."""
-    target_key = f"NBA:{date_str.replace('-', ':')}"
+    target_key = f"{sport}:{date_str.replace('-', ':')}"
+    path = signals_path or SIGNALS_PATH
     signals = []
-    if not SIGNALS_PATH.exists():
+    if not path.exists():
         return signals
-    with SIGNALS_PATH.open() as f:
+    with path.open() as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -250,184 +741,886 @@ def load_signals(date_str: str) -> List[Dict[str, Any]]:
     return signals
 
 
+def _normalize_dedup_key(signal: Dict[str, Any]) -> tuple:
+    """Return a canonical (selection, event_key, market_type) for dedup grouping.
+
+    Handles three known normalization issues:
+    1. Action Network suffixes: SAC_spread → SAC, DAL_ml → DAL
+    2. Event key direction: NBA:2026:01:01:BOS@SAC ↔ SAC@BOS → sorted alphabetically
+    3. Totals selection: game_total / UNDER / OVER → normalized to direction
+    """
+    selection = signal.get("selection") or ""
+    event_key = signal.get("event_key") or ""
+    market = signal.get("market_type") or ""
+    direction = (signal.get("direction") or "").upper()
+
+    # 1. Normalize totals selection FIRST (before suffix strip)
+    #    game_total → direction (UNDER/OVER), normalize case
+    if market == "total":
+        if selection.lower() == "game_total":
+            if "OVER" in direction:
+                selection = "OVER"
+            elif "UNDER" in direction:
+                selection = "UNDER"
+        if selection.upper() in ("UNDER", "OVER"):
+            selection = selection.upper()
+
+    # 2. Strip _spread, _ml, _total suffixes from team selections
+    #    (e.g. SAC_spread → SAC, DAL_ml → DAL from Action Network)
+    #    Only strip from team abbreviations (3-letter codes), not from
+    #    semantic names like game_total
+    selection_norm = re.sub(r'^([A-Z]{2,4})_(spread|ml|total|moneyline)$', r'\1', selection, flags=re.IGNORECASE)
+
+    # 3. Normalize event_key direction — sort the two teams alphabetically
+    #    Format: NBA:2026:01:01:AWAY@HOME
+    if "@" in event_key:
+        prefix_end = event_key.rfind(":")
+        if prefix_end > 0:
+            prefix = event_key[:prefix_end + 1]
+            matchup = event_key[prefix_end + 1:]
+            if "@" in matchup:
+                teams = matchup.split("@")
+                sorted_teams = sorted(teams)
+                event_key = prefix + "@".join(sorted_teams)
+
+    # For spreads/moneylines, also normalize selection to uppercase
+    if market in ("spread", "moneyline"):
+        selection_norm = selection_norm.upper()
+
+    return (selection_norm, event_key, market)
+
+
+# ── NBA team abbreviation aliases ────────────────────────────────────────
+# Maps non-standard abbreviations to canonical 3-letter codes used in LGF cache
+_TEAM_ALIASES: Dict[str, str] = {
+    "GS": "GSW", "SA": "SAS", "NY": "NYK", "NO": "NOP",
+    "UTAH": "UTA", "PHO": "PHX", "BRK": "BKN", "CHO": "CHA",
+}
+
+
+def _canon_team(abbr: str) -> str:
+    """Normalize a team abbreviation to the canonical form."""
+    return _TEAM_ALIASES.get(abbr, abbr)
+
+
+_NBA_TEAMS = {
+    "ATL", "BOS", "BKN", "CHA", "CHI", "CLE", "DAL", "DEN", "DET", "GSW",
+    "HOU", "IND", "LAC", "LAL", "MEM", "MIA", "MIL", "MIN", "NOP", "NYK",
+    "OKC", "ORL", "PHI", "PHX", "POR", "SAC", "SAS", "TOR", "UTA", "WAS",
+    # Also accept aliases before canonicalization
+    "GS", "SA", "NY", "NO", "UTAH", "PHO", "BRK", "CHO",
+}
+
+
+def load_game_schedule(date_str: str) -> Optional[Set[Tuple[str, str]]]:
+    """Load the set of (away, home) matchups that actually occurred on a date.
+
+    Tries LGF cache first (cleanest), then falls back to NBA API scoreboard cache.
+    Returns set of (away_team, home_team) tuples with canonical abbreviations,
+    or None if no cache data exists for this date (can't validate).
+    An empty set means cache exists but no NBA games were played (e.g. All-Star break).
+    """
+    matchups: Set[Tuple[str, str]] = set()
+    has_cache = False
+
+    # Try LGF cache
+    lgf_path = CACHE_DIR / f"lgf_{date_str}.json"
+    if lgf_path.exists():
+        has_cache = True
+        try:
+            games = json.loads(lgf_path.read_text())
+            for g in games:
+                raw_away = g.get("away_team", "")
+                raw_home = g.get("home_team", "")
+                # Skip non-NBA teams
+                if raw_away not in _NBA_TEAMS and _canon_team(raw_away) not in _NBA_TEAMS:
+                    continue
+                if raw_home not in _NBA_TEAMS and _canon_team(raw_home) not in _NBA_TEAMS:
+                    continue
+                away = _canon_team(raw_away)
+                home = _canon_team(raw_home)
+                if away and home:
+                    matchups.add((away, home))
+            if matchups:
+                return matchups
+            # LGF had no NBA games — fall through to scoreboard
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    # Fallback: NBA API scoreboard cache
+    sb_path = CACHE_DIR / f"nba_api_scoreboard_{date_str}.json"
+    if sb_path.exists():
+        has_cache = True
+        try:
+            data = json.loads(sb_path.read_text())
+            # Extract team abbreviations from LineScore resultSet
+            for rs in data.get("resultSets", []):
+                if rs.get("name") == "LineScore":
+                    headers = rs.get("headers", [])
+                    rows = rs.get("rowSet", [])
+                    abbr_idx = headers.index("TEAM_ABBREVIATION") if "TEAM_ABBREVIATION" in headers else None
+                    gid_idx = headers.index("GAME_ID") if "GAME_ID" in headers else None
+                    if abbr_idx is None or gid_idx is None:
+                        break
+                    # Group by game_id: first row = away, second = home
+                    game_teams: Dict[str, List[str]] = {}
+                    for row in rows:
+                        gid = row[gid_idx]
+                        team = _canon_team(row[abbr_idx])
+                        game_teams.setdefault(gid, []).append(team)
+                    for gid, teams in game_teams.items():
+                        if len(teams) == 2:
+                            matchups.add((teams[0], teams[1]))
+                    break
+        except (json.JSONDecodeError, KeyError, ValueError):
+            pass
+
+    # Return None if no cache files exist (can't validate)
+    # Return empty set if cache exists but 0 NBA games (e.g. All-Star break)
+    return matchups if has_cache else None
+
+
+def filter_wrong_date(
+    signals: List[Dict[str, Any]], date_str: str
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Drop signals whose matchup didn't actually occur on the given date.
+
+    Uses LGF/scoreboard cache to build the actual game schedule, then filters
+    out signals with event_keys pointing to games that happened on a different day.
+    Returns (kept_signals, dropped_count).
+    """
+    schedule = load_game_schedule(date_str)
+    if schedule is None:
+        # No cache files exist — can't validate, keep everything
+        return signals, 0
+    if not schedule:
+        # Cache exists but 0 NBA games (All-Star break, off day) — drop all
+        return [], len(signals)
+
+    # Build a set of matchups for fast lookup (both directions)
+    valid_matchups: Set[Tuple[str, str]] = set()
+    for away, home in schedule:
+        valid_matchups.add((away, home))
+        valid_matchups.add((home, away))  # accept either direction
+
+    kept = []
+    dropped = 0
+    for s in signals:
+        event_key = s.get("event_key") or ""
+        match = re.search(r'([A-Z]{2,4})@([A-Z]{2,4})$', event_key)
+        if not match:
+            # Can't extract teams (e.g. player props without event_key) — keep
+            kept.append(s)
+            continue
+
+        away = _canon_team(match.group(1))
+        home = _canon_team(match.group(2))
+        if (away, home) in valid_matchups:
+            kept.append(s)
+        else:
+            dropped += 1
+
+    return kept, dropped
+
+
 def filter_scorable(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Exclude avoid_conflict and other non-actionable signals."""
-    return [
-        s for s in signals
-        if s.get("signal_type") not in EXCLUDED_SIGNAL_TYPES
-        and s.get("market_type") in ("player_prop", "spread", "total", "moneyline")
+    """Exclude single-source, avoid_conflict, and other non-actionable signals.
+
+    Consensus picks require at least 2 agreeing sources — single-source picks
+    are just regurgitating one source's opinion.
+
+    Exception: single-source signals that match an A-tier PATTERN_REGISTRY entry
+    via exact_combo are allowed through (e.g. nukethebooks_solo_props).
+    """
+    # Build sets of exact_combo values from PATTERN_REGISTRY for fast solo checks.
+    # A-tier unconditional: patterns with no team/direction constraint (e.g. action UNDER props)
+    # All other solo patterns (A or B tier with team/direction constraints) go into the
+    # constrained list and are checked against the signal's market, direction, and team.
+    solo_a_tier_unconditional = {
+        p["exact_combo"]
+        for p in PATTERN_REGISTRY
+        if p.get("exact_combo") and p.get("tier_eligible") == "A" and not p.get("team")
+    }
+    # Constrained solo patterns: require market, direction, and/or team to match.
+    # Includes: A-tier with team constraint (betql OKC), all B-tier exact_combo patterns.
+    solo_constrained_patterns = [
+        p for p in PATTERN_REGISTRY
+        if p.get("exact_combo") and (p.get("tier_eligible") == "B" or p.get("team"))
     ]
 
+    def _is_scorable(s: Dict[str, Any]) -> bool:
+        if s.get("signal_type") in EXCLUDED_SIGNAL_TYPES:
+            return False
+        mkt = s.get("market_type")
+        if mkt not in ("player_prop", "spread", "total", "moneyline"):
+            return False
+        # Exclude known-bad combo×market combinations
+        combo = s.get("sources_combo", "")
+        if (combo, mkt) in EXCLUDED_COMBOS_BY_MARKET:
+            return False
+        n_sources = len(s.get("sources_present") or s.get("sources") or [])
+        if n_sources >= 2:
+            return True
+        # Allow single-source A-tier sources with no constraints (e.g. action, nukethebooks)
+        if combo in solo_a_tier_unconditional:
+            return True
+        # Allow single-source constrained patterns only when signal matches all constraints
+        # (e.g. betql OKC spread only, betql UNDER props only)
+        direction = _normalize_direction(s)
+        sel = (s.get("selection") or "").upper().strip()
+        for pat in solo_constrained_patterns:
+            if pat.get("exact_combo") != combo:
+                continue
+            if pat.get("market_type") and pat["market_type"] != mkt:
+                continue
+            if pat.get("direction") and pat["direction"] != direction:
+                continue
+            if pat.get("team") and pat["team"].upper() != sel:
+                continue
+            return True
+        return False
 
-# ── Dimension scorers ─────────────────────────────────────────────────────
+    filtered = [s for s in signals if _is_scorable(s)]
+    return _dedup_per_game(filtered)
 
-def _edge_from_entry(entry: Optional[Dict], min_n: int) -> Tuple[float, Dict[str, Any]]:
-    """Compute edge contribution from a lookup entry.
 
-    Uses raw win_pct for edge calculation (not Wilson lower, which is too
-    conservative for additive scoring at moderate sample sizes). Wilson lower
-    is still reported for reference.
+def _dedup_per_game(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep only the best signal per (team/player, event, market_type).
 
-    Returns (edge, detail_dict).
+    For spreads/totals/moneylines, multiple signals can exist for the same
+    team in the same game with different lines. Keep the one with the most
+    agreeing sources; break ties by preferring the majority line.
+
+    For spreads, also normalise the line sign: if the selected team is
+    the away team the line should normally be positive (getting points),
+    and if the selected team is the home favourite the line is negative.
+    When conflicting signs exist, prefer the line that appears most often
+    across all occurrences.
     """
-    if not entry or entry.get("n", 0) < min_n:
-        return 0.0, {
-            "win_pct": entry.get("win_pct") if entry else None,
-            "n": entry.get("n", 0) if entry else 0,
-            "verdict": "no_data",
-        }
-    wp = entry["win_pct"]
-    edge = wp - 0.50
-    verdict = "positive" if edge > EDGE_THRESHOLD else ("negative" if edge < -EDGE_THRESHOLD else "neutral")
-    return edge, {
+    from collections import defaultdict
+
+    # Group signals by normalized (selection, event, market)
+    groups: Dict[tuple, List[Dict[str, Any]]] = defaultdict(list)
+    for s in signals:
+        key = _normalize_dedup_key(s)
+        groups[key].append(s)
+
+    result = []
+    for key, sigs in groups.items():
+        if len(sigs) == 1:
+            result.append(sigs[0])
+            continue
+
+        # Pick the representative: most sources, then most common line
+        # Count how often each line value appears
+        line_counts: Dict[float, int] = defaultdict(int)
+        for s in sigs:
+            ln = s.get("line")
+            if ln is not None:
+                line_counts[ln] += 1
+
+        # Find the majority line (most common across all occurrences)
+        majority_line = max(line_counts, key=line_counts.get) if line_counts else None
+
+        # Score each signal: (sources_count, line_matches_majority, score)
+        def sort_key(s: Dict) -> tuple:
+            sc = len(s.get("sources_present") or s.get("sources") or [])
+            ln_match = 1 if s.get("line") == majority_line else 0
+            return (sc, ln_match, s.get("score", 0))
+
+        best = max(sigs, key=sort_key)
+
+        # If the best signal's line doesn't match majority, override it
+        if majority_line is not None and best.get("line") != majority_line:
+            best = dict(best)  # copy to avoid mutating original
+            best["line"] = majority_line
+
+        result.append(best)
+
+    return result
+
+
+# ── Exclusion filters ─────────────────────────────────────────────────────
+
+def apply_exclusion_filters(
+    signals: List[Dict[str, Any]],
+    tables: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Hard-remove signals with known losing patterns.
+
+    Returns (passed, excluded) where each excluded item has an _exclusion_reason.
+    """
+    passed = []
+    excluded = []
+    for s in signals:
+        reason = _check_exclusion(s, tables)
+        if reason:
+            excluded.append({**s, "_exclusion_reason": reason})
+        else:
+            passed.append(s)
+    return passed, excluded
+
+
+def _check_exclusion(signal: Dict[str, Any], tables: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Check if a signal should be hard-excluded. Returns reason string or None."""
+    market = signal.get("market_type", "")
+    stat = signal.get("atomic_stat")
+    line = signal.get("line")
+
+    # Stat type blacklist
+    if stat and stat in EXCLUDED_STAT_TYPES:
+        return f"excluded_stat:{stat}"
+
+    # Direction-aware stat exclusion: some combo stats are bad in one direction only
+    direction = signal.get("direction", "").upper()
+    if stat and (stat, direction) in EXCLUDED_STAT_DIR:
+        return f"excluded_stat_dir:{stat}_{direction}"
+
+    # OVER player props — no longer hard-excluded; Wilson gate + combo×market
+    # lookup tables handle filtering. Original 43.8% stat was from flawed
+    # grade-matching that didn't properly handle direction joins.
+    # Actual signal-level OVER props: 53.3% (98-86, n=184).
+
+    # Spread line sanity — catch data quality issues
+    if market == "spread" and line is not None:
+        try:
+            absline = abs(float(line))
+            if absline == 0:
+                return "zero_spread"
+            if absline > 25:
+                return f"unrealistic_spread:{line}"
+        except (TypeError, ValueError):
+            pass
+
+    # Total line sanity — NBA game totals are ~200-250
+    if market == "total" and line is not None:
+        try:
+            lv = float(line)
+            if lv < 150 or lv > 280:
+                return f"unrealistic_total:{line}"
+        except (TypeError, ValueError):
+            pass
+
+    # High player prop lines
+    if market == "player_prop" and line is not None:
+        try:
+            if float(line) > MAX_PROP_LINE:
+                return f"high_prop_line:{line}"
+        except (TypeError, ValueError):
+            pass
+
+    # Hard-exclude proven losing combo × market (Wilson < 0.42 with n >= 30)
+    # Try direction-aware table first, then fall back to direction-agnostic
+    if tables:
+        combo = signal.get("sources_combo", "")
+        raw_dir = (signal.get("direction") or "").upper()
+        if "OVER" in raw_dir:
+            sig_dir = "OVER"
+        elif "UNDER" in raw_dir:
+            sig_dir = "UNDER"
+        else:
+            sig_dir = raw_dir or "unknown"
+
+        # Prefer direction-aware entry when available with enough data
+        entry = tables.get("combo_market_direction", {}).get((combo, market, sig_dir))
+        if not entry or entry.get("n", 0) < 30:
+            entry = tables.get("combo_market_signals", {}).get((combo, market))
+        if entry and entry.get("n", 0) >= 30:
+            wl = entry.get("wilson_lower")
+            if wl is None:
+                wl = wilson_lower(entry.get("wins", 0), entry["n"])
+            if wl < WILSON_HARD_EXCLUDE:
+                return f"losing_combo_market:wilson={wl:.3f}"
+
+    # Exclude signals where ALL named experts are proven losers (<45% wp, n>=30)
+    if tables:
+        experts_table = tables.get("experts", {})
+        signal_experts = signal.get("experts") or []
+        if experts_table and signal_experts:
+            named = [strip_expert_prefix(e) for e in signal_experts
+                     if e not in ("unknown", "MULTI", "")]
+            qualified = [e for e in named
+                         if experts_table.get(e, {}).get("n", 0) >= EXPERT_MIN_N]
+            if qualified:
+                all_losers = all(
+                    experts_table.get(e, {}).get("win_pct", 0.5) < 0.45
+                    for e in qualified
+                )
+                if all_losers:
+                    return f"all_losing_experts:{','.join(qualified[:3])}"
+
+    return None
+
+
+# ── Primary scoring ───────────────────────────────────────────────────────
+
+def _build_primary_result(entry: Dict, level: str, label: str) -> Dict[str, Any]:
+    """Build a primary lookup result dict."""
+    n = entry.get("n", 0)
+    wins = entry.get("wins", 0)
+    wp = entry.get("win_pct", 0)
+    wl = entry.get("wilson_lower")
+    if wl is None:
+        wl = wilson_lower(wins, n) if n > 0 else 0.0
+    return {
+        "wilson_lower": round(wl, 4),
         "win_pct": round(wp, 4),
-        "wilson_lower": round(entry.get("wilson_lower", 0), 4),
-        "n": entry["n"],
-        "verdict": verdict,
+        "n": n,
+        "wins": wins,
+        "losses": n - wins,
+        "lookup_level": level,
+        "label": label,
     }
+
+
+def _cascading_primary_lookup(
+    signal: Dict[str, Any],
+    tables: Dict[str, Any],
+    min_n: int,
+) -> Dict[str, Any]:
+    """Find the best matching historical record via cascading fallback.
+
+    Cascade (most specific → least specific):
+      1.  combo × market × stat       (player props only)
+      2.  combo × market × direction   (direction-aware — preferred for totals)
+      3.  combo × market               (signals-based — fallback)
+      4.  combo overall
+      5.  consensus × market × stat   (player props only — retains stat specificity)
+      6.  consensus × market
+      7.  consensus overall
+    """
+    combo = signal.get("sources_combo", "")
+    market = signal.get("market_type", "")
+    atomic_stat = signal.get("atomic_stat")
+    stat_key = atomic_stat if market == "player_prop" and atomic_stat else "all"
+    sources_count = len(signal.get("sources_present") or signal.get("sources") or [])
+    strength = f"{sources_count}_source" if sources_count < 4 else "4+_sources"
+
+    # Normalize direction for lookup
+    raw_dir = (signal.get("direction") or "").upper()
+    if "OVER" in raw_dir:
+        direction = "OVER"
+    elif "UNDER" in raw_dir:
+        direction = "UNDER"
+    else:
+        direction = raw_dir or "unknown"
+
+    # Level 1: combo × market × stat (player props only)
+    if stat_key != "all":
+        entry = tables.get("combo_market_stat", {}).get((combo, market, stat_key))
+        if entry and entry.get("n", 0) >= min_n:
+            return _build_primary_result(entry, "combo_market_stat",
+                                         f"{combo} / {market} / {stat_key}")
+
+    # Level 2: combo × market × direction (direction-aware — preferred)
+    entry = tables.get("combo_market_direction", {}).get((combo, market, direction))
+    if entry and entry.get("n", 0) >= min_n:
+        return _build_primary_result(entry, "combo_market_direction",
+                                     f"{combo} / {market} / {direction}")
+
+    # Level 3: combo × market (signals-based — fallback when direction table missing or n too low)
+    entry = tables.get("combo_market_signals", {}).get((combo, market))
+    if entry and entry.get("n", 0) >= min_n:
+        return _build_primary_result(entry, "combo_market",
+                                     f"{combo} / {market}")
+
+    # Level 4: combo overall
+    entry = tables.get("combo_overall", {}).get(combo)
+    if entry and entry.get("n", 0) >= min_n:
+        return _build_primary_result(entry, "combo_overall",
+                                     f"{combo} overall")
+
+    # Level 5: consensus × market × stat (player props — retains stat specificity)
+    if stat_key != "all":
+        entry = tables.get("consensus_market_stat", {}).get((strength, market, stat_key))
+        if entry and entry.get("n", 0) >= min_n:
+            return _build_primary_result(entry, "consensus_market_stat",
+                                         f"{strength} / {market} / {stat_key}")
+
+    # Level 6: consensus × market
+    entry = tables.get("consensus_market", {}).get((strength, market))
+    if entry and entry.get("n", 0) >= min_n:
+        return _build_primary_result(entry, "consensus_market",
+                                     f"{strength} / {market}")
+
+    # Level 7: consensus overall
+    entry = tables.get("consensus", {}).get(strength)
+    if entry and entry.get("n", 0) >= min_n:
+        return _build_primary_result(entry, "consensus_overall", strength)
+
+    return {"wilson_lower": 0.0, "win_pct": 0.0, "n": 0, "wins": 0,
+            "losses": 0, "lookup_level": "none", "label": "n/a"}
+
+
+def _compute_recency_adjustment(trend: Optional[Dict[str, Any]]) -> float:
+    """Compute additive recency modifier from recent trend data."""
+    if not trend:
+        return 0.0
+    wp = trend.get("win_pct", 0.5)
+    if wp >= 0.60:
+        return TREND_BOOST_HOT
+    if wp >= 0.55:
+        return TREND_BOOST_WARM
+    if wp <= 0.40:
+        return TREND_PENALTY_COLD
+    if wp <= 0.45:
+        return TREND_PENALTY_COOL
+    return 0.0
+
+
+# ── Pattern-based A-tier matching ─────────────────────────────────────────
+
+def _match_patterns(
+    signal: Dict[str, Any],
+    registry: List[Dict[str, Any]] = PATTERN_REGISTRY,
+) -> Optional[Dict[str, Any]]:
+    """Check signal against pattern registry. Return first matching pattern or None.
+
+    Patterns are checked in order (most specific first). A signal matches if
+    ALL non-None criteria in the pattern are satisfied.
+
+    Source matching modes:
+      - source_pair: signal must contain BOTH sources
+      - source_contains: signal must contain ALL listed sources
+      - exact_combo: signal's sources_combo must match exactly
+    """
+    sources = set(signal.get("sources_present") or signal.get("sources") or [])
+    combo = signal.get("sources_combo", "")
+    market = signal.get("market_type", "")
+    direction = _normalize_direction(signal)
+    stat = signal.get("atomic_stat")
+    # For team-specific patterns (spreads/MLs): selection holds the picked team abbrev
+    selection = (signal.get("selection") or "").upper().strip()
+    n_sources = len(sources)
+
+    for pat in registry:
+        # Check min_sources
+        if pat.get("min_sources") and n_sources < pat["min_sources"]:
+            continue
+
+        # Source matching (three modes)
+        if pat.get("source_pair"):
+            pair = pat["source_pair"]
+            if pair[0] not in sources or pair[1] not in sources:
+                continue
+        elif pat.get("source_contains"):
+            if not all(s in sources for s in pat["source_contains"]):
+                continue
+        elif pat.get("exact_combo"):
+            if combo != pat["exact_combo"]:
+                continue
+
+        # Market type filter
+        if pat.get("market_type") and pat["market_type"] != market:
+            continue
+
+        # Direction filter (OVER/UNDER for props and totals)
+        if pat.get("direction") and pat["direction"] != direction:
+            continue
+
+        # Team filter: for spread/ML patterns that apply only to specific teams.
+        # Matches against the signal's selection field (the picked team abbreviation).
+        if pat.get("team") and pat["team"].upper() != selection:
+            continue
+
+        # Stat type filter (atomic_stat for player props)
+        if pat.get("stat_type") and pat["stat_type"] != stat:
+            continue
+
+        return pat  # first match wins
+
+    return None
+
+
+# ── Multi-factor scoring modifiers ────────────────────────────────────────
+
+def _compute_expert_adjustment(
+    signal: Dict[str, Any],
+    tables: Dict[str, Any],
+) -> Tuple[float, Optional[Dict[str, Any]]]:
+    """Compute expert quality modifier.
+
+    Boost if best expert >55% wp (n>=30); penalize if worst <45%.
+    """
+    experts_table = tables.get("experts", {})
+    signal_experts = signal.get("experts") or []
+    if not signal_experts or not experts_table:
+        return 0.0, None
+
+    best_wp = 0.0
+    worst_wp = 1.0
+    best_expert: Optional[Dict[str, Any]] = None
+    worst_expert: Optional[Dict[str, Any]] = None
+
+    for exp_raw in signal_experts:
+        exp_key = strip_expert_prefix(exp_raw)
+        entry = experts_table.get(exp_key)
+        if not entry or entry.get("n", 0) < EXPERT_MIN_N:
+            continue
+        wp = entry.get("win_pct", 0.5)
+        if wp > best_wp:
+            best_wp = wp
+            best_expert = {"expert": exp_key, "win_pct": round(wp, 4), "n": entry["n"]}
+        if wp < worst_wp:
+            worst_wp = wp
+            worst_expert = {"expert": exp_key, "win_pct": round(wp, 4), "n": entry["n"]}
+
+    if best_expert and best_wp >= 0.55:
+        return EXPERT_BOOST, {**best_expert, "adjustment": EXPERT_BOOST, "role": "boost"}
+    if worst_expert and worst_wp < 0.45:
+        return EXPERT_PENALTY, {**worst_expert, "adjustment": EXPERT_PENALTY, "role": "penalty"}
+    return 0.0, None
+
+
+def _compute_stat_type_adjustment(
+    signal: Dict[str, Any],
+    tables: Dict[str, Any],
+) -> float:
+    """Small modifier based on stat type historical performance."""
+    if signal.get("market_type") != "player_prop":
+        return 0.0
+    stat = signal.get("atomic_stat")
+    if not stat:
+        return 0.0
+    entry = tables.get("stat_type", {}).get(stat)
+    if not entry or entry.get("n", 0) < 30:
+        return 0.0
+    wp = entry.get("win_pct", 0.5)
+    if wp >= 0.52:
+        return STAT_TYPE_BOOST
+    if wp < 0.47:
+        return STAT_TYPE_PENALTY
+    return 0.0
+
+
+def _compute_day_of_week_adjustment(day_of_week: str) -> float:
+    """Small modifier based on day-of-week historical performance."""
+    if day_of_week == "Thursday":
+        return DAY_BOOST_THURS
+    if day_of_week == "Friday":
+        return DAY_PENALTY_FRI
+    return 0.0
+
+
+def _compute_line_bucket_adjustment(
+    signal: Dict[str, Any],
+    tables: Dict[str, Any],
+) -> float:
+    """Small modifier based on line bucket historical performance."""
+    market = signal.get("market_type", "")
+    sig_line = signal.get("line")
+    lb = line_bucket(sig_line, market)
+    entry = tables.get("line_bucket", {}).get((market, lb))
+    if not entry or entry.get("n", 0) < 30:
+        return 0.0
+    wp = entry.get("win_pct", 0.5)
+    if wp >= 0.51:
+        return LINE_BUCKET_BOOST
+    if wp < 0.48:
+        return LINE_BUCKET_PENALTY
+    return 0.0
+
+
+def _build_supporting_factors(
+    signal: Dict[str, Any],
+    tables: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Build supplementary factors for display (not used in ranking)."""
+    market = signal.get("market_type", "")
+    sources_combo = signal.get("sources_combo", "")
+    sources_present = signal.get("sources_present") or signal.get("sources") or []
+    atomic_stat = signal.get("atomic_stat")
+    stat_key = atomic_stat if market == "player_prop" and atomic_stat else "all"
+    sig_line = signal.get("line")
+    cs_key = consensus_strength_key(sources_present)
+
+    factors = []
+
+    # Consensus × market
+    entry = tables.get("consensus_market", {}).get((cs_key, market))
+    if entry and entry.get("n", 0) >= MIN_SAMPLE_PRIMARY:
+        factors.append({
+            "dimension": "consensus_market",
+            "lookup_key": f"{cs_key} / {market}",
+            "win_pct": round(entry.get("win_pct", 0), 4),
+            "n": entry["n"],
+            "wilson_lower": round(entry.get("wilson_lower", 0), 4),
+        })
+
+    # Stat type (for props)
+    if stat_key != "all":
+        entry = tables.get("stat_type", {}).get(stat_key)
+        if entry and entry.get("n", 0) >= MIN_SAMPLE_PRIMARY:
+            factors.append({
+                "dimension": "stat_type",
+                "lookup_key": stat_key,
+                "win_pct": round(entry.get("win_pct", 0), 4),
+                "n": entry["n"],
+                "wilson_lower": round(entry.get("wilson_lower", 0), 4),
+            })
+
+    # Line bucket
+    lb = line_bucket(sig_line, market)
+    entry = tables.get("line_bucket", {}).get((market, lb))
+    if entry and entry.get("n", 0) >= MIN_SAMPLE_PRIMARY:
+        factors.append({
+            "dimension": "line_bucket",
+            "lookup_key": f"{market} / {lb}",
+            "win_pct": round(entry.get("win_pct", 0), 4),
+            "n": entry["n"],
+            "wilson_lower": round(entry.get("wilson_lower", 0), 4),
+        })
+
+    return factors
 
 
 def score_signal(
     signal: Dict[str, Any],
     tables: Dict[str, Any],
-    min_n: int,
-    day_of_week: str,
+    recent_tables: Optional[Dict[str, Any]] = None,
+    day_of_week: str = "",
 ) -> Dict[str, Any]:
-    """Score a single signal across all 7 dimensions."""
-    market = signal.get("market_type", "")
-    sources_combo = signal.get("sources_combo", "")
-    sources_present = signal.get("sources_present") or signal.get("sources") or []
-    atomic_stat = signal.get("atomic_stat")
-    sig_line = signal.get("line")
-    experts_raw = signal.get("experts") or []
+    """Score a signal using Wilson-based combo×market ranking.
 
-    factors = []
-    edges = []
+    Primary score = Wilson lower bound from the best matching historical
+    record via cascading lookup. Multi-factor modifiers are applied:
+    recency, expert, stat type, day-of-week, line bucket.
+    """
+    # 1. Cascading primary lookup
+    primary = _cascading_primary_lookup(signal, tables, MIN_SAMPLE_PRIMARY)
 
-    # Dimension 1: Source combo x market type
-    entry = tables["combo_market"].get((sources_combo, market))
-    edge, detail = _edge_from_entry(entry, min_n)
-    edges.append(edge)
-    factors.append({"dimension": "combo_x_market", "lookup_key": f"{sources_combo} / {market}", "edge": round(edge, 4), **detail})
+    # 2. Recent trend modifier
+    trend = _lookup_recent_trend(signal, recent_tables or {}, MIN_SAMPLE_TREND) if recent_tables else None
+    recency_adj = _compute_recency_adjustment(trend)
 
-    # Dimension 2: Consensus strength
-    cs_key = consensus_strength_key(sources_present)
-    entry = tables["consensus"].get(cs_key)
-    edge, detail = _edge_from_entry(entry, min_n)
-    edges.append(edge)
-    factors.append({"dimension": "consensus", "lookup_key": cs_key, "edge": round(edge, 4), **detail})
+    # 3. Multi-factor modifiers
+    expert_adj, expert_detail = _compute_expert_adjustment(signal, tables)
+    stat_adj = _compute_stat_type_adjustment(signal, tables)
+    day_adj = _compute_day_of_week_adjustment(day_of_week)
+    line_adj = _compute_line_bucket_adjustment(signal, tables)
+    total_adjustment = recency_adj + expert_adj + stat_adj + day_adj + line_adj
 
-    # Dimension 3: Line bucket
-    lb = line_bucket(sig_line, market)
-    entry = tables["line_bucket"].get((market, lb))
-    edge, detail = _edge_from_entry(entry, min_n)
-    edges.append(edge)
-    factors.append({"dimension": "line_bucket", "lookup_key": f"{market} / {lb}", "edge": round(edge, 4), **detail})
+    # 4. Final score
+    wilson_score = primary["wilson_lower"] + total_adjustment
 
-    # Dimension 4: Stat type (props only)
-    if market == "player_prop" and atomic_stat:
-        entry = tables["stat_type"].get(atomic_stat)
-        edge, detail = _edge_from_entry(entry, min_n)
-        edges.append(edge)
-        factors.append({"dimension": "stat_type", "lookup_key": atomic_stat, "edge": round(edge, 4), **detail})
+    # 5. A-tier eligibility (pattern registry matching)
+    matched_pattern = _match_patterns(signal)
+    a_tier_eligible = (matched_pattern is not None
+                       and matched_pattern.get("tier_eligible") == "A")
 
-    # Dimension 5: Day of week
-    entry = tables["day_of_week"].get(day_of_week)
-    edge, detail = _edge_from_entry(entry, min_n)
-    edges.append(edge)
-    factors.append({"dimension": "day_of_week", "lookup_key": day_of_week, "edge": round(edge, 4), **detail})
+    # 6. Confidence level
+    n = primary["n"]
+    confidence = "high" if n >= 50 else ("medium" if n >= 30 else "low")
 
-    # Dimension 6: Best expert
-    best_expert_edge = 0.0
-    best_expert_detail: Dict[str, Any] = {"verdict": "no_data", "n": 0}
-    best_expert_name = None
-    for expert_raw in experts_raw:
-        name = strip_expert_prefix(expert_raw)
-        entry = tables["experts"].get(name)
-        if entry and entry.get("n", 0) >= min_n:
-            e, d = _edge_from_entry(entry, min_n)
-            if e > best_expert_edge or best_expert_name is None:
-                best_expert_edge = e
-                best_expert_detail = d
-                best_expert_name = name
-    edges.append(best_expert_edge)
-    factors.append({
-        "dimension": "best_expert",
-        "lookup_key": best_expert_name or "none",
-        "edge": round(best_expert_edge, 4),
-        **best_expert_detail,
-    })
+    # 7. Supporting factors (for display only)
+    factors = _build_supporting_factors(signal, tables)
 
-    # Dimension 7: Source combo x stat type (props only)
-    if market == "player_prop" and atomic_stat:
-        entry = tables["combo_stat"].get((sources_combo, atomic_stat))
-        edge, detail = _edge_from_entry(entry, min_n)
-        edges.append(edge)
-        factors.append({"dimension": "combo_x_stat", "lookup_key": f"{sources_combo} / {atomic_stat}", "edge": round(edge, 4), **detail})
+    # 8. Human-readable summary
+    if primary["lookup_level"] != "none":
+        parts = primary["label"].split(" / ")
+        if len(parts) >= 2:
+            market_label = parts[-1] if len(parts) == 2 else f"{parts[-1]} {parts[-2]}"
+        else:
+            market_label = "picks"
+        summary = (f"{primary['win_pct']*100:.1f}% win rate in "
+                   f"{primary['n']} similar {market_label} picks "
+                   f"(Wilson: {primary['wilson_lower']*100:.1f}%)")
+        adj_parts = []
+        if recency_adj != 0:
+            direction = "hot" if recency_adj > 0 else "cold"
+            adj_parts.append(f"{direction}: {recency_adj*100:+.0f}%")
+        if expert_adj != 0:
+            adj_parts.append(f"analyst: {expert_adj*100:+.1f}%")
+        if stat_adj != 0:
+            adj_parts.append(f"stat: {stat_adj*100:+.1f}%")
+        if day_adj != 0:
+            adj_parts.append(f"day: {day_adj*100:+.1f}%")
+        if line_adj != 0:
+            adj_parts.append(f"line: {line_adj*100:+.1f}%")
+        if adj_parts:
+            summary += f" [{' | '.join(adj_parts)}]"
+    else:
+        summary = "insufficient historical data"
 
-    composite = compute_composite(edges)
-    positive_dims = sum(1 for e in edges if e > EDGE_THRESHOLD)
-    negative_dims = sum(1 for e in edges if e < -EDGE_THRESHOLD)
-    tier = assign_tier(composite, positive_dims, negative_dims)
-
-    # Build human-readable summary of positive factors
-    summary_parts = []
-    for f in factors:
-        if f["edge"] > EDGE_THRESHOLD:
-            dim_short = {
-                "combo_x_market": "combo",
-                "consensus": "consensus",
-                "line_bucket": "line",
-                "stat_type": "stat",
-                "day_of_week": "day",
-                "best_expert": "expert",
-                "combo_x_stat": "combo_stat",
-            }.get(f["dimension"], f["dimension"])
-            summary_parts.append(f"+{f['edge']*100:.1f}% {dim_short}")
-    summary = ", ".join(summary_parts) if summary_parts else "no positive factors"
-
-    return {
-        "tier": tier,
-        "composite_score": round(composite, 4),
-        "positive_dimensions": positive_dims,
-        "negative_dimensions": negative_dims,
+    result: Dict[str, Any] = {
+        "wilson_score": round(wilson_score, 4),
+        "composite_score": round(wilson_score, 4),  # backward compat alias
+        "primary_record": primary,
+        "recency_adjustment": recency_adj,
+        "expert_adjustment": expert_adj,
+        "stat_adjustment": stat_adj,
+        "day_adjustment": day_adj,
+        "line_bucket_adjustment": line_adj,
+        "total_adjustment": round(total_adjustment, 4),
+        "recent_trend": trend,
+        "confidence": confidence,
+        "a_tier_eligible": a_tier_eligible,
+        "positive_dimensions": sum(1 for f in factors if f.get("win_pct", 0) > 0.505),
+        "negative_dimensions": sum(1 for f in factors if f.get("win_pct", 0) < 0.495),
+        "total_dimensions": len(factors),
         "factors": factors,
+        "supporting_factors": factors,
         "summary": summary,
     }
+    if expert_detail:
+        result["expert_detail"] = expert_detail
+    if matched_pattern:
+        result["matched_pattern"] = matched_pattern
+    return result
 
 
 # ── Composite score & tier ─────────────────────────────────────────────────
 
-def compute_composite(edges: List[float]) -> float:
-    """Sum edge contributions with diminishing returns cap after 4 positive dims."""
-    positive = sorted([e for e in edges if e > EDGE_THRESHOLD], reverse=True)
-    negative = [e for e in edges if e <= -EDGE_THRESHOLD]
-    neutral = [e for e in edges if -EDGE_THRESHOLD <= e <= EDGE_THRESHOLD]
+def assign_tier(
+    wilson_score: float,
+    n: int,
+    lookup_level: str,
+    a_tier_eligible: bool = False,
+) -> str:
+    """Assign tier based on pattern matching + Wilson lower bound.
 
-    if len(positive) > 4:
-        pos_sum = sum(positive[:4]) + 0.5 * sum(positive[4:])
-    else:
-        pos_sum = sum(positive)
-
-    return pos_sum + sum(negative) + sum(neutral)
-
-
-def assign_tier(composite: float, positive_dims: int, negative_dims: int) -> str:
-    """Assign A/B/C/D tier based on composite score and dimension counts.
-
-    Backtested on 8,424 graded signals:
-      A: 56.8% (n=951)  — strong multi-factor edge
-      B: 51.9% (n=860)  — net positive composite
-      C: 50.9% (n=945)  — borderline / neutral
-      D: 46.8% (n=5,668) — avoid
+      A: Matched a profitable pattern in PATTERN_REGISTRY AND Wilson >= 0.47
+      B: Positive edge — Wilson >= 0.47
+      C: Marginal — Wilson >= 0.45 (not exported)
+      D: Insufficient data or losing pattern
     """
-    if positive_dims >= 3 and composite >= 0.04:
+    if n < MIN_SAMPLE_PRIMARY or lookup_level == "none":
+        return "D"
+    if a_tier_eligible and wilson_score >= WILSON_TIER_B:
         return "A"
-    if composite >= 0.0:
+    if wilson_score >= WILSON_TIER_B:
         return "B"
-    if composite >= -0.03:
+    if wilson_score >= WILSON_TIER_C:
         return "C"
     return "D"
+
+
+def passes_quality_gate(
+    signal: Dict[str, Any],
+    score_data: Dict[str, Any],
+) -> Tuple[bool, str]:
+    """Check if a scored signal meets the quality gate.
+
+    Simplified criteria:
+      1. Enough historical data (n >= 15)
+      2. Wilson score >= C-tier threshold (0.45)
+      3. Not a proven losing pattern (n >= 30 with wp < 48%)
+    """
+    primary = score_data["primary_record"]
+    n = primary["n"]
+    wilson = score_data["wilson_score"]
+    win_pct = primary["win_pct"]
+
+    if n < MIN_SAMPLE_PRIMARY:
+        return False, f"insufficient_data:n={n}"
+
+    if wilson < WILSON_TIER_C:
+        return False, f"low_wilson:{wilson:.3f}"
+
+    if n >= 30 and win_pct < 0.48:
+        return False, f"losing_history:{win_pct:.3f}"
+
+    return True, "passed"
 
 
 # ── Output ─────────────────────────────────────────────────────────────────
@@ -435,7 +1628,7 @@ def assign_tier(composite: float, positive_dims: int, negative_dims: int) -> str
 def format_selection(signal: Dict[str, Any]) -> str:
     """Build a concise display string for a signal."""
     market = signal.get("market_type", "")
-    selection = signal.get("selection", "?")
+    selection = signal.get("selection") or "?"
     sig_line = signal.get("line")
     direction = signal.get("direction", "")
 
@@ -459,6 +1652,121 @@ def format_selection(signal: Dict[str, Any]) -> str:
     return selection
 
 
+def load_current_lines() -> Dict[str, Any]:
+    """Load current market lines from The Odds API cache file."""
+    if not CURRENT_LINES_PATH.exists():
+        return {}
+    try:
+        with open(CURRENT_LINES_PATH) as f:
+            data = json.load(f)
+        return data.get("games", {})
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def lookup_market_line(
+    signal: Dict[str, Any], market_lines: Dict[str, Any]
+) -> Optional[float]:
+    """Look up the current market line for a signal.
+
+    For spreads: returns the team's current spread from the market.
+    For totals: returns the current total line from the market.
+    For player props: not supported yet (would need per-event API calls).
+    """
+    event_key = signal.get("event_key", "")
+    market = signal.get("market_type", "")
+    selection = signal.get("selection", "")
+
+    game = market_lines.get(event_key)
+    if not game:
+        return None
+
+    if market == "spread":
+        spreads = game.get("spreads", {})
+        val = spreads.get(selection)
+        # Snap to nearest .5 — Odds API averages across books and can
+        # produce .25/.75 lines that aren't real NBA spreads.
+        if val is not None:
+            val = round(val * 2) / 2
+        return val
+
+    if market == "total":
+        return game.get("total")
+
+    return None
+
+
+def load_recent_trends_lookup(reports_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Load recent trends lookup JSON."""
+    path = (reports_dir or REPORTS_DIR) / "recent_trends_lookup.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data.get("by_window", {})
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def _lookup_recent_trend(
+    signal: Dict[str, Any],
+    recent_lookup: Dict[str, Any],
+    min_n: int = 5,
+) -> Optional[Dict[str, Any]]:
+    """Cascading fallback recent trend lookup for a signal.
+
+    Strategy: try preferred window (14d) first, then widen (30d) before
+    falling down the cascade. Within each window, cascade:
+      1. combo × market × stat
+      2. combo × market
+      3. combo overall
+      4. consensus × market × stat
+      5. consensus × market
+      6. consensus overall
+
+    Returns dict with: wins, losses, n, win_pct, window, source, label.
+    Returns None if nothing qualifies.
+    """
+    combo = signal.get("sources_combo", "")
+    market = signal.get("market_type", "")
+    atomic_stat = signal.get("atomic_stat")
+    stat_key = atomic_stat if market == "player_prop" and atomic_stat else "all"
+    sources_count = len(signal.get("sources_present") or signal.get("sources") or [])
+    cs = f"{sources_count}_source" if sources_count < 4 else "4+_sources"
+
+    # Cascade levels: (table_name, lookup_key, label)
+    levels = []
+    if combo:
+        levels.append(("combo_market_stat", f"{combo}__{market}__{stat_key}", f"{combo} / {market} / {stat_key}"))
+        levels.append(("combo_market", f"{combo}__{market}", f"{combo} / {market}"))
+        levels.append(("combo_overall", combo, f"{combo} overall"))
+    levels.append(("consensus_market_stat", f"{cs}__{market}__{stat_key}", f"{cs} / {market} / {stat_key}"))
+    levels.append(("consensus_market", f"{cs}__{market}", f"{cs} / {market}"))
+    levels.append(("consensus_overall", cs, cs))
+
+    # Try preferred windows in order for each level
+    preferred_windows = ["14", "30", "7"]
+
+    for level_name, lookup_key, label in levels:
+        for w in preferred_windows:
+            window_tables = recent_lookup.get(w, {})
+            table = window_tables.get(level_name, {})
+            entry = table.get(lookup_key)
+            if entry and (entry.get("wins", 0) + entry.get("losses", 0)) >= min_n:
+                return {
+                    "wins": entry["wins"],
+                    "losses": entry["losses"],
+                    "n": entry["n"],
+                    "win_pct": entry["win_pct"],
+                    "window": int(w),
+                    "source": level_name,
+                    "label": label,
+                }
+
+    return None
+
+
 def build_signal_summary(signal: Dict[str, Any]) -> Dict[str, Any]:
     """Extract key fields from a signal for output."""
     return {
@@ -477,6 +1785,8 @@ def build_signal_summary(signal: Dict[str, Any]) -> Dict[str, Any]:
         "home_team": signal.get("home_team"),
         "event_key": signal.get("event_key"),
         "day_key": signal.get("day_key"),
+        "line_min": signal.get("line_min"),
+        "line_max": signal.get("line_max"),
     }
 
 
@@ -486,26 +1796,166 @@ def build_output(
     day_of_week: str,
     total_signals: int,
     scorable_count: int,
+    excluded_count: int = 0,
+    tables: Optional[Dict[str, Any]] = None,
+    market_lines: Optional[Dict[str, Any]] = None,
+    recent_tables: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Build the final output JSON structure."""
-    # Sort by composite score descending
-    scored.sort(key=lambda x: x[1]["composite_score"], reverse=True)
+    """Build the final output JSON with Wilson-based quality gate filtering."""
+    mkt_lines = market_lines or {}
 
-    tier_counts: Dict[str, int] = {"A": 0, "B": 0, "C": 0, "D": 0}
+    passed_raw = []
+    filtered = []
+
+    for signal, score_data in scored:
+        primary = score_data["primary_record"]
+
+        # Quality gate
+        gate_pass, gate_reason = passes_quality_gate(signal, score_data)
+
+        # Assign tier
+        tier = assign_tier(
+            score_data["wilson_score"],
+            primary["n"],
+            primary["lookup_level"],
+            a_tier_eligible=score_data.get("a_tier_eligible", False),
+        )
+
+        if not gate_pass:
+            tier = max(tier, "C", key=lambda t: {"A": 0, "B": 1, "C": 2, "D": 3}.get(t, 9))
+
+        if tier in ("A", "B"):
+            passed_raw.append((signal, score_data, tier))
+        else:
+            reason = gate_reason if not gate_pass else f"below_tier_b:wilson={score_data['wilson_score']:.3f}"
+            filtered.append({
+                "signal": build_signal_summary(signal),
+                "wilson_score": score_data["wilson_score"],
+                "composite_score": score_data["wilson_score"],
+                "tier": tier,
+                "gate_reason": reason,
+                "summary": score_data["summary"],
+            })
+
+    # Deduplicate picks with identical normalized selection + event + market
+    # (e.g. same team spread from two signals with different event_key directions)
+    seen_picks: Dict[str, int] = {}
+    deduped_passed: List[Tuple[Dict[str, Any], Dict[str, Any], str]] = []
+    for signal, score_data, tier in passed_raw:
+        norm_sel, norm_ek, norm_mkt = _normalize_dedup_key(signal)
+        dedup_key = f"{norm_sel}|{norm_ek}|{norm_mkt}"
+        if dedup_key in seen_picks:
+            # Keep the one with more sources or better score
+            existing_idx = seen_picks[dedup_key]
+            existing_sig = deduped_passed[existing_idx][0]
+            existing_sc = len(existing_sig.get("sources_present") or existing_sig.get("sources") or [])
+            new_sc = len(signal.get("sources_present") or signal.get("sources") or [])
+            if new_sc > existing_sc or (new_sc == existing_sc and score_data["wilson_score"] > deduped_passed[existing_idx][1]["wilson_score"]):
+                deduped_passed[existing_idx] = (signal, score_data, tier)
+            continue
+        seen_picks[dedup_key] = len(deduped_passed)
+        deduped_passed.append((signal, score_data, tier))
+    if len(deduped_passed) < len(passed_raw):
+        print(f"  Deduped {len(passed_raw) - len(deduped_passed)} duplicate picks")
+    passed_raw = deduped_passed
+
+    # Minimum floor: relax gate if too few pass
+    if len(passed_raw) < MIN_DAILY_PICKS and scored:
+        all_by_wilson = sorted(scored, key=lambda x: -x[1]["wilson_score"])
+        for signal, score_data in all_by_wilson:
+            if len(passed_raw) >= MIN_DAILY_PICKS:
+                break
+            sig_id = signal.get("signal_id")
+            already = any(s.get("signal_id") == sig_id for s, _, _ in passed_raw)
+            if already:
+                continue
+            # Also skip if same normalized pick already in passed picks
+            norm_sel, norm_ek, norm_mkt = _normalize_dedup_key(signal)
+            dedup_key = f"{norm_sel}|{norm_ek}|{norm_mkt}"
+            if dedup_key in seen_picks:
+                continue
+            # Relax to C-tier threshold
+            if score_data["wilson_score"] >= WILSON_TIER_C:
+                seen_picks[dedup_key] = len(passed_raw)
+                passed_raw.append((signal, score_data, "B"))
+                filtered = [f for f in filtered
+                            if f["signal"].get("signal_id") != sig_id]
+
+    # Sort by tier then wilson_score descending
+    tier_order = {"A": 0, "B": 1}
+    passed_raw.sort(key=lambda x: (tier_order.get(x[2], 9), -x[1]["wilson_score"]))
+
+    tier_counts: Dict[str, int] = {"A": 0, "B": 0, "C": len(filtered), "D": 0}
+    for f in filtered:
+        if f.get("tier") == "D":
+            tier_counts["D"] += 1
+            tier_counts["C"] -= 1
+
     plays = []
-    for rank, (signal, score_data) in enumerate(scored, 1):
-        tier = score_data["tier"]
+    for rank, (signal, score_data, tier) in enumerate(passed_raw, 1):
         tier_counts[tier] = tier_counts.get(tier, 0) + 1
-        plays.append({
+        primary = score_data["primary_record"]
+
+        # Build historical_record for backward compat (same data as primary_record)
+        hist = {
+            "wins": primary["wins"],
+            "losses": primary["losses"],
+            "n": primary["n"],
+            "win_pct": primary["win_pct"],
+            "source": primary["lookup_level"],
+            "label": primary["label"],
+        }
+
+        play: Dict[str, Any] = {
             "rank": rank,
             "tier": tier,
-            "composite_score": score_data["composite_score"],
+            "wilson_score": score_data["wilson_score"],
+            "composite_score": score_data["wilson_score"],  # backward compat
+            "confidence": score_data["confidence"],
+            "a_tier_eligible": score_data.get("a_tier_eligible", False),
             "positive_dimensions": score_data["positive_dimensions"],
             "negative_dimensions": score_data["negative_dimensions"],
+            "total_dimensions": score_data["total_dimensions"],
             "signal": build_signal_summary(signal),
+            "primary_record": primary,
+            "historical_record": hist,
             "factors": score_data["factors"],
+            "supporting_factors": score_data["supporting_factors"],
             "summary": score_data["summary"],
-        })
+            "small_sample": primary["n"] < 30,
+            "recency_adjustment": score_data["recency_adjustment"],
+            "expert_adjustment": score_data.get("expert_adjustment", 0),
+            "stat_adjustment": score_data.get("stat_adjustment", 0),
+            "day_adjustment": score_data.get("day_adjustment", 0),
+            "line_bucket_adjustment": score_data.get("line_bucket_adjustment", 0),
+            "total_adjustment": score_data.get("total_adjustment", 0),
+        }
+        if score_data.get("expert_detail"):
+            play["expert_detail"] = score_data["expert_detail"]
+
+        # Attach matched pattern info for A-tier picks
+        if score_data.get("matched_pattern"):
+            pat = score_data["matched_pattern"]
+            play["matched_pattern"] = {
+                "id": pat["id"],
+                "label": pat["label"],
+                "tier_eligible": pat.get("tier_eligible"),
+                "hist": pat.get("hist"),
+            }
+
+        # Attach current market line if available
+        mkt_line = lookup_market_line(signal, mkt_lines)
+        if mkt_line is not None:
+            play["signal"]["market_line"] = mkt_line
+            pick_line = signal.get("line")
+            if pick_line is not None:
+                play["signal"]["line_diff"] = round(pick_line - mkt_line, 1)
+
+        # Attach recent trend
+        if score_data.get("recent_trend"):
+            play["recent_trend"] = score_data["recent_trend"]
+
+        plays.append(play)
 
     return {
         "meta": {
@@ -514,50 +1964,118 @@ def build_output(
             "day_of_week": day_of_week,
             "total_signals": total_signals,
             "scorable_signals": scorable_count,
+            "excluded_count": excluded_count,
+            "filtered_count": len(filtered),
+            "exported_count": len(plays),
             "tier_counts": tier_counts,
         },
         "plays": plays,
+        "filtered": filtered,
     }
 
 
+def _format_record_str(primary: Optional[Dict[str, Any]]) -> str:
+    """Format primary record as 'W-L (pct%)' with confidence tag."""
+    if not primary or primary.get("n", 0) == 0 or primary.get("lookup_level") == "none":
+        return "no history"
+    w = primary.get("wins", 0)
+    l = primary.get("losses", 0)
+    wp = primary.get("win_pct", 0)
+    wl = primary.get("wilson_lower", 0)
+    return f"{w}-{l} ({wp*100:.1f}%) W={wl*100:.1f}%"
+
+
 def print_summary(output: Dict[str, Any], verbose: bool = False) -> None:
-    """Print a concise console summary."""
+    """Print a concise console summary with Wilson-based rankings."""
     meta = output["meta"]
     plays = output["plays"]
-    tc = meta["tier_counts"]
+    filtered = output.get("filtered", [])
+
+    excluded = meta.get("excluded_count", 0)
+    filtered_count = meta.get("filtered_count", 0)
+    exported = meta.get("exported_count", len(plays))
 
     print()
     print(f"  PLAYS OF THE DAY -- {meta['date']} ({meta['day_of_week']})")
-    print(f"  Signals: {meta['total_signals']} loaded, {meta['scorable_signals']} scored")
+    print(f"  Pipeline: {meta['total_signals']} signals → "
+          f"{meta['scorable_signals']} scorable → "
+          f"{meta['scorable_signals'] - excluded} after exclusions → "
+          f"{exported} exported ({filtered_count} gated out)")
     print()
 
-    for tier, label in [("A", "Strong Edge (56.8% hist.)"), ("B", "Positive (51.9% hist.)"), ("C", "Neutral (50.9% hist.)"), ("D", "Avoid (46.8% hist.)")]:
+    for tier, label in [("A", "STRONG EDGE"), ("B", "POSITIVE EDGE")]:
         tier_plays = [p for p in plays if p["tier"] == tier]
         if not tier_plays:
             continue
-        if tier in ("C", "D") and not verbose:
-            print(f"  TIER {tier} -- {label} ({tc.get(tier, 0)} picks) [use --verbose to show]")
-            continue
 
-        print(f"  TIER {tier} -- {label} ({tc.get(tier, 0)} picks)")
+        print(f"  TIER {tier} -- {label} ({len(tier_plays)} picks)")
         for p in tier_plays:
             sig = p["signal"]
             sel_str = format_selection(sig)
+            primary = p.get("primary_record", {})
             combo = sig.get("sources_combo", "?")
-            comp = p["composite_score"]
-            sign = "+" if comp >= 0 else ""
-            print(f"    {p['rank']:3d}. {sel_str:35s} [{combo}]  {sign}{comp*100:.1f}%  ({p['summary']})")
+            wilson = p.get("wilson_score", 0)
+            record_str = _format_record_str(primary)
+            conf = p.get("confidence", "?")
+            level = primary.get("lookup_level", "?")
+            recent_str = ""
+            rt = p.get("recent_trend")
+            if rt:
+                recent_str = f" | {rt['window']}d: {rt['wins']}-{rt['losses']} ({rt['win_pct']*100:.0f}%)"
+            total_adj = p.get("total_adjustment", 0)
+            adj_parts = []
+            if p.get("recency_adjustment", 0) != 0:
+                adj_parts.append(f"trend={p['recency_adjustment']*100:+.0f}")
+            if p.get("expert_adjustment", 0) != 0:
+                adj_parts.append(f"analyst={p['expert_adjustment']*100:+.1f}")
+            if p.get("stat_adjustment", 0) != 0:
+                adj_parts.append(f"stat={p['stat_adjustment']*100:+.1f}")
+            if p.get("day_adjustment", 0) != 0:
+                adj_parts.append(f"day={p['day_adjustment']*100:+.1f}")
+            if p.get("line_bucket_adjustment", 0) != 0:
+                adj_parts.append(f"line={p['line_bucket_adjustment']*100:+.1f}")
+            adj_str = f" [{', '.join(adj_parts)}]" if adj_parts else ""
+            pat_str = ""
+            mp = p.get("matched_pattern")
+            if mp:
+                pat_str = f" ★ {mp['label']}"
+                if mp.get("hist"):
+                    pat_str += f" ({mp['hist']['record']})"
+            print(f"    {p['rank']:3d}. {sel_str:30s} {combo:30s} {record_str:22s}{recent_str}  Wilson={wilson*100:.1f}%{adj_str} [{conf}/{level}]{pat_str}")
         print()
+
+    # Filter summary
+    if filtered:
+        if verbose:
+            print(f"  FILTERED ({len(filtered)} picks removed):")
+            from collections import Counter
+            reasons = Counter(f.get("gate_reason", "unknown").split(":")[0]
+                              for f in filtered)
+            for reason, count in reasons.most_common():
+                print(f"    {reason}: {count}")
+            print()
+            for f in filtered:
+                sig = f["signal"]
+                sel_str = format_selection(sig)
+                wilson = f.get("wilson_score", 0)
+                print(f"    ✗ {sel_str:30s} Wilson={wilson*100:.1f}%  ({f.get('gate_reason', '?')})")
+            print()
+        else:
+            print(f"  [{len(filtered)} picks filtered out — use --verbose to see reasons]")
+            print()
 
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Score signals and produce tiered plays of the day.")
+    parser = argparse.ArgumentParser(description="Score signals using Wilson-based combo×market ranking.")
     parser.add_argument("--date", type=str, default=None, help="Date to score (YYYY-MM-DD). Default: today")
-    parser.add_argument("--min-n", type=int, default=MIN_SAMPLE_DEFAULT, help=f"Min sample size to trust a dimension (default: {MIN_SAMPLE_DEFAULT})")
     parser.add_argument("--verbose", action="store_true", help="Show all tiers and full factor details")
+    parser.add_argument("--sport", choices=["NBA", "NCAAB"], default="NBA", help="Sport to score (default: NBA)")
     args = parser.parse_args()
+
+    sport = args.sport
+    reports_dir, signals_path, plays_dir = get_sport_paths(sport)
 
     date_str = args.date or date.today().strftime("%Y-%m-%d")
     try:
@@ -568,33 +2086,77 @@ def main() -> None:
     day_of_week = target_date.strftime("%A")
 
     # Load lookup tables
-    tables = load_lookup_tables()
+    tables = load_lookup_tables(reports_dir=reports_dir)
     loaded = tables.pop("_loaded", 0)
-    table_sizes = {k: len(v) for k, v in tables.items()}
+
+    # Load recent trends lookup
+    recent_tables = load_recent_trends_lookup(reports_dir=reports_dir)
+    if recent_tables:
+        print(f"  Loaded recent trends ({len(recent_tables)} windows)")
 
     # Load and filter signals
-    signals = load_signals(date_str)
+    signals = load_signals(date_str, sport=sport, signals_path=signals_path)
     total_signals = len(signals)
     scorable = filter_scorable(signals)
+
+    # Filter out signals whose matchup didn't actually happen on this date
+    scorable, wrong_date_count = filter_wrong_date(scorable, date_str)
+    if wrong_date_count:
+        print(f"  Dropped {wrong_date_count} signals with wrong game date")
     scorable_count = len(scorable)
 
     if not scorable:
-        print(f"  No scorable signals found for {date_str}.")
-        print(f"  (Total signals for date: {total_signals})")
+        print(f"  No scorable {sport} signals found for {date_str}.")
+        print(f"  (Total {sport} signals for date: {total_signals})")
+        # Write empty plays file so stale data doesn't persist
+        plays_dir.mkdir(parents=True, exist_ok=True)
+        out_path = plays_dir / f"plays_{date_str}.json"
+        empty_output = {
+            "meta": {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "date": date_str,
+                "day_of_week": day_of_week,
+                "total_signals": total_signals,
+                "scorable_signals": 0,
+                "excluded_count": 0,
+                "filtered_count": 0,
+                "exported_count": 0,
+                "tier_counts": {},
+            },
+            "plays": [],
+            "filtered": [],
+        }
+        out_path.write_text(json.dumps(empty_output, indent=2, ensure_ascii=False))
+        print(f"  Output: {out_path} (empty)")
         return
+
+    # Apply exclusion filters (stat blacklist, high prop lines, losing combos)
+    after_exclusions, excluded = apply_exclusion_filters(scorable, tables=tables)
+    if excluded:
+        print(f"  Excluded {len(excluded)} signals (stat blacklist / high lines / losing combos)")
 
     # Score each signal
     scored: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
-    for signal in scorable:
-        score_data = score_signal(signal, tables, args.min_n, day_of_week)
+    for signal in after_exclusions:
+        score_data = score_signal(signal, tables, recent_tables=recent_tables,
+                                  day_of_week=day_of_week)
         scored.append((signal, score_data))
 
-    # Build output
-    output = build_output(scored, date_str, day_of_week, total_signals, scorable_count)
+    # Load current market lines (if available)
+    market_lines = load_current_lines()
+    if market_lines:
+        print(f"  Loaded current market lines for {len(market_lines)} games")
+
+    # Build output with quality gate
+    output = build_output(
+        scored, date_str, day_of_week, total_signals, scorable_count,
+        excluded_count=len(excluded),
+        tables=tables, market_lines=market_lines, recent_tables=recent_tables,
+    )
 
     # Write JSON
-    PLAYS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = PLAYS_DIR / f"plays_{date_str}.json"
+    plays_dir.mkdir(parents=True, exist_ok=True)
+    out_path = plays_dir / f"plays_{date_str}.json"
     out_path.write_text(json.dumps(output, indent=2, ensure_ascii=False))
 
     # Print summary

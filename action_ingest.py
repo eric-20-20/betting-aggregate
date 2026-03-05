@@ -934,7 +934,6 @@ def dedupe_normalized_bets(bets: List[dict]) -> List[dict]:
             market.get("market_type"),
             market.get("selection"),
             market.get("line"),
-            market.get("odds"),
             prov.get("source_id"),
             prov.get("source_surface"),
         )

@@ -33,24 +33,17 @@ except ImportError:
     sync_playwright = None
     PlaywrightTimeoutError = Exception
 
-from store import data_store, write_json
+from store import data_store, get_data_store, write_json
 from utils import normalize_text
 
 OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
 DEFAULT_STORAGE_STATE = "data/sportsline_storage_state.json"
 
 PICKS_URLS = {
-    "NBA": "https://www.sportsline.com/nba/picks/",
-    "NCAAB": "https://www.sportsline.com/college-basketball/picks/",
+    "NBA": "https://www.sportsline.com/nba/picks/experts/?sc=p",
+    "NCAAB": "https://www.sportsline.com/college-basketball/picks/experts/?sc=p",
 }
 PICKS_URL = PICKS_URLS["NBA"]  # backward compatibility
-
-# Market type tab identifiers
-MARKET_TABS = {
-    "spread": "Against the Spread",
-    "moneyline": "Money Line",
-    "total": "Over / Under",
-}
 
 
 @dataclass
@@ -75,8 +68,12 @@ class RawPickRecord:
     expert_slug: Optional[str] = None
     market_type: Optional[str] = None
     selection: Optional[str] = None
+    side: Optional[str] = None
     line: Optional[float] = None
     odds: Optional[int] = None
+    player_name: Optional[str] = None
+    stat_key: Optional[str] = None
+    unit_size: Optional[float] = None
 
 
 def sha256_digest(text: str) -> str:
@@ -101,15 +98,35 @@ def write_records(path: str, records: List[Any]) -> None:
         json.dump(prepared, f, ensure_ascii=False, indent=2, default=json_default)
 
 
-def _map_team(alias: Optional[str]) -> Optional[str]:
-    """Map team name or abbreviation to standard team code."""
+def _map_team(alias: Optional[str], store=None, sport: str = "NBA") -> Optional[str]:
+    """Map team name or abbreviation to standard team code.
+
+    Uses the sport-specific data store for lookups, with NBA-specific
+    city fallbacks as a last resort (only for NBA sport).
+    """
     if not alias:
         return None
-    codes = data_store.lookup_team_code(alias)
+    store = store or data_store
+    norm = normalize_text(alias)
+    # Try the sport-specific data store first
+    codes = store.lookup_team_code(norm)
     if len(codes) == 1:
         return next(iter(codes))
-    # Common team name fallbacks
-    fallback = {
+    # Also try the raw alias (handles abbreviations the store might know)
+    if norm != alias:
+        codes = store.lookup_team_code(alias)
+        if len(codes) == 1:
+            return next(iter(codes))
+    # NBA-specific city/nickname fallbacks — only for NBA sport
+    if sport != "NBA":
+        # For non-NBA, only try short codes against the store
+        if len(alias) <= 4:
+            upper = alias.upper()
+            if upper in store.teams:
+                return upper
+        return None
+    nba_fallback = {
+        # Team nicknames
         "bucks": "MIL",
         "76ers": "PHI",
         "sixers": "PHI",
@@ -145,13 +162,51 @@ def _map_team(alias: Optional[str]) -> Optional[str]:
         "nuggets": "DEN",
         "pacers": "IND",
         "wizards": "WAS",
+        # City/market names (SportsLine uses these)
+        "milwaukee": "MIL",
+        "philadelphia": "PHI",
+        "new york": "NYK",
+        "brooklyn": "BKN",
+        "portland": "POR",
+        "phoenix": "PHX",
+        "san antonio": "SAS",
+        "golden state": "GSW",
+        "golden st.": "GSW",
+        "golden st": "GSW",
+        "new orleans": "NOP",
+        "l.a. lakers": "LAL",
+        "l a lakers": "LAL",
+        "los angeles lakers": "LAL",
+        "l.a. clippers": "LAC",
+        "l a clippers": "LAC",
+        "los angeles clippers": "LAC",
+        "boston": "BOS",
+        "miami": "MIA",
+        "chicago": "CHI",
+        "cleveland": "CLE",
+        "detroit": "DET",
+        "toronto": "TOR",
+        "dallas": "DAL",
+        "minnesota": "MIN",
+        "oklahoma city": "OKC",
+        "orlando": "ORL",
+        "houston": "HOU",
+        "utah": "UTA",
+        "sacramento": "SAC",
+        "atlanta": "ATL",
+        "charlotte": "CHA",
+        "memphis": "MEM",
+        "denver": "DEN",
+        "indiana": "IND",
+        "washington": "WAS",
     }
-    norm = normalize_text(alias)
-    if norm in fallback:
-        return fallback[norm]
-    # Try 3-letter abbreviations
-    if len(alias) <= 3:
-        return alias.upper()
+    if norm in nba_fallback:
+        return nba_fallback[norm]
+    # Try short codes (3-4 letter abbreviations) if they exist in the store
+    if len(alias) <= 4:
+        upper = alias.upper()
+        if upper in store.teams:
+            return upper
     return None
 
 
@@ -284,103 +339,461 @@ def fetch_picks_page(
         page.close()
 
 
-def extract_picks_from_page(
+# JS to extract pick cards from the SportsLine expert picks page.
+# SportsLine uses styled-components with hashed class names that change on redeploy.
+# Strategy: find containers with 5 child divs where text matches known patterns.
+EXTRACT_EXPERT_PICKS_JS = """() => {
+    const cards = [];
+    // Walk all divs looking for pick card pattern:
+    // - Has 4-6 direct child divs
+    // - One child contains "Pick Made:" (timestamp)
+    // - One child matches date pattern "Feb|Mar|Apr|... \\d+ \\d{4}"
+    const allDivs = document.querySelectorAll('div');
+
+    for (const div of allDivs) {
+        const children = Array.from(div.children).filter(c => c.tagName === 'DIV');
+        if (children.length < 4 || children.length > 7) continue;
+
+        const childTexts = children.map(c => c.innerText.trim());
+        const fullText = childTexts.join('|');
+
+        // Must have "Pick Made:" in one child
+        const hasPickMade = childTexts.some(t => t.includes('Pick Made:'));
+        if (!hasPickMade) continue;
+
+        // Must have a date pattern in first child
+        const hasDate = /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d+\\s+\\d{4}/.test(childTexts[0]);
+        if (!hasDate) continue;
+
+        // Must have a market keyword in second child
+        const pickText = childTexts[1] || '';
+        const hasMarket = /^(Spread|Over\\/Under|Money Line|1st Half|Home Team Total|Away Team Total|Points|Rebounds|Assists|Steals|Blocks|Threes|PTS|REB|AST|STL|BLK)/i.test(pickText);
+        if (!hasMarket) continue;
+
+        cards.push({
+            matchupText: childTexts[0] || '',
+            pickText: childTexts[1] || '',
+            expertText: childTexts[2] || '',
+            analysisText: childTexts[3] || '',
+            timestampText: childTexts[4] || '',
+            fullText: fullText.substring(0, 1000),
+        });
+    }
+    return cards;
+}""".strip()
+
+# Stat type label → canonical stat_key
+STAT_TYPE_MAP = {
+    "points": "points",
+    "rebounds": "rebounds",
+    "assists": "assists",
+    "steals": "steals",
+    "blocks": "blocks",
+    "threes": "threes",
+    "three-pointers": "threes",
+    "3-pointers": "threes",
+    "pts + ast": "pts_ast",
+    "pts + reb": "pts_reb",
+    "reb + ast": "reb_ast",
+    "pts + reb + ast": "pts_reb_ast",
+}
+
+# Regex for date/time line: "Feb 20 2026, 4:00 pm PST"
+DATE_TIME_RE = re.compile(
+    r"(\w+ \d+ \d{4}),?\s+(\d+:\d+)\s*(am|pm)\s*(PST|EST|CST|MST|PT|ET|CT|MT)",
+    re.IGNORECASE,
+)
+
+# Regex for spread: "Spread TeamName +/-line odds"
+SPREAD_PICK_RE = re.compile(
+    r"Spread\s+(.+?)\s+([+-]?\d+(?:\.\d+)?)\s+([+-]\d+)",
+    re.IGNORECASE,
+)
+
+# Regex for 1st half spread: "1st Half Spread 1st Half TeamName line odds"
+HALF_SPREAD_PICK_RE = re.compile(
+    r"1st Half Spread\s+1st Half\s+(.+?)\s+([+-]?\d+(?:\.\d+)?)\s+([+-]\d+)",
+    re.IGNORECASE,
+)
+
+# Regex for total: "Over/Under Over|Under line odds"
+TOTAL_PICK_RE = re.compile(
+    r"Over/Under\s+(Over|Under)\s+(\d+(?:\.\d+)?)\s+([+-]\d+)",
+    re.IGNORECASE,
+)
+
+# Regex for team total: "Home|Away Team Total TeamName Over|Under line Total Pts odds"
+TEAM_TOTAL_PICK_RE = re.compile(
+    r"(?:Home|Away) Team Total\s+(.+?)\s+(Over|Under)\s+(\d+(?:\.\d+)?)\s+Total\s+Pts\s+([+-]\d+)",
+    re.IGNORECASE,
+)
+
+# Regex for moneyline: "Money Line TeamName odds"
+ML_PICK_RE = re.compile(
+    r"Money Line\s+(.+?)\s+([+-]\d+)",
+    re.IGNORECASE,
+)
+
+# Regex for player prop: "StatLabel PlayerName Over|Under line Total StatName odds"
+PROP_PICK_RE = re.compile(
+    r"(?:Points|Rebounds|Assists|Steals|Blocks|Threes|PTS \+ (?:AST|REB)|REB \+ AST|PTS \+ REB \+ AST)\s+"
+    r"(.+?)\s+(Over|Under)\s+(\d+(?:\.\d+)?)\s+Total\s+(.+?)\s+([+-]\d+)",
+    re.IGNORECASE,
+)
+
+
+def _parse_matchup_text(text: str) -> Dict[str, Any]:
+    """Parse SportsLine matchup header text.
+
+    The DOM innerText has newlines between elements:
+        "Feb 20 2026, 4:00 pm PST\\nUtah\\n@ Memphis"
+        "Feb 19 2026, 7:00 pm PST\\nBoston\\n121\\n@ Golden St.\\n110"
+    """
+    result: Dict[str, Any] = {}
+
+    # Parse date/time from first line
+    m = DATE_TIME_RE.search(text)
+    if m:
+        date_str = m.group(1)  # "Feb 20 2026"
+        time_str = m.group(2)  # "4:00"
+        ampm = m.group(3)      # "pm"
+        tz_str = m.group(4)    # "PST"
+
+        try:
+            hour, minute = map(int, time_str.split(":"))
+            if ampm.lower() == "pm" and hour != 12:
+                hour += 12
+            elif ampm.lower() == "am" and hour == 12:
+                hour = 0
+
+            tz_map = {
+                "pst": "America/Los_Angeles", "pt": "America/Los_Angeles",
+                "est": "America/New_York", "et": "America/New_York",
+                "cst": "America/Chicago", "ct": "America/Chicago",
+                "mst": "America/Denver", "mt": "America/Denver",
+            }
+            tz_name = tz_map.get(tz_str.lower(), "America/Los_Angeles")
+
+            from dateutil.parser import parse as dateparse
+            dt_local = dateparse(f"{date_str} {hour}:{minute:02d}")
+            tz = ZoneInfo(tz_name)
+            dt_local = dt_local.replace(tzinfo=tz)
+            dt_utc = dt_local.astimezone(timezone.utc)
+            result["event_time_utc"] = dt_utc.isoformat()
+
+            # Day key uses Eastern time
+            dt_eastern = dt_local.astimezone(ZoneInfo("America/New_York"))
+            result["day_date"] = f"{dt_eastern.year:04d}:{dt_eastern.month:02d}:{dt_eastern.day:02d}"
+        except (ValueError, ImportError):
+            pass
+
+    # Parse teams from "Away\n@ Home" or "Away\nscore\n@ Home\nscore"
+    # Find the line with "@" and work from there
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    at_idx = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("@") or ln.startswith("@ "):
+            at_idx = i
+            break
+
+    if at_idx is not None:
+        # Home team is on the @ line (after "@")
+        home_raw = lines[at_idx].lstrip("@").strip()
+        # Check if next line is a score
+        if at_idx + 1 < len(lines) and lines[at_idx + 1].isdigit():
+            result["home_score"] = int(lines[at_idx + 1])
+
+        # Away team is above the @ line — scan backwards for team name
+        # Skip score lines (pure digits)
+        for j in range(at_idx - 1, -1, -1):
+            if lines[j].isdigit():
+                result["away_score"] = int(lines[j])
+                continue
+            # Skip date/time lines
+            if DATE_TIME_RE.search(lines[j]):
+                continue
+            result["away_raw"] = lines[j]
+            break
+
+        if home_raw:
+            result["home_raw"] = home_raw
+    else:
+        # Fallback: find "Away @ Home" on a single line
+        m2 = re.search(r"([A-Za-z.\s]+?)\s*(?:\d+)?\s*@\s*([A-Za-z.\s]+?)(?:\s*\d+)?\s*$", text)
+        if m2:
+            result["away_raw"] = m2.group(1).strip()
+            result["home_raw"] = m2.group(2).strip()
+
+    return result
+
+
+def _parse_pick_text(text: str) -> Dict[str, Any]:
+    """Parse the pick detail text from a SportsLine expert pick card.
+
+    DOM innerText has newlines between elements:
+        "Spread\\nNew Orleans -4 -110\\nUnit\\n1.0"
+        "Over/Under\\nOver 239.5 -110\\nUnit\\n1.0"
+        "Money Line\\nNew York -165\\nLOSS\\nUnit\\n1.0"
+        "Points\\nSaddiq Bey Over 19.5 Total Points +100\\nUnit\\n1.0"
+        "PTS + AST\\nMarcus Smart Over 14.5 Total Points + Assists -108\\nWIN\\nUnit\\n1.0"
+    """
+    result: Dict[str, Any] = {}
+
+    # Check for WIN/LOSS/PUSH result (past picks)
+    if re.search(r"\bWIN\b", text):
+        result["result"] = "WIN"
+    elif re.search(r"\bLOSS\b", text):
+        result["result"] = "LOSS"
+    elif re.search(r"\bPUSH\b", text):
+        result["result"] = "PUSH"
+
+    # Collapse newlines to spaces for regex matching, strip Unit suffix and result tags
+    clean = re.sub(r"\n+", " ", text)
+    clean = re.sub(r"\b(?:WIN|LOSS|PUSH)\b", "", clean)
+    # Extract unit size before stripping (e.g., "Unit 1.0" → 1.0)
+    unit_match = re.search(r"Unit\s*(\d+\.?\d*)", clean)
+    if unit_match:
+        result["unit_size"] = float(unit_match.group(1))
+    clean = re.sub(r"Unit\s*\d+\.?\d*", "", clean).strip()
+
+    # Try 1st half spread (must be before regular spread to avoid false match)
+    m = HALF_SPREAD_PICK_RE.search(clean)
+    if m:
+        result["market_type"] = "1st_half_spread"
+        result["team_raw"] = m.group(1).strip()
+        result["line"] = float(m.group(2))
+        result["odds"] = int(m.group(3))
+        return result
+
+    # Try spread
+    m = SPREAD_PICK_RE.search(clean)
+    if m:
+        result["market_type"] = "spread"
+        result["team_raw"] = m.group(1).strip()
+        result["line"] = float(m.group(2))
+        result["odds"] = int(m.group(3))
+        return result
+
+    # Try team total (must be before regular total to avoid false match)
+    m = TEAM_TOTAL_PICK_RE.search(clean)
+    if m:
+        result["market_type"] = "team_total"
+        result["team_raw"] = m.group(1).strip()
+        result["side"] = m.group(2).upper()
+        result["line"] = float(m.group(3))
+        result["odds"] = int(m.group(4))
+        return result
+
+    # Try total
+    m = TOTAL_PICK_RE.search(clean)
+    if m:
+        result["market_type"] = "total"
+        result["side"] = m.group(1).upper()
+        result["line"] = float(m.group(2))
+        result["odds"] = int(m.group(3))
+        return result
+
+    # Try moneyline
+    m = ML_PICK_RE.search(clean)
+    if m:
+        result["market_type"] = "moneyline"
+        result["team_raw"] = m.group(1).strip()
+        result["odds"] = int(m.group(2))
+        return result
+
+    # Try player prop
+    m = PROP_PICK_RE.search(clean)
+    if m:
+        result["market_type"] = "player_prop"
+        result["player_name"] = m.group(1).strip()
+        result["side"] = m.group(2).upper()
+        result["line"] = float(m.group(3))
+        stat_raw = m.group(4).strip().lower()
+        result["odds"] = int(m.group(5))
+        result["stat_key"] = STAT_TYPE_MAP.get(stat_raw)
+        return result
+
+    return result
+
+
+def _parse_expert_text(text: str) -> Dict[str, Any]:
+    """Parse expert info text.
+
+    DOM innerText has newlines:
+        "Zack Cimini\\nContrarian with Chutzpah\\nProfile →\\n+90\\n4-1 in Last 5 NBA Picks"
+        "Prop Bet Guy\\nDoug\\nProfile →\\n+1496\\n94-68 in Last 162 NBA Player Props Picks"
+        "Micah Roberts\\nFormer Vegas Bookmaker\\nProfile →"
+    """
+    result: Dict[str, Any] = {}
+
+    # The expert name is the first line
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    if not lines:
+        return result
+
+    name = lines[0]
+
+    # Handle "Prop Bet Guy" specifically
+    if name.startswith("Prop Bet Guy"):
+        result["expert_name"] = "Prop Bet Guy"
+    else:
+        result["expert_name"] = name
+
+    if result.get("expert_name"):
+        result["expert_slug"] = re.sub(r"[^a-z0-9]+", "-", result["expert_name"].lower()).strip("-")
+
+    return result
+
+
+def extract_expert_picks(
     page: Page,
     observed_at: datetime,
     canonical_url: str,
-    market_type: str,
-    debug: bool = False
+    sport: str = "NBA",
+    debug: bool = False,
 ) -> List[RawPickRecord]:
-    """
-    Extract picks from a SportsLine picks page.
-
-    This is a placeholder implementation that needs to be updated
-    once we can observe the actual page structure with games.
-    """
+    """Extract expert picks from SportsLine expert picks page using JS extraction."""
+    store = get_data_store(sport)
     records: List[RawPickRecord] = []
 
-    # SportsLine uses React with styled-components
-    # The exact selectors need to be determined from actual page inspection
-    # Common patterns to look for:
-    # - Game cards with team names, odds, and expert picks
-    # - Expert avatars and names with their picks
-    # - Tab content for different market types
+    # Scroll to load all content
+    for _ in range(5):
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(800)
 
-    # Placeholder: try to extract any visible pick information
-    # This will be refined when actual game pages are available
-
-    try:
-        # Look for game containers
-        game_containers = page.locator("[class*='game'], [class*='matchup'], [class*='pick']")
-        count = game_containers.count()
-
-        if debug:
-            print(f"[DEBUG] Found {count} potential game containers")
-
-        for i in range(min(count, 50)):  # Limit to prevent infinite loops
-            try:
-                container = game_containers.nth(i)
-                container_text = container.text_content(timeout=1000) or ""
-
-                if len(container_text) < 10:
-                    continue
-
-                # Try to parse matchup
-                away_team, home_team = _parse_matchup(container_text)
-
-                # Try to parse pick based on market type
-                selection = None
-                line = None
-                odds = None
-
-                if market_type == "spread":
-                    selection, line, odds = _parse_spread(container_text)
-                elif market_type == "total":
-                    selection, line, odds = _parse_total(container_text)
-                elif market_type == "moneyline":
-                    selection, odds = _parse_moneyline(container_text)
-
-                if not selection and not (away_team and home_team):
-                    continue
-
-                # Create raw pick text
-                raw_pick_text = f"{selection or ''} {line or ''} {odds or ''}".strip()
-                if not raw_pick_text:
-                    raw_pick_text = container_text[:100]
-
-                fingerprint_source = f"sportsline|nba_picks|{canonical_url}|{raw_pick_text}|{i}"
-
-                record = RawPickRecord(
-                    source_id="sportsline",
-                    source_surface=f"sportsline_nba_{market_type}",
-                    sport="NBA",
-                    market_family="standard",
-                    observed_at_utc=observed_at.isoformat(),
-                    canonical_url=canonical_url,
-                    raw_pick_text=raw_pick_text,
-                    raw_block=container_text[:500],
-                    raw_fingerprint=sha256_digest(fingerprint_source),
-                    matchup_hint=f"{away_team}@{home_team}" if away_team and home_team else None,
-                    away_team=away_team,
-                    home_team=home_team,
-                    market_type=market_type,
-                    selection=selection,
-                    line=line,
-                    odds=odds,
-                )
-                records.append(record)
-
-                if debug and len(records) <= 3:
-                    print(f"[DEBUG] Pick {i}: {raw_pick_text[:50]}")
-
-            except Exception as e:
+    # Click "Load More Picks" button if present
+    for _ in range(5):
+        try:
+            load_more = page.locator("text=Load More Picks").first
+            if load_more.is_visible(timeout=1000):
+                load_more.click()
+                page.wait_for_timeout(1500)
                 if debug:
-                    print(f"[DEBUG] Error extracting pick {i}: {e}")
-                continue
+                    print("[DEBUG] Clicked 'Load More Picks'")
+            else:
+                break
+        except Exception:
+            break
 
-    except Exception as e:
+    # Extract structured card data via JS
+    cards = page.evaluate(EXTRACT_EXPERT_PICKS_JS)
+
+    if debug:
+        print(f"[DEBUG] Extracted {len(cards)} expert pick cards from DOM")
+
+    seen_fps: set = set()
+
+    for i, card in enumerate(cards):
+        matchup_text = card.get("matchupText", "")
+        pick_text = card.get("pickText", "")
+        expert_text = card.get("expertText", "")
+        analysis_text = card.get("analysisText", "")
+
+        if not pick_text:
+            continue
+
+        # Parse matchup
+        matchup = _parse_matchup_text(matchup_text)
+        away_raw = matchup.get("away_raw")
+        home_raw = matchup.get("home_raw")
+        away_code = _map_team(away_raw, store=store, sport=sport) if away_raw else None
+        home_code = _map_team(home_raw, store=store, sport=sport) if home_raw else None
+        event_time = matchup.get("event_time_utc")
+
+        # Parse pick details
+        pick = _parse_pick_text(pick_text)
+        market_type = pick.get("market_type")
+
+        if not market_type:
+            if debug:
+                print(f"[DEBUG] Skipping unparsed pick: {pick_text[:80]}")
+            continue
+
+        # Skip past picks (already graded)
+        if pick.get("result"):
+            if debug:
+                print(f"[DEBUG] Skipping past pick ({pick['result']}): {pick_text[:60]}")
+            continue
+
+        # Parse expert
+        expert = _parse_expert_text(expert_text)
+        expert_name = expert.get("expert_name")
+        expert_slug = expert.get("expert_slug")
+
+        # Build selection and line
+        selection = None
+        line_val = pick.get("line")
+        odds_val = pick.get("odds")
+        side = pick.get("side")
+
+        if market_type in ("spread", "moneyline", "1st_half_spread"):
+            team_raw = pick.get("team_raw", "")
+            # Try mapping the full name, then last word
+            selection = _map_team(team_raw, store=store, sport=sport)
+            if not selection and team_raw:
+                last_word = team_raw.split()[-1] if team_raw.split() else ""
+                selection = _map_team(last_word, store=store, sport=sport)
+        elif market_type in ("total", "team_total"):
+            if market_type == "team_total":
+                # For team totals, map the team and use side (OVER/UNDER)
+                team_raw = pick.get("team_raw", "")
+                team_code = _map_team(team_raw, store=store, sport=sport)
+                if not team_code and team_raw:
+                    last_word = team_raw.split()[-1] if team_raw.split() else ""
+                    team_code = _map_team(last_word, store=store, sport=sport)
+                selection = f"{team_code}_{side}" if team_code and side else side
+            else:
+                selection = side  # OVER or UNDER
+        elif market_type == "player_prop":
+            selection = pick.get("player_name")
+
+        market_family = "player_prop" if market_type == "player_prop" else "standard"
+
+        # Build raw pick text
+        raw_pick_text = pick_text.strip()
+        # Clean up concatenated text (SportsLine has no spaces between elements)
+        raw_pick_text = re.sub(r"(WIN|LOSS|PUSH)", r" \1", raw_pick_text)
+        raw_pick_text = re.sub(r"Unit\s*\d+\.?\d*", "", raw_pick_text).strip()
+
+        # Fingerprint for dedup
+        fp_source = f"sportsline|{canonical_url}|{raw_pick_text}|{expert_name or ''}"
+        fp = sha256_digest(fp_source)
+        if fp in seen_fps:
+            continue
+        seen_fps.add(fp)
+
+        record = RawPickRecord(
+            source_id="sportsline",
+            source_surface=f"sportsline_{sport.lower()}_expert_picks",
+            sport=sport,
+            market_family=market_family,
+            observed_at_utc=observed_at.isoformat(),
+            canonical_url=canonical_url,
+            raw_pick_text=raw_pick_text,
+            raw_block=card.get("fullText", "")[:500],
+            raw_fingerprint=fp,
+            event_start_time_utc=event_time,
+            matchup_hint=f"{away_code}@{home_code}" if away_code and home_code else None,
+            away_team=away_code,
+            home_team=home_code,
+            expert_name=expert_name,
+            expert_slug=expert_slug,
+            market_type=market_type,
+            selection=selection,
+            side=side,
+            line=line_val,
+            odds=odds_val,
+            player_name=pick.get("player_name"),
+            stat_key=pick.get("stat_key"),
+            unit_size=pick.get("unit_size"),
+        )
+        records.append(record)
+
         if debug:
-            print(f"[DEBUG] Error in extract_picks_from_page: {e}")
+            print(
+                f"[DEBUG] {market_type:12s} | {away_code or '?':>3s}@{home_code or '?':<3s} | "
+                f"{expert_name or 'unknown':20s} | {raw_pick_text[:50]}"
+            )
 
     return records
 
@@ -389,13 +802,19 @@ def ingest_sportsline_nba(
     storage_state: str = DEFAULT_STORAGE_STATE,
     debug: bool = False,
     picks_url: str = PICKS_URL,
+    sport: str = "NBA",
 ) -> Tuple[List[RawPickRecord], Dict[str, Any]]:
     """
-    Main ingestion function for SportsLine NBA picks.
+    Main ingestion function for SportsLine expert picks.
+
+    Navigates to the expert picks page and extracts all pick cards from the
+    single-page feed (no tab switching needed).
 
     Args:
         storage_state: Path to Playwright storage state JSON with auth cookies
         debug: Enable debug output
+        picks_url: URL of the expert picks page
+        sport: Sport to ingest (NBA or NCAAB)
 
     Returns:
         Tuple of (raw_records, debug_info)
@@ -410,11 +829,10 @@ def ingest_sportsline_nba(
         )
 
     observed_at = datetime.now(timezone.utc)
-    all_records: List[RawPickRecord] = []
     dbg: Dict[str, Any] = {
         "storage_state": storage_state,
         "observed_at": observed_at.isoformat(),
-        "markets": {},
+        "url": picks_url,
     }
 
     with sync_playwright() as p:
@@ -426,59 +844,29 @@ def ingest_sportsline_nba(
 
         try:
             page = context.new_page()
+            print(f"[INGEST] SportsLine: fetching {picks_url}")
             page.goto(picks_url, wait_until="networkidle", timeout=30000)
 
             # Wait for React hydration
             page.wait_for_timeout(3000)
 
-            # Check if we're logged in by looking for member content
-            is_logged_in = page.locator("text=Log Out, text=Sign Out, [class*='user'], [class*='member']").count() > 0
-            dbg["logged_in"] = is_logged_in
+            # Extract all expert picks from the page
+            records = extract_expert_picks(
+                page=page,
+                observed_at=observed_at,
+                canonical_url=picks_url,
+                sport=sport,
+                debug=debug,
+            )
 
-            if debug:
-                print(f"[DEBUG] Logged in: {is_logged_in}")
-
-            # Try to extract picks for each market type
-            for market_type, tab_text in MARKET_TABS.items():
-                market_records: List[RawPickRecord] = []
-
-                try:
-                    # Try to click the market tab
-                    tab = page.locator(f"text={tab_text}").first
-                    if tab.count() > 0:
-                        tab.click()
-                        page.wait_for_timeout(1500)
-
-                        if debug:
-                            print(f"[DEBUG] Switched to {market_type} tab")
-
-                    # Extract picks
-                    records = extract_picks_from_page(
-                        page=page,
-                        observed_at=observed_at,
-                        canonical_url=picks_url,
-                        market_type=market_type,
-                        debug=debug
-                    )
-                    market_records.extend(records)
-
-                except Exception as e:
-                    if debug:
-                        print(f"[DEBUG] Error processing {market_type}: {e}")
-                    dbg["markets"][market_type] = {"error": str(e)}
-                    continue
-
-                dbg["markets"][market_type] = {"count": len(market_records)}
-                all_records.extend(market_records)
-
+            dbg["records_extracted"] = len(records)
             page.close()
 
         finally:
             context.close()
             browser.close()
 
-    dbg["total_records"] = len(all_records)
-    return all_records, dbg
+    return records, dbg
 
 
 def main():
@@ -540,6 +928,7 @@ def main():
             storage_state=args.storage,
             debug=args.debug,
             picks_url=picks_url,
+            sport=sport,
         )
 
         # Write raw output
@@ -552,9 +941,10 @@ def main():
         if args.debug:
             print(f"[DEBUG] Markets: {dbg.get('markets', {})}")
 
-        # Normalize records
+        # Normalize records (convert dataclasses to dicts)
         from src.normalizer_sportsline_nba import normalize_sportsline_records
-        normalized = normalize_sportsline_records(raw_records, debug=args.debug)
+        raw_dicts = [asdict(r) if hasattr(r, "__dataclass_fields__") else r for r in raw_records]
+        normalized = normalize_sportsline_records(raw_dicts, debug=args.debug, sport=sport)
 
         norm_path = os.path.join(OUT_DIR, f"normalized_sportsline_{sport_suffix}.json")
         write_json(norm_path, normalized)

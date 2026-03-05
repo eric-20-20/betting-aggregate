@@ -25,6 +25,10 @@ STATIC_ALIAS_MAP: Dict[str, str] = {
     "s_curry": "stephen_curry",
     "j_brown": "jaylen_brown",
     "a_davis": "anthony_davis",
+    # Abbreviated slugs used by Action/Covers that dynamic alias can miss
+    "l_ball": "lamelo_ball",
+    "k_porter": "kevin_porter_jr",
+    "og_anunoby": "og_anunoby",  # already canonical, no-op
 }
 
 _ALIAS_CACHE: Dict[str, str] = {}

@@ -4,6 +4,7 @@ import {
   getStatTypeRecords,
   getTopTrends,
   getTierPerformance,
+  getRecentTrends,
   formatWinPct,
   formatRecord,
 } from "@/lib/data";
@@ -12,16 +13,20 @@ import type {
   MarketTypeRecord,
   StatTypeRecord,
   TrendEntry,
+  RecentTrendsReport,
+  RecentWindowRecord,
+  HotStreak,
 } from "@/lib/types";
 import type { TierPerformance } from "@/lib/data";
 
 export default async function TrackRecordPage() {
-  const [consensus, markets, stats, trends, tiers] = await Promise.all([
+  const [consensus, markets, stats, trends, tiers, recentTrends] = await Promise.all([
     getConsensusStrengthRecords(),
     getMarketTypeRecords(),
     getStatTypeRecords(),
     getTopTrends(),
     getTierPerformance(),
+    getRecentTrends(),
   ]);
 
   // Compute headline stats
@@ -69,6 +74,11 @@ export default async function TrackRecordPage() {
           accent
         />
       </div>
+
+      {/* Recent Performance */}
+      {recentTrends && (
+        <RecentPerformanceSection report={recentTrends} />
+      )}
 
       {/* Tier Performance */}
       {tiers.length > 0 && (
@@ -387,5 +397,182 @@ function WinPctCell({ value }: { value: number }) {
     >
       {formatWinPct(value)}
     </span>
+  );
+}
+
+const CONSENSUS_LABELS: Record<string, string> = {
+  "1_source": "Single Source",
+  "2_source": "2-Source",
+  "3_source": "3-Source",
+  "4+_sources": "4+ Sources",
+  "3+_source": "3+ Sources",
+};
+
+const MARKET_LABELS: Record<string, string> = {
+  spread: "Spreads",
+  total: "Totals",
+  moneyline: "Moneyline",
+  player_prop: "Player Props",
+};
+
+function RecentPerformanceSection({ report }: { report: RecentTrendsReport }) {
+  const { by_consensus_strength, by_market_type, top_hot_streaks, meta } = report;
+
+  // Determine available windows from the data
+  const windows = meta?.windows || [14, 30];
+  const displayWindows = windows.filter((w) => w >= 14); // skip 7d — too sparse
+
+  return (
+    <section className="mb-10">
+      <h2 className="text-xl font-bold text-white mb-1">Recent Performance</h2>
+      <p className="text-gray-500 text-sm mb-4">
+        How picks have performed in recent windows.
+        {meta?.ref_date && (
+          <span className="text-gray-600"> As of {meta.ref_date}.</span>
+        )}
+      </p>
+
+      {/* Consensus strength across windows */}
+      {by_consensus_strength.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            By Agreement Level
+          </h3>
+          <div className="bg-gray-800/40 rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-700/50">
+                  <th className="text-left p-3 text-gray-400 font-medium">
+                    Strength
+                  </th>
+                  {displayWindows.map((w) => (
+                    <th key={w} className="text-right p-3 text-gray-400 font-medium">
+                      Last {w}d
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {by_consensus_strength.map((row) => {
+                  const label = CONSENSUS_LABELS[row.consensus_strength] || row.consensus_strength;
+                  return (
+                    <tr key={row.consensus_strength} className="border-b border-gray-700/20 hover:bg-gray-700/20">
+                      <td className="p-3 text-gray-300">{label}</td>
+                      {displayWindows.map((w) => {
+                        const data = row[`window_${w}`] as RecentWindowRecord | undefined;
+                        if (!data || data.n === 0) {
+                          return <td key={w} className="text-right p-3 text-gray-600">—</td>;
+                        }
+                        return (
+                          <td key={w} className="text-right p-3">
+                            <span className="text-gray-400 text-xs mr-1.5">
+                              {formatRecord(data.wins, data.losses)}
+                            </span>
+                            <WinPctCell value={data.win_pct} />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Market type across windows */}
+      {by_market_type.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            By Market Type
+          </h3>
+          <div className="bg-gray-800/40 rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-700/50">
+                  <th className="text-left p-3 text-gray-400 font-medium">
+                    Market
+                  </th>
+                  {displayWindows.map((w) => (
+                    <th key={w} className="text-right p-3 text-gray-400 font-medium">
+                      Last {w}d
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {by_market_type.map((row) => {
+                  const label = MARKET_LABELS[row.market_type] || row.market_type;
+                  return (
+                    <tr key={row.market_type} className="border-b border-gray-700/20 hover:bg-gray-700/20">
+                      <td className="p-3 text-gray-300">{label}</td>
+                      {displayWindows.map((w) => {
+                        const data = row[`window_${w}`] as RecentWindowRecord | undefined;
+                        if (!data || data.n === 0) {
+                          return <td key={w} className="text-right p-3 text-gray-600">—</td>;
+                        }
+                        return (
+                          <td key={w} className="text-right p-3">
+                            <span className="text-gray-400 text-xs mr-1.5">
+                              {formatRecord(data.wins, data.losses)}
+                            </span>
+                            <WinPctCell value={data.win_pct} />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Hot Streaks */}
+      {top_hot_streaks.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Hot Streaks
+          </h3>
+          <div className="grid md:grid-cols-2 gap-3">
+            {top_hot_streaks.slice(0, 6).map((streak, i) => (
+              <HotStreakCard key={i} streak={streak} />
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function HotStreakCard({ streak }: { streak: HotStreak }) {
+  // Use anonymous_label if available, otherwise description
+  const label = (streak as { anonymous_label?: string }).anonymous_label || streak.description;
+
+  return (
+    <div className="bg-gray-800/40 border border-gray-700/30 rounded-lg p-4 flex items-center justify-between">
+      <div>
+        <span className="text-white font-medium text-sm">{label}</span>
+        <span className="text-gray-600 text-xs ml-2">last {streak.window}d</span>
+      </div>
+      <div className="text-right">
+        <span className="text-gray-400 text-xs mr-1.5">
+          {formatRecord(streak.wins, streak.losses)}
+        </span>
+        <span
+          className={`font-semibold ${
+            streak.win_pct >= 0.60
+              ? "text-emerald-400"
+              : streak.win_pct >= 0.5
+                ? "text-gray-300"
+                : "text-red-400"
+          }`}
+        >
+          {formatWinPct(streak.win_pct)}
+        </span>
+      </div>
+    </div>
   );
 }

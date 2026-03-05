@@ -75,24 +75,35 @@ def _text_or_none(locator) -> Optional[str]:
 def _count_gold_stars(container_locator) -> Optional[int]:
     """
     Count gold stars inside a container. Returns None if stars are absent.
+
+    Counts the number of SVG elements that contain at least one gold-filled
+    path, rather than counting individual paths (which can over-count when
+    a single star icon has multiple paths with the gold fill).
     """
     try:
-        fills: List[str] = container_locator.evaluate(
+        result: dict = container_locator.evaluate(
             """(node)=>{
-                const paths = node.querySelectorAll('svg path');
-                const fills = [];
-                paths.forEach(p=>{
-                    const fill = getComputedStyle(p).fill || '';
-                    fills.push(fill);
+                const svgs = node.querySelectorAll('svg');
+                if (!svgs.length) return {total: 0, gold: 0};
+                let gold = 0;
+                svgs.forEach(svg=>{
+                    const paths = svg.querySelectorAll('path');
+                    let hasGold = false;
+                    paths.forEach(p=>{
+                        const fill = getComputedStyle(p).fill || '';
+                        if (fill.trim().toLowerCase() === 'rgb(255, 204, 1)') hasGold = true;
+                    });
+                    if (hasGold) gold++;
                 });
-                return fills;
+                return {total: svgs.length, gold: gold};
             }"""
         )
     except Exception:
         return None
-    gold = sum(1 for f in fills if f and f.strip().lower() == "rgb(255, 204, 1)")
+    total = result.get("total", 0)
+    gold = result.get("gold", 0)
     gold = max(0, min(5, gold))
-    return gold if fills else None
+    return gold if total > 0 else None
 
 
 def _parse_bet_text(bet_text: str) -> Tuple[Optional[str], Optional[float], Optional[str], Optional[int]]:

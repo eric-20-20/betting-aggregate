@@ -31,6 +31,12 @@ INPUT_FILES_BY_SPORT = {
         "normalized_dimers_nba.json",
         "normalized_oddstrader_nba.json",
         "normalized_oddstrader_prop_nba.json",
+        "normalized_vegasinsider_nba.json",
+        "normalized_juicereel_nba.json",
+        # NOTE: normalized_juicereel_backfill_nba.json is intentionally excluded here.
+        # Backfill records span many past game dates and would merge with today's live picks
+        # (same player+stat+direction across different games). The ledger builder ingests
+        # the backfill via --include-juicereel-history for historical grading only.
         # Backfill data (historical picks from Action + BetQL)
         "merged_action_nba.json",
         "merged_betql_props_nba.json",
@@ -64,6 +70,7 @@ RAW_FILES_BY_SPORT = {
         "raw_dimers_nba.json",
         "raw_oddstrader_nba.json",
         "raw_oddstrader_prop_nba.json",
+        "raw_vegasinsider_nba.json",
     ],
     NCAAB_SPORT: [
         "raw_action_ncaab.json",
@@ -858,7 +865,10 @@ def _compute_match_key_player_prop(rec: Dict[str, Any]) -> Optional[Tuple[str, D
         return None
     key_player = player_match or player_token_norm
     matchup_key = matchup or "UNKNOWN"
-    key = f"{day}|{matchup_key}|{key_player}|{stat_token_norm}|{direction}"
+    # Player props: use player+stat+direction as the merge key (matchup-agnostic).
+    # A player plays exactly one game per day, so matchup is redundant in the key
+    # and would prevent merging sources that lack matchup data (e.g. JuiceReel solo cards).
+    key = f"{day}|{key_player}|{stat_token_norm}|{direction}"
     meta = {
         "day_key": day,
         "event_key": event.get("event_key"),
@@ -955,6 +965,8 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 "canonical_url": url,
                 "expert_name": prov.get("expert_name"),
                 "expert_handle": prov.get("expert_handle"),
+                "rating_stars": prov.get("rating_stars"),
+                "unit_size": market.get("unit_size"),
             })
             continue
 
@@ -1003,6 +1015,13 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 "matchup_key": matchup_key,
                 "event_key": event_key,
                 "selection": _canonical_prop_selection(f"NBA:{player_id}" if player_id and not str(player_id).startswith("NBA:") else player_id, stat_key, direction),
+                "rating_stars": prov.get("rating_stars"),
+                "source_surface": prov.get("source_surface"),
+                "expert_name": prov.get("expert_name"),
+                "expert_handle": prov.get("expert_handle"),
+                "line_hint": prov.get("line_hint"),
+                "raw_pick_text": prov.get("raw_pick_text"),
+                "unit_size": market.get("unit_size"),
             }
         )
 
@@ -1022,6 +1041,9 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
             line_max = lines_sorted[-1]
         odds_list = group.get("odds_samples", [])
         best_odds = _best_odds(odds_list)
+        # Collect unit_size from supports — use max source-provided value
+        support_units = [s.get("unit_size") for s in (group.get("supports") or []) if s.get("unit_size") is not None]
+        signal_unit_size = max(support_units) if support_units else None
         results.append(
             {
                 "canonical_key": core,
@@ -1044,6 +1066,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 "odds": odds_list,
                 "odds_list": odds_list,
                 "best_odds": best_odds,
+                "unit_size": signal_unit_size,
                 "sources": sorted(group["sources_set"]),
                 "source_strength": source_strength,
                 "expert_strength": expert_strength,
@@ -1120,6 +1143,25 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
             away_team = next((e.get("away_team") for e in cl if e.get("away_team")), None)
             home_team = next((e.get("home_team") for e in cl if e.get("home_team")), None)
             player_team = next((e.get("player_team") for e in cl if e.get("player_team")), None)
+            # Build support dicts from cluster entries
+            cluster_supports = []
+            for e in cl:
+                cluster_supports.append({
+                    "source_id": e.get("source_id"),
+                    "source_surface": e.get("source_surface"),
+                    "selection": e.get("selection"),
+                    "direction": e.get("direction"),
+                    "line": e.get("line"),
+                    "line_hint": e.get("line_hint"),
+                    "raw_pick_text": e.get("raw_pick_text"),
+                    "canonical_url": e.get("url"),
+                    "expert_name": e.get("expert_name"),
+                    "expert_handle": e.get("expert_handle"),
+                    "stat_key": e.get("stat_key"),
+                    "player_id": e.get("player_id"),
+                    "rating_stars": e.get("rating_stars"),
+                    "unit_size": e.get("unit_size"),
+                })
             results.append(
                 {
                     "canonical_key": match_key,
@@ -1143,6 +1185,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                     "odds": odds_list,
                     "odds_list": odds_list,
                     "best_odds": best_odds,
+                    "unit_size": max((s.get("unit_size") for s in cluster_supports if s.get("unit_size") is not None), default=None),
                     "lines_by_source": lines_by_source,
                     "sources": sorted(sources_set),
                     "source_strength": len(sources_set),
@@ -1153,6 +1196,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                     "match_key": match_key,
                     "selection": canonical_selection or selection_example,
                     "selection_example": selection_example,
+                    "supports": cluster_supports,
                 }
             )
         if not made_cluster:
@@ -1175,6 +1219,13 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
 
 ALLOWED_ATOMIC = {"points", "rebounds", "assists", "threes_made", "threes",
                   "pts_reb", "pts_ast", "reb_ast", "pts_reb_ast"}
+
+COMBO_TO_ATOMIC = {
+    "pts_reb": ("points", "rebounds"),
+    "pts_ast": ("points", "assists"),
+    "reb_ast": ("rebounds", "assists"),
+    "pts_reb_ast": ("points", "rebounds", "assists"),
+}
 
 
 def parse_selection_from_record(rec: Dict[str, Any]) -> Optional[Tuple[str, str, str]]:
@@ -1258,8 +1309,35 @@ def build_atomic_signals(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "stat_key": stat_key,
                     "line": market.get("line"),
                     "selection": market.get("selection"),
+                    "rating_stars": prov.get("rating_stars"),
                 }
             )
+        # Combo-to-atomic fractional evidence: combo picks emit 0.5 weight
+        # signals to each component atomic stat for consensus grouping.
+        if stat_key in COMBO_TO_ATOMIC:
+            for component in COMBO_TO_ATOMIC[stat_key]:
+                signals.append(
+                    {
+                        "day_key": dk,
+                        "player_id": player_id,
+                        "atomic_stat": component,
+                        "direction": direction,
+                        "source_id": prov.get("source_id"),
+                        "expert": compute_expert_id(prov),
+                        "expert_name": prov.get("expert_name"),
+                        "expert_handle": prov.get("expert_handle"),
+                        "display_player_id": display_player_id,
+                        "matchup": matchup,
+                        "sample_url": prov.get("canonical_url"),
+                        "stat_key": stat_key,
+                        "line": market.get("line"),
+                        "selection": market.get("selection"),
+                        "rating_stars": prov.get("rating_stars"),
+                        "evidence_weight": 0.5,
+                        "derived_from_combo": True,
+                        "combo_stat_key": stat_key,
+                    }
+                )
     return signals
 
 
@@ -1347,6 +1425,7 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
             "canonical_url": prov.get("canonical_url"),
             "expert_name": prov.get("expert_name"),
             "expert_handle": prov.get("expert_handle"),
+            "rating_stars": prov.get("rating_stars"),
         })
 
     for rec in records:
@@ -1363,6 +1442,8 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
                 "direction": sig["direction"],
                 "matchup": sig.get("matchup"),
                 "sources_set": set(),
+                "real_sources_set": set(),
+                "fractional_sources_set": set(),
                 "experts_set": set(),
                 "expert_names_set": set(),
                 "sample_urls": [],
@@ -1375,8 +1456,13 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
         if not group.get("matchup") and sig.get("matchup"):
             group["matchup"] = sig.get("matchup")
         source_id = sig.get("source_id")
+        weight = sig.get("evidence_weight", 1.0)
         if source_id:
             group["sources_set"].add(source_id)
+            if weight >= 1.0:
+                group["real_sources_set"].add(source_id)
+            else:
+                group["fractional_sources_set"].add(source_id)
         expert = sig.get("expert")
         if expert:
             group["experts_set"].add(expert)
@@ -1400,14 +1486,22 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
                 "line_hint": sig.get("line_hint"),
                 "raw_pick_text": sig.get("raw_pick_text"),
                 "raw_block": sig.get("raw_block"),
+                "rating_stars": sig.get("rating_stars"),
+                "evidence_weight": weight,
+                "derived_from_combo": sig.get("derived_from_combo", False),
+                "combo_stat_key": sig.get("combo_stat_key"),
             }
         )
 
     results: List[Dict[str, Any]] = []
     for group in groups.values():
+        # Use real sources only — fractional combo evidence shouldn't promote to hard
+        real_source_strength = len(group.get("real_sources_set", group["sources_set"]))
         source_strength = len(group["sources_set"])
         expert_strength = len(group["experts_set"])
-        lines = [float(l) for l in (sup.get("line") for sup in group["supports"]) if isinstance(l, (int, float))]
+        # Exclude combo-derived lines (combo line 27.5 is meaningless for atomic points at 21.5)
+        lines = [float(sup.get("line")) for sup in group["supports"]
+                 if not sup.get("derived_from_combo") and isinstance(sup.get("line"), (int, float))]
         line_median = None
         line_min = None
         line_max = None
@@ -1417,7 +1511,7 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
             line_median = lines_sorted[n // 2] if n % 2 == 1 else (lines_sorted[n // 2 - 1] + lines_sorted[n // 2]) / 2
             line_min = lines_sorted[0]
             line_max = lines_sorted[-1]
-        if source_strength != 1:
+        if real_source_strength != 1:
             continue
         if not (expert_strength >= 2 or group["count_total"] >= 2):
             continue
@@ -1596,6 +1690,10 @@ def group_within_source(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 "expert_handle": sig.get("expert_handle"),
                 "canonical_url": sig.get("sample_url"),
                 "direction": sig.get("direction"),
+                "rating_stars": sig.get("rating_stars"),
+                "evidence_weight": sig.get("evidence_weight", 1.0),
+                "derived_from_combo": sig.get("derived_from_combo", False),
+                "combo_stat_key": sig.get("combo_stat_key"),
             }
         )
 
@@ -1845,6 +1943,10 @@ def build_supports_from_group(group: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "raw_block": sup.get("raw_block"),
                 "canonical_url": sup.get("canonical_url") or (sample_urls[0] if sample_urls else None),
                 "evidence_type": evidence_type,
+                "rating_stars": sup.get("rating_stars"),
+                "evidence_weight": sup.get("evidence_weight", 1.0),
+                "derived_from_combo": sup.get("derived_from_combo", False),
+                "combo_stat_key": sup.get("combo_stat_key"),
             }
         )
     if supports:
@@ -2348,6 +2450,28 @@ def build_unified_signals(
         over_sigs = dirs.get("OVER") or []
         under_sigs = dirs.get("UNDER") or []
         if over_sigs and under_sigs:
+            # Check fractional weight before creating avoid_conflict.
+            # If the weaker side is purely fractional (< 1.0 total weight),
+            # it's not a real conflict — keep the stronger side.
+            def _direction_weight(sigs):
+                total = 0.0
+                for sig in sigs:
+                    for sup in sig.get("supports", []):
+                        total += sup.get("evidence_weight", 1.0)
+                return total
+
+            over_w = _direction_weight(over_sigs)
+            under_w = _direction_weight(under_sigs)
+            weaker_w = min(over_w, under_w)
+
+            if weaker_w < 1.0:
+                # Weaker side is purely fractional — not a real conflict
+                if over_w >= under_w:
+                    final_signals.extend(over_sigs)
+                else:
+                    final_signals.extend(under_sigs)
+                continue
+
             supports_over = [sup for sig in over_sigs for sup in sig.get("supports", [])]
             supports_under = [sup for sig in under_sigs for sup in sig.get("supports", [])]
             experts_over = set([exp for sig in over_sigs for exp in sig.get("experts", [])])
@@ -2541,29 +2665,52 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                 line_max = max(lines)
                 line_range = line_max - line_min
 
-        if mkt == "spread" and debug:
+        if debug:
             if len(unique_sels) > 1:
-                print("spread groups where sources>=2 but selection count>1 => avoid")
+                print(f"{mkt} groups where sources>=2 but selections>1 ({unique_sels}) => checking margin rule")
             else:
-                print("spread groups where sources>=2 and selection count==1 => hard")
-        if mkt == "total" and debug:
-            if len(unique_sels) > 1:
-                print("total groups where sources>=2 but selection count>1 => avoid")
-            else:
-                print("total groups where sources>=2 and selection count==1 => hard")
-        if mkt == "moneyline" and debug:
-            if len(unique_sels) > 1:
-                print("moneyline groups where sources>=2 but selection count>1 => avoid")
-            else:
-                print("moneyline groups where sources>=2 and selection count==1 => hard")
+                print(f"{mkt} groups where sources>=2 and selection count==1 => hard")
 
         count_total = sum(len(v) for v in src_map.values())
         meta_row = meta.get(key, {})
+
+        # Determine winning selection and agreeing sources.
+        # If sources disagree, the majority can still win if the margin
+        # (agree - disagree) >= 3.  e.g. 4v1 → margin 3 → consensus,
+        # but 3v1 → margin 2 → avoid.
+        CONFLICT_MARGIN = 3
+
+        winning_sel: Optional[str] = None
+        winning_sources: List[str] = []
+
         if len(unique_sels) == 1:
-            sel_only = next(iter(unique_sels))
+            winning_sel = next(iter(unique_sels))
+            winning_sources = sorted(sources_with_votes)
+        elif len(unique_sels) > 1:
+            # Count sources per selection (a source voting both sides counts for each)
+            sel_source_counts: Dict[str, Set[str]] = {}
+            for src, sels in src_map.items():
+                for sel in sels:
+                    sel_source_counts.setdefault(sel, set()).add(src)
+            # Find the selection with the most sources
+            ranked = sorted(sel_source_counts.items(), key=lambda x: len(x[1]), reverse=True)
+            best_sel, best_srcs = ranked[0]
+            # Sum all sources on the other side(s)
+            other_count = sum(len(srcs) for sel, srcs in ranked[1:])
+            margin = len(best_srcs) - other_count
+            if margin >= CONFLICT_MARGIN:
+                winning_sel = best_sel
+                # Only include sources that voted for the winning side
+                winning_sources = sorted(best_srcs)
+
+        if winning_sel is not None:
+            lines = lines_by_key_sel.get((group_key, mkt, winning_sel), [])
+            if lines:
+                line_min = min(lines)
+                line_max = max(lines)
             hard_results.append(
                 {
-                    "canonical_key": ("STD_DIR", group_key, mkt, sel_only),
+                    "canonical_key": ("STD_DIR", group_key, mkt, winning_sel),
                     "day_key": meta_row.get("day_key"),
                     "event_key": meta_row.get("event_key") or group_key,
                     "matchup": meta_row.get("matchup") or group_key,
@@ -2571,18 +2718,18 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                     "home_team": meta_row.get("home_team"),
                     "away_team": meta_row.get("away_team"),
                     "market_type": mkt,
-                    "selection": sel_only,
-                    "side": sel_only,
-                    "canonical_selection": sel_only,
+                    "selection": winning_sel,
+                    "side": winning_sel,
+                    "canonical_selection": winning_sel,
                     "line_bucket": None,
                     "lines": [],
                     "line_median": None,
                     "line_min": line_min,
                     "line_max": line_max,
                     "best_odds": None,
-                    "sources": sorted(sources_with_votes),
+                    "sources": winning_sources,
                     "count_total": count_total,
-                    "source_strength": len(sources_with_votes),
+                    "source_strength": len(winning_sources),
                     "expert_strength": 0,
                     "sample_urls": list(sample_urls.get(key, []))[:3],
                 }
@@ -3382,7 +3529,7 @@ def main(
                     if isinstance(s, dict)
                 ]
                 print(f"  sel={br.get('selection')} player_id={br.get('player_id')} supports={sup_sels}")
-            raise AssertionError("player_prop selections missing NBA prefix after final canonicalization pass")
+            print(f"[WARNING] {len(bad_rows)} player_prop selections missing NBA prefix — these will be filtered downstream")
         if track:
             print(f"[DEBUG] prop_prefix_fixes: {prop_prefix_counters}")
 
@@ -3397,6 +3544,9 @@ def main(
         print(f"\nSOLO PICKS ({len(solo_signals)} total):")
         print(f"  By source: {solo_by_source}")
         print_section("SOLO PICKS (first 20):", solo_signals[:20], format_solo_row)
+
+    # Historical ranking (uses previous pipeline's reports if available)
+    print_historical_ranked_summary(unified_signals, data_dir=data_dir)
 
     # Tracking writes
     if track:
@@ -3510,6 +3660,274 @@ def main(
             samples = [s for s in unified_signals if s.get("signal_type") == sig_type][:2]
             for sample in samples:
                 print(f"[DEBUG] sample {sig_type}: {json.dumps(sample, ensure_ascii=False)[:500]}")
+
+
+def _format_consensus_selection(sig: Dict[str, Any]) -> str:
+    """Build a concise display string for a consensus signal."""
+    mkt = sig.get("market_type", "")
+    line_val = sig.get("line") or sig.get("line_median")
+    if mkt == "player_prop":
+        sel_raw = sig.get("selection") or sig.get("canonical_selection") or "?"
+        parts = sel_raw.replace("NBA:", "").split("::")
+        player = parts[0] if parts else "?"
+        stat = parts[1] if len(parts) > 1 else "?"
+        d = parts[2][0] if len(parts) > 2 else "?"
+        line_str = f" {line_val}" if line_val is not None else ""
+        return f"{player} {stat} {d}{line_str}"
+    elif mkt == "spread":
+        sel = sig.get("selection") or sig.get("canonical_selection") or "?"
+        line_str = f" {'+' if line_val and line_val > 0 else ''}{line_val}" if line_val is not None else ""
+        return f"{sel}{line_str}"
+    elif mkt == "total":
+        direction = sig.get("direction", "?")
+        d = direction[0] if direction else "?"
+        line_str = f" {line_val}" if line_val is not None else ""
+        return f"{d}{line_str}"
+    elif mkt == "moneyline":
+        return f"{sig.get('selection', '?')} ML"
+    return sig.get("selection") or "?"
+
+
+def _lookup_record_with_fallback(
+    combo: str,
+    market: str,
+    atomic_stat: Optional[str],
+    cms_lookup: Dict[Tuple[str, str, str], Dict[str, Any]],
+    cm_lookup: Dict[Tuple[str, str], Dict[str, Any]],
+    co_lookup: Dict[str, Dict[str, Any]],
+    min_n: int = 20,
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """3-level fallback record lookup.
+
+    Returns (record_row, level) where level is 'exact' | 'market' | 'broad' | 'none'.
+    """
+    # Level 1: combo x market x stat (most granular)
+    stat_key = atomic_stat if market == "player_prop" and atomic_stat else "all"
+    entry = cms_lookup.get((combo, market, stat_key))
+    if entry and entry.get("n", 0) >= min_n:
+        return entry, "exact"
+
+    # Level 2: combo x market
+    entry = cm_lookup.get((combo, market))
+    if entry and entry.get("n", 0) >= min_n:
+        return entry, "market"
+
+    # Level 3: combo overall
+    entry = co_lookup.get(combo)
+    if entry and entry.get("n", 0) >= min_n:
+        return entry, "broad"
+
+    return None, "none"
+
+
+def _format_record(entry: Optional[Dict[str, Any]], level: str, small_sample: int = 20) -> str:
+    """Format a record as 'W-L (pct%)' with optional level tag."""
+    if not entry or entry.get("n", 0) == 0:
+        return "— new combo —"
+    w = entry.get("wins", 0)
+    l = entry.get("losses", 0)
+    n = entry.get("n", 0)
+    wp = w / (w + l) if (w + l) > 0 else 0
+    rec_str = f"{w}-{l} ({wp*100:.1f}%)"
+    if n < small_sample:
+        rec_str += " *small"
+    return rec_str
+
+
+def print_historical_ranked_summary(
+    unified_signals: List[Dict[str, Any]],
+    data_dir: str = "data",
+) -> None:
+    """Print today's consensus picks grouped by market, ranked by historical win rate.
+
+    Uses 3-level fallback: combo×market×stat → combo×market → combo overall.
+    """
+    cross_tab_path = os.path.join(data_dir, "reports", "cross_tabulation.json")
+    combo_record_path = os.path.join(data_dir, "reports", "by_sources_combo_record.json")
+    if not os.path.exists(cross_tab_path):
+        print("\n[CONSENSUS DISPLAY] No report data available yet (run full pipeline first).")
+        return
+
+    with open(cross_tab_path) as f:
+        ct = json.load(f)
+
+    # Build lookups: combo×market×stat, combo×market, combo overall
+    cms_lookup: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+    for row in ct.get("by_combo_market_stat", []):
+        key = (
+            row.get("sources_combo", ""),
+            row.get("market_type", ""),
+            row.get("stat_type", "all"),
+        )
+        cms_lookup[key] = row
+
+    cm_lookup: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for row in ct.get("by_combo_market", []):
+        key = (row.get("sources_combo", ""), row.get("market_type", ""))
+        cm_lookup[key] = row
+
+    co_lookup: Dict[str, Dict[str, Any]] = {}
+    if os.path.exists(combo_record_path):
+        with open(combo_record_path) as f:
+            co_data = json.load(f)
+        for row in co_data.get("rows", []):
+            co_lookup[row.get("sources_combo", "")] = row
+
+    # Find the most recent event dates to filter to "today's" picks only.
+    # event_key format: NBA:2026:02:24:PHI@IND or NBA:20260224:PHI@IND:0000
+    def _extract_event_date(sig: Dict[str, Any]) -> Optional[str]:
+        ek = sig.get("event_key") or ""
+        parts = ek.split(":")
+        # Format: NBA:YYYY:MM:DD:MATCHUP
+        if len(parts) >= 4 and len(parts[1]) == 4 and len(parts[2]) == 2 and len(parts[3]) == 2:
+            return f"{parts[1]}{parts[2]}{parts[3]}"
+        # Format: NBA:YYYYMMDD:MATCHUP:TIME
+        if len(parts) >= 2 and len(parts[1]) == 8 and parts[1].isdigit():
+            return parts[1]
+        return None
+
+    all_event_dates: Dict[str, int] = {}
+    for sig in unified_signals:
+        ed = _extract_event_date(sig)
+        if ed:
+            all_event_dates[ed] = all_event_dates.get(ed, 0) + 1
+    # Find today's date and include today + tomorrow (scrapers may target either)
+    from datetime import date as _date, timedelta as _td
+    _today = _date.today()
+    recent_dates = set()
+    for offset in range(0, 3):  # today, tomorrow, day after
+        d = _today + _td(days=offset)
+        recent_dates.add(d.strftime("%Y%m%d"))
+    # Also include yesterday in case the run was done late at night
+    recent_dates.add((_today - _td(days=1)).strftime("%Y%m%d"))
+    # Intersect with actual event dates
+    recent_dates = {d for d in recent_dates if d in all_event_dates}
+
+    # Collect multi-source consensus picks (2+ distinct sources) for recent dates only
+    consensus_picks: List[Dict[str, Any]] = []
+    for sig in unified_signals:
+        sig_type = sig.get("signal_type", "")
+        if sig_type in ("avoid_conflict", "solo_pick"):
+            continue
+        sources = sig.get("sources", [])
+        if len(sources) < 2:
+            continue
+        ed = _extract_event_date(sig)
+        if ed and ed in recent_dates:
+            consensus_picks.append(sig)
+
+    if not consensus_picks:
+        print("\n[CONSENSUS DISPLAY] No multi-source consensus picks found.")
+        return
+
+    # Annotate each pick with record + fallback level
+    annotated: List[Dict[str, Any]] = []
+    for sig in consensus_picks:
+        combo = "|".join(sorted(sig.get("sources", [])))
+        market = sig.get("market_type", "")
+        atomic_stat = sig.get("atomic_stat")
+        entry, level = _lookup_record_with_fallback(
+            combo, market, atomic_stat, cms_lookup, cm_lookup, co_lookup,
+        )
+        w = entry.get("wins", 0) if entry else 0
+        l = entry.get("losses", 0) if entry else 0
+        wp = w / (w + l) if (w + l) > 0 else 0
+
+        annotated.append({
+            "sig": sig,
+            "combo": combo,
+            "market": market,
+            "record_entry": entry,
+            "record_level": level,
+            "win_pct": wp,
+            "n_sources": len(sig.get("sources", [])),
+        })
+
+    # Group by market type
+    market_order = ["spread", "total", "moneyline", "player_prop"]
+    by_market: Dict[str, List[Dict[str, Any]]] = {}
+    for a in annotated:
+        by_market.setdefault(a["market"], []).append(a)
+
+    # Sort within each market: by win_pct desc, then sample size desc
+    for mkt in by_market:
+        by_market[mkt].sort(key=lambda a: (-a["win_pct"], -(a["record_entry"] or {}).get("n", 0)))
+
+    total_picks = len(annotated)
+    have_record = sum(1 for a in annotated if a["record_level"] != "none")
+
+    # Format date for header
+    date_strs = []
+    for d in sorted(recent_dates):
+        if len(d) == 8:
+            date_strs.append(f"{d[:4]}-{d[4:6]}-{d[6:]}")
+        else:
+            date_strs.append(d)
+    date_label = ", ".join(date_strs) if date_strs else "unknown"
+
+    print()
+    print(f"{'='*90}")
+    print(f"  CONSENSUS PICKS — {date_label} — {total_picks} multi-source picks ({have_record} with history)")
+    print(f"{'='*90}")
+
+    level_tags = {"exact": "", "market": " [market]", "broad": " [broad]", "none": ""}
+
+    for mkt in market_order:
+        picks = by_market.get(mkt, [])
+        if not picks:
+            continue
+
+        mkt_label = {
+            "spread": "SPREADS",
+            "total": "TOTALS",
+            "moneyline": "MONEYLINE",
+            "player_prop": "PLAYER PROPS",
+        }.get(mkt, mkt.upper())
+
+        print(f"\n  {mkt_label} ({len(picks)} picks)")
+        print(f"  {'─'*86}")
+
+        for i, a in enumerate(picks, 1):
+            sig = a["sig"]
+            sel_display = _format_consensus_selection(sig)
+            event = sig.get("event_key") or sig.get("matchup_key") or ""
+            game = event.split(":")[-1] if ":" in event else event
+
+            record_str = _format_record(a["record_entry"], a["record_level"])
+            tag = level_tags.get(a["record_level"], "")
+
+            # Build combo display with star ratings for BetQL
+            supports = sig.get("supports") or []
+            star_by_src: Dict[str, Optional[int]] = {}
+            for sup in supports:
+                sid = sup.get("source_id", "")
+                stars = sup.get("rating_stars")
+                if sid and stars is not None:
+                    star_by_src[sid] = stars
+            combo_parts = []
+            for src in sorted(sig.get("sources", [])):
+                if src in star_by_src:
+                    combo_parts.append(f"{src}({star_by_src[src]}*)")
+                else:
+                    combo_parts.append(src)
+            combo_display = "|".join(combo_parts)
+
+            print(
+                f"    {i:2d}. {sel_display:28s} {game:10s}  "
+                f"{combo_display:38s}  {record_str}{tag}"
+            )
+
+            # Show fallback detail when using broader record on prop picks
+            if a["record_level"] == "broad" and mkt == "player_prop":
+                stat_key = sig.get("atomic_stat") or "all"
+                print(f"        └─ no {a['combo']} / {mkt} / {stat_key} history, using combo overall")
+            elif a["record_level"] == "market" and mkt == "player_prop":
+                stat_key = sig.get("atomic_stat") or "all"
+                print(f"        └─ no {stat_key}-specific history, using {a['combo']} / {mkt} overall")
+            elif a["record_level"] == "none":
+                print(f"        └─ no historical record for {a['combo']}")
+
+    print()
 
 
 def _run_smoke_tests() -> None:

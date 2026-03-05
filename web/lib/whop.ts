@@ -2,6 +2,7 @@ import "server-only";
 
 const WHOP_API_KEY = process.env.WHOP_API_KEY || "";
 const WHOP_PRODUCT_ID = process.env.WHOP_PRODUCT_ID || "";
+const WHOP_OWNER_USER_ID = process.env.WHOP_OWNER_USER_ID || "";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -19,6 +20,9 @@ const accessCache = new Map<string, CacheEntry>();
 export async function hasAccess(whopUserId: string): Promise<boolean> {
   if (!WHOP_API_KEY || !WHOP_PRODUCT_ID) return false;
 
+  // Owner bypass
+  if (WHOP_OWNER_USER_ID && whopUserId === WHOP_OWNER_USER_ID) return true;
+
   // Check cache first
   const cached = accessCache.get(whopUserId);
   if (cached && Date.now() < cached.expiresAt) {
@@ -26,14 +30,12 @@ export async function hasAccess(whopUserId: string): Promise<boolean> {
   }
 
   try {
-    const res = await fetch(
-      `https://api.whop.com/api/v5/memberships?user_id=${whopUserId}&product_id=${WHOP_PRODUCT_ID}&valid=true`,
-      {
-        headers: {
-          Authorization: `Bearer ${WHOP_API_KEY}`,
-        },
-      }
-    );
+    const url = `https://api.whop.com/api/v1/memberships?user_ids=${whopUserId}&product_ids=${WHOP_PRODUCT_ID}&statuses=active`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${WHOP_API_KEY}`,
+      },
+    });
 
     if (!res.ok) {
       console.error(`Whop access check failed: ${res.status}`);

@@ -17,7 +17,7 @@ import json
 import os
 import re
 from collections import Counter
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -29,6 +29,7 @@ import logging
 
 from store import get_data_store, NBA_SPORT, NCAAB_SPORT
 from src.signal_keys import build_selection_key, build_offer_key
+from src.player_aliases_nba import normalize_player_slug
 
 
 # Sport-specific paths
@@ -269,17 +270,24 @@ def _normalize_day_key(day_key: Optional[str], event_key: Optional[str], matchup
     pattern = rf"^{sport}:\d{{4}}:\d{{2}}:\d{{2}}$"
     if isinstance(day_key, str) and re.match(pattern, day_key):
         return day_key
-    # handle event-key shaped day_key: {SPORT}:YYYYMMDD:AWY@HOME or {SPORT}:YYYY:MM:DD:AWY@HOME
+    # Try matching with the expected sport prefix, then fall back to any sport prefix.
+    # Some NCAAB signals arrive with NBA: prefix from scrapers — correct to NCAAB:.
+    prefixes = [sport]
+    if sport == NCAAB_SPORT:
+        prefixes.append(NBA_SPORT)
+    elif sport == NBA_SPORT:
+        prefixes.append(NCAAB_SPORT)
     candidates = [day_key, event_key, matchup_key]
     for val in candidates:
         if not isinstance(val, str):
             continue
-        m = re.match(rf"^{sport}:(\d{{4}})(\d{{2}})(\d{{2}})", val)
-        if m:
-            return f"{sport}:{m.group(1)}:{m.group(2)}:{m.group(3)}"
-        m = re.match(rf"^{sport}:(\d{{4}}):(\d{{2}}):(\d{{2}})", val)
-        if m:
-            return f"{sport}:{m.group(1)}:{m.group(2)}:{m.group(3)}"
+        for prefix in prefixes:
+            m = re.match(rf"^{prefix}:(\d{{4}})(\d{{2}})(\d{{2}})", val)
+            if m:
+                return f"{sport}:{m.group(1)}:{m.group(2)}:{m.group(3)}"
+            m = re.match(rf"^{prefix}:(\d{{4}}):(\d{{2}}):(\d{{2}})", val)
+            if m:
+                return f"{sport}:{m.group(1)}:{m.group(2)}:{m.group(3)}"
     return None
 
 
@@ -585,6 +593,26 @@ def extract_raw_fingerprint(signal: Dict[str, Any], canonical_url: Optional[str]
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def normalize_selection_player(selection: Optional[str], out_dir: str = "data/latest") -> Optional[str]:
+    """Normalize the player slug inside a selection string via the alias map.
+
+    E.g. "NBA:k_durant::points::OVER" → "NBA:kevin_durant::points::OVER"
+    """
+    if not isinstance(selection, str) or "::" not in selection:
+        return selection
+    parts = selection.split("::")
+    first = parts[0]  # e.g. "NBA:k_durant"
+    for prefix in ("NBA:", "NCAAB:"):
+        if first.startswith(prefix):
+            raw_slug = first[len(prefix):]
+            normed = normalize_player_slug(raw_slug, out_dir=out_dir)
+            if normed and normed != raw_slug:
+                parts[0] = f"{prefix}{normed}"
+                return "::".join(parts)
+            return selection
+    return selection
+
+
 def player_key_from_selection(selection: Optional[str], sport: str = NBA_SPORT) -> Optional[str]:
     if not isinstance(selection, str):
         return None
@@ -762,6 +790,14 @@ def collect_occurrences(
                 pk = signal.get("player_key") or player_key_from_selection(signal.get("selection"), sport)
                 if pk:
                     signal["player_key"] = pk
+                # Normalize player slug in selection and player_key via alias map
+                normed_sel = normalize_selection_player(signal.get("selection"))
+                if normed_sel and normed_sel != signal.get("selection"):
+                    signal["selection"] = normed_sel
+                    # Also update player_key to match
+                    pk2 = player_key_from_selection(normed_sel, sport)
+                    if pk2:
+                        signal["player_key"] = pk2
                 # canonical URL and fingerprint fallbacks for props
                 canonical_url = extract_canonical_url(signal)
                 if canonical_url:
@@ -796,6 +832,8 @@ def collect_occurrences(
                 for sup in signal.get("supports") or []:
                     if not isinstance(sup, dict):
                         continue
+                    # Prefer explicit line/line_hint fields
+                    has_explicit_line = False
                     for key, label in (
                         ("line", "support.line"),
                         ("line_hint", "support.line_hint"),
@@ -804,16 +842,21 @@ def collect_occurrences(
                         if val is not None and abs(val) <= 30:
                             line_candidates.append(val)
                             line_sources.add(f"{sup.get('source_id') or 'unknown'}:{label}")
-                    for key, label in (
-                        ("raw_pick_text", "support.raw_pick_text"),
-                        ("raw_block", "support.raw_block"),
-                        ("selection", "support.selection"),
-                    ):
-                        txt = sup.get(key)
-                        val = parse_spread_number(txt)
-                        if val is not None:
-                            line_candidates.append(val)
-                            line_sources.add(f"{sup.get('source_id') or 'unknown'}:{label}")
+                            has_explicit_line = True
+                    # Only fall back to text parsing when no explicit line exists.
+                    # raw_block/raw_pick_text contain dates, records, etc. that
+                    # produce false positives (e.g. "Mar 03" → 3.0).
+                    if not has_explicit_line:
+                        for key, label in (
+                            ("raw_pick_text", "support.raw_pick_text"),
+                            ("raw_block", "support.raw_block"),
+                            ("selection", "support.selection"),
+                        ):
+                            txt = sup.get(key)
+                            val = parse_spread_number(txt)
+                            if val is not None:
+                                line_candidates.append(val)
+                                line_sources.add(f"{sup.get('source_id') or 'unknown'}:{label}")
                 # Also try the signal's own selection and raw_pick_text
                 for key, label in (
                     ("selection", "signal.selection"),
@@ -829,6 +872,11 @@ def collect_occurrences(
                     unique_lines = sorted({round(v, 3) for v in line_candidates})
                     line_median = _median(unique_lines)
                     if line_median is not None:
+                        # Snap spread lines to nearest .5 — NBA spreads are
+                        # always .0 or .5; .25/.75 values from averaging two
+                        # lines at different half-points cause bad display
+                        # and push-risk issues.
+                        line_median = round(line_median * 2) / 2
                         signal["line"] = line_median
                         signal["line_median"] = signal.get("line_median") or line_median
                         signal["line_min"] = signal.get("line_min") if signal.get("line_min") is not None else min(unique_lines)
@@ -888,6 +936,10 @@ def collect_occurrences(
             if sig_atomic and signal.get("market_type") == "player_prop":
                 cleaned = []
                 for sup in signal["supports"]:
+                    # Allow intentional fractional combo evidence through
+                    if sup.get("derived_from_combo"):
+                        cleaned.append(sup)
+                        continue
                     sk = sup.get("stat_key")
                     if not sk:
                         cleaned.append(sup)
@@ -926,9 +978,14 @@ def collect_occurrences(
                     signal["source_surface"] = "multi"
                 else:
                     signal["source_surface"] = signal.get("source_surface") or "unknown"
+            # Normalize known stale source_id values
+            SOURCE_ID_ALIASES = {"actionnetwork": "action"}
+            cur_sid = signal.get("source_id")
+            if cur_sid in SOURCE_ID_ALIASES:
+                signal["source_id"] = SOURCE_ID_ALIASES[cur_sid]
+                cur_sid = signal["source_id"]
             # Re-derive source_id from normalized supports when pre-normalization
             # value doesn't match (e.g., "actionnetwork" corrected to "action")
-            cur_sid = signal.get("source_id")
             if cur_sid and sup_ids and cur_sid not in sup_ids:
                 if len(sup_ids) == 1:
                     signal["source_id"] = next(iter(sup_ids))
@@ -990,6 +1047,9 @@ def collect_occurrences(
                 "canonical_game_key": canonical_game_key,
             }
             record["occurrence_id"] = build_occurrence_id(record)
+            # Use the re-computed signal_key as signal_id to prevent hash
+            # collisions from legacy consensus-generated signal_ids
+            record["signal_id"] = signal_key
             if debug:
                 ek = record.get("event_key")
                 cgk = record.get("canonical_game_key")
@@ -1176,6 +1236,7 @@ def _history_row_to_occurrence(row: Dict[str, Any], source_tag: str = "betql_his
         "atomic_stat": mk.get("stat_key"),
         "line": mk.get("line"),  # Include line at top level for grading
         "odds": _coerce_odds(mk.get("odds")),  # Include odds for ROI calculation
+        "unit_size": mk.get("unit_size"),  # Source-provided bet sizing
         "observed_at_utc": prov.get("observed_at_utc"),
         "sources_combo": actual_source,
         "sources": [actual_source],
@@ -1214,6 +1275,13 @@ def _history_row_to_occurrence(row: Dict[str, Any], source_tag: str = "betql_his
         ],
     }
     signal["canonical_game_key"] = cgk
+    # Normalize player slug in selection via alias map
+    normed_sel = normalize_selection_player(signal.get("selection"))
+    if normed_sel and normed_sel != signal.get("selection"):
+        signal["selection"] = normed_sel
+        pk2 = player_key_from_selection(normed_sel)
+        if pk2:
+            signal["player_key"] = pk2
     signal["signal_key"] = build_signal_key(signal)
 
     # Add selection_key and offer_key for history rows
@@ -1284,6 +1352,15 @@ def _load_oddstrader_history(
     return rows
 
 
+def _make_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Ensure a datetime is timezone-aware (UTC) for safe comparisons."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def pick_latest(occurrences: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     latest: Dict[str, Dict[str, Any]] = {}
     for row in occurrences:
@@ -1291,10 +1368,14 @@ def pick_latest(occurrences: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not key:
             continue
         current = latest.get(key)
-        ts_new = parse_dt(row.get("observed_at_utc")) or datetime.min
-        ts_old = parse_dt(current.get("observed_at_utc")) if current else None
+        ts_new = _make_aware(parse_dt(row.get("observed_at_utc"))) or datetime.min.replace(tzinfo=timezone.utc)
+        ts_old = _make_aware(parse_dt(current.get("observed_at_utc"))) if current else None
         if current is None or (ts_old is not None and ts_new > ts_old) or ts_old is None:
             latest[key] = row
+    # Ensure signal_id matches signal_key (the re-computed, event-specific key)
+    # to prevent hash collisions from legacy consensus-generated signal_ids
+    for row in latest.values():
+        row["signal_id"] = row.get("signal_key") or row.get("signal_id")
     return list(latest.values())
 
 
@@ -1362,6 +1443,16 @@ def main() -> None:
         "--dimers-history-path",
         default=None,
         help="Path to normalized Dimers backfill JSONL (if not provided, defaults to data/latest/normalized_dimers_backfill.jsonl).",
+    )
+    parser.add_argument(
+        "--include-juicereel-history",
+        action="store_true",
+        help="Include normalized JuiceReel backfill JSON (default out/normalized_juicereel_backfill_nba.json).",
+    )
+    parser.add_argument(
+        "--juicereel-history-path",
+        default=None,
+        help="Path to normalized JuiceReel backfill JSON (if not provided, defaults to out/normalized_juicereel_backfill_nba.json).",
     )
     args = parser.parse_args()
     sport = args.sport
@@ -1448,6 +1539,27 @@ def main() -> None:
                     continue
             print(f"Loaded {loaded} records from Dimers history: {path}")
 
+    # Load JuiceReel normalized backfill if requested
+    if args.include_juicereel_history:
+        default_jr_path = "out/normalized_juicereel_backfill_nba.json"
+        path = Path(args.juicereel_history_path) if args.juicereel_history_path else Path(default_jr_path)
+        if not path.exists():
+            print(f"[WARN] Skipping missing JuiceReel history file: {path}")
+        else:
+            with open(path) as f:
+                jr_rows = json.load(f)
+            loaded = 0
+            for row in jr_rows:
+                try:
+                    occ = _history_row_to_occurrence(row, source_tag="juicereel_history", sport=sport)
+                    occurrences.append(occ)
+                    loaded += 1
+                except Exception as e:
+                    if args.debug:
+                        print(f"[WARN] Failed to convert JuiceReel row: {e}")
+                    continue
+            print(f"Loaded {loaded} records from JuiceReel history: {path}")
+
     before = len(occurrences)
     deduped_map = {}
     for occ in occurrences:
@@ -1460,15 +1572,18 @@ def main() -> None:
     occurrences = list(deduped_map.values())
     after = len(occurrences)
     removed = before - after
-    print(f"Deduped occurrences: before={before} after={after} removed={removed}")
+    print(f"Deduped occurrences (by occurrence_id): before={before} after={after} removed={removed}")
 
     # Cross-source consensus merging: merge sources_present for signals with same selection_key
-    # This enables historical picks from different sources (Action, BetQL) to form consensus
+    # on the SAME day. Scoping to day_key prevents a player's pick from a past game from
+    # being merged into today's pick for the same player+stat+direction.
+    # NOTE: This runs BEFORE per-day dedup so all occurrences contribute to source discovery.
     selection_key_groups: Dict[str, List[Dict[str, Any]]] = {}
     for occ in occurrences:
         sk = occ.get("selection_key")
+        day = occ.get("day_key") or ""
         if sk:
-            selection_key_groups.setdefault(sk, []).append(occ)
+            selection_key_groups.setdefault(f"{sk}|{day}", []).append(occ)
 
     cross_source_merges = 0
     for sk, group in selection_key_groups.items():
@@ -1492,6 +1607,68 @@ def main() -> None:
                 occ["cross_source_merged"] = True
                 cross_source_merges += 1
     print(f"[ledger] Cross-source consensus merges: {cross_source_merges}")
+
+    # Per-day dedup: keep only the latest occurrence per (signal_key, calendar_day).
+    # Consensus re-processes all source data each run, so the same signal_key appears
+    # in every run on the same day.  Keeping one per day preserves day-over-day audit
+    # history while cutting ~80% of redundant occurrences.
+    # Runs AFTER cross-source merge so all occurrences already have merged sources_combo.
+    #
+    # IMPORTANT: For any day that has a consensus run, we only keep occurrences from the
+    # LATEST run for that day. This evicts stale occurrences from superseded runs even when
+    # the new run doesn't produce a replacement (e.g. a bad consensus merge got removed).
+    # Build latest_run_per_day from the runs directory.
+    latest_run_per_day: Dict[str, str] = {}  # calendar_date -> latest run_id
+    _runs_dir = Path("data/runs")
+    if _runs_dir.exists():
+        for _run_dir in sorted(_runs_dir.iterdir()):
+            if not _run_dir.is_dir():
+                continue
+            _run_id = _run_dir.name
+            _day = _run_id[:10]  # "YYYY-MM-DD" prefix of run_id
+            if _day not in latest_run_per_day or _run_id > latest_run_per_day[_day]:
+                latest_run_per_day[_day] = _run_id
+
+    before_day_dedup = len(occurrences)
+    day_dedup_map: Dict[str, Dict[str, Any]] = {}   # (signal_key, date) -> best occ
+    evicted_stale = 0
+    for occ in occurrences:
+        sk = occ.get("signal_key") or ""
+        obs = occ.get("observed_at_utc") or ""
+        run_id = occ.get("run_id") or ""
+        # Extract date from observed_at_utc (ISO) or run_id (YYYY-MM-DD prefix)
+        day = obs[:10] if len(obs) >= 10 else (run_id[:10] if len(run_id) >= 10 else "")
+        if not sk or not day:
+            # Can't dedup — keep it
+            day_dedup_map[f"_no_key_{id(occ)}"] = occ
+            continue
+        # Evict occurrences from superseded runs: if we have a newer run for this day,
+        # skip occurrences from older runs entirely. History backfill records have run_id
+        # set to a source tag (e.g. "juicereel_history") — keep those unconditionally.
+        latest_run_for_day = latest_run_per_day.get(day)
+        if latest_run_for_day and run_id and run_id < latest_run_for_day:
+            # Only evict if run_id looks like a real run (has 'Z-' timestamp format)
+            if "Z-" in run_id:
+                evicted_stale += 1
+                continue
+        dedup_key = f"{sk}|{day}"
+        existing = day_dedup_map.get(dedup_key)
+        if existing is None:
+            day_dedup_map[dedup_key] = occ
+        else:
+            # Prefer the occurrence from the latest run_id (consensus run timestamp).
+            # run_id is "YYYY-MM-DDTHH-MM-SSZ-hash" so lexicographic sort is chronological.
+            # Fall back to observed_at_utc if run_id is missing.
+            existing_key = existing.get("run_id") or existing.get("observed_at_utc") or ""
+            occ_key = run_id or obs
+            if occ_key > existing_key:
+                day_dedup_map[dedup_key] = occ
+    if evicted_stale:
+        print(f"[ledger] Evicted {evicted_stale} occurrences from superseded runs")
+    occurrences = list(day_dedup_map.values())
+    after_day_dedup = len(occurrences)
+    day_removed = before_day_dedup - after_day_dedup
+    print(f"Deduped occurrences (per-day by signal_key): before={before_day_dedup} after={after_day_dedup} removed={day_removed}")
     print(
         f"[ledger] support_id_corrected={counters.get('supports_source_id_corrected',0)} spreads_with_supports={counters.get('spreads_with_supports',0)} "
         f"spreads_with_support_lines={counters.get('spreads_with_support_lines',0)} spreads_promoted_from_supports={counters.get('spreads_promoted_from_supports',0)} spreads_multi_line={counters.get('spreads_multi_line',0)}"

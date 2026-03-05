@@ -21,6 +21,12 @@ export default function Header() {
             Picks
           </Link>
           <Link
+            href="/picks/history"
+            className="text-sm text-gray-400 hover:text-white transition-colors"
+          >
+            History
+          </Link>
+          <Link
             href="/track-record"
             className="text-sm text-gray-400 hover:text-white transition-colors"
           >

@@ -4,9 +4,14 @@ import TierBadge from "./TierBadge";
 
 export default function PickCardLocked({ pick }: { pick: LockedPick }) {
   const marketLabel = MARKET_LABELS[pick.market_type] || pick.market_type;
+  const isATier = pick.tier === "A";
 
   return (
-    <div className="bg-gray-800/40 border border-gray-700/30 rounded-xl p-4 relative overflow-hidden">
+    <div className={`${
+      isATier
+        ? "bg-emerald-900/15 border-emerald-500/20"
+        : "bg-gray-800/40 border-gray-700/30"
+    } border rounded-xl p-4 relative overflow-hidden`}>
       <div className="flex items-start gap-3">
         <TierBadge tier={pick.tier} />
 
@@ -17,9 +22,9 @@ export default function PickCardLocked({ pick }: { pick: LockedPick }) {
               <span className="text-gray-600">|</span>
               <span className="text-gray-500 text-sm">{pick.matchup}</span>
             </div>
-            {pick.positive_dimensions > 0 && (
-              <span className="text-emerald-500/60 text-xs">
-                {pick.positive_dimensions} positive factors
+            {pick.confidence && pick.confidence !== "low" && (
+              <span className={`text-xs ${pick.confidence === "high" ? "text-emerald-500/60" : "text-blue-500/60"}`}>
+                {pick.confidence === "high" ? "High confidence" : "Medium confidence"}
               </span>
             )}
           </div>

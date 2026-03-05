@@ -149,10 +149,16 @@ MID_MAJOR_TEAMS: List[Team] = [
     # Ivy League
     Team(code="PRIN", city="Princeton", nickname="Tigers"),
     Team(code="YALE", city="Yale", nickname="Bulldogs"),
+    Team(code="BRWN", city="Brown", nickname="Bears"),
     # CAA
     Team(code="CHAR", city="Charleston", nickname="Cougars"),
+    # MAC (Mid-American Conference)
+    Team(code="BGSU", city="Bowling Green", nickname="Falcons"),
+    Team(code="MIO", city="Miami (Ohio)", nickname="RedHawks"),
     # Horizon
     Team(code="OAK", city="Oakland", nickname="Golden Grizzlies"),
+    Team(code="MILW", city="Milwaukee", nickname="Panthers"),
+    Team(code="DETM", city="Detroit Mercy", nickname="Titans"),
 ]
 
 
@@ -272,6 +278,11 @@ def build_ncaab_team_aliases() -> List[TeamAlias]:
         "RICH": ["Richmond Spiders"],
         "STLO": ["Saint Louis Billikens", "St Louis", "SLU"],
         "OAK": ["Oakland Golden Grizzlies"],
+        "BRWN": ["Brown Bears"],
+        "BGSU": ["Bowling Green Falcons", "BG", "BG State"],
+        "MIO": ["Miami Ohio", "Miami (Ohio)", "Miami OH", "Miami RedHawks", "RedHawks"],
+        "MILW": ["Milwaukee Panthers", "UWM", "UW-Milwaukee", "Wisc-Milwaukee"],
+        "DETM": ["Detroit Mercy Titans", "Detroit", "UDM", "U of Detroit"],
     }
 
     for team in NCAAB_TEAM_SEED:

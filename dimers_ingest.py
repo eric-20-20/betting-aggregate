@@ -35,7 +35,7 @@ from src.dimers_extractors import (
     scroll_to_load_all,
 )
 from src.normalizer_dimers_nba import normalize_dimers_records
-from store import NBA_SPORT, write_json
+from store import NBA_SPORT, NCAAB_SPORT, write_json
 
 OUT_DIR = Path(os.getenv("NBA_OUT_DIR", "out"))
 

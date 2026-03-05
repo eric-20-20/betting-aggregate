@@ -14,6 +14,7 @@ Usage:
 import argparse
 import copy
 import json
+import re
 import shutil
 import sys
 from datetime import datetime
@@ -47,9 +48,9 @@ def _consensus_label(count: int) -> str:
 
 def _sanitize_lookup_key(dimension: str, lookup_key: str, strength_label: str) -> str:
     """Replace source combo portion in factor lookup_key with strength label."""
-    if dimension == "best_expert":
-        return "top analyst"
-    if dimension in ("combo_x_market", "combo_x_stat", "combo_x_market_x_stat"):
+    if dimension == "combo_overall":
+        return strength_label
+    if dimension == "combo_x_market":
         parts = lookup_key.split(" / ")
         if len(parts) > 1:
             parts[0] = strength_label
@@ -60,6 +61,16 @@ def _sanitize_lookup_key(dimension: str, lookup_key: str, strength_label: str) -
 def _strip_roi(d: dict) -> dict:
     """Remove ROI-related fields from a dict."""
     return {k: v for k, v in d.items() if k not in ROI_FIELDS}
+
+
+def _sanitize_label(label: str, strength_label: str) -> str:
+    """Replace source combo names in a label with the consensus strength label."""
+    label_lower = label.lower()
+    if not any(src in label_lower for src in SOURCE_NAMES):
+        return label
+    parts = label.split(" / ")
+    parts[0] = strength_label + (" overall" if "overall" in parts[0] else "")
+    return " / ".join(parts)
 
 
 def sanitize_play(play: dict) -> dict:
@@ -76,38 +87,84 @@ def sanitize_play(play: dict) -> dict:
     sig.pop("sources_present", None)
     sig["experts"] = []
 
-    # Sanitize factor lookup_keys
-    for factor in play.get("factors", []):
-        factor["lookup_key"] = _sanitize_lookup_key(
-            factor["dimension"], factor["lookup_key"], strength_label
-        )
-        # Strip ROI from factors too
-        for k in list(factor.keys()):
-            if k in ROI_FIELDS:
-                del factor[k]
+    # Sanitize factor/supporting_factors lookup_keys
+    for key in ("factors", "supporting_factors"):
+        for factor in play.get(key, []):
+            lk = factor.get("lookup_key", "")
+            factor["lookup_key"] = _sanitize_label(lk, strength_label)
+            for k in list(factor.keys()):
+                if k in ROI_FIELDS:
+                    del factor[k]
+
+    # Sanitize primary_record label
+    pr = play.get("primary_record")
+    if pr and "label" in pr:
+        pr["label"] = _sanitize_label(pr["label"], strength_label)
 
     # Sanitize historical_record label
     hr = play.get("historical_record")
     if hr and "label" in hr:
-        label = hr["label"]
-        # Check if label contains any source name
-        label_lower = label.lower()
-        if any(src in label_lower for src in SOURCE_NAMES):
-            # Replace source portion: "covers overall" → "1_source overall"
-            # "action|sportsline / player_prop" → "2_source / player_prop"
-            parts = label.split(" / ")
-            parts[0] = strength_label + (" overall" if "overall" in parts[0] else "")
-            hr["label"] = " / ".join(parts)
+        hr["label"] = _sanitize_label(hr["label"], strength_label)
+
+    # Sanitize recent_trend label
+    rt = play.get("recent_trend")
+    if rt and "label" in rt:
+        rt["label"] = _sanitize_label(rt["label"], strength_label)
+
+    # Sanitize expert_detail — strip expert name, keep numeric fields
+    ed = play.get("expert_detail")
+    if ed:
+        play["expert_detail"] = {
+            "win_pct": ed.get("win_pct"),
+            "n": ed.get("n"),
+            "adjustment": ed.get("adjustment"),
+            "role": ed.get("role"),
+        }
+
+    # Sanitize matched_pattern — strip source names from label, keep hist
+    mp = play.get("matched_pattern")
+    if mp:
+        safe_label = mp.get("label", "")
+        for src in SOURCE_NAMES:
+            safe_label = re.sub(re.escape(src), "source", safe_label, flags=re.IGNORECASE)
+        # Deduplicate repeated "source" words (e.g. "source+source" → "multi-source")
+        safe_label = re.sub(r"source\+source", "multi-source", safe_label)
+        play["matched_pattern"] = {
+            "label": safe_label,
+            "tier_eligible": mp.get("tier_eligible"),
+            "hist": mp.get("hist"),
+        }
 
     # Strip summary if it contains source names
     summary = play.get("summary", "")
     for src in SOURCE_NAMES:
         if src in summary.lower():
-            # Replace source references in summary with generic text
             play["summary"] = ""
             break
 
     return play
+
+
+def _sanitize_recent_trends(data: dict) -> dict:
+    """Remove source-combo-specific entries from recent trends report."""
+    safe = {
+        "meta": data.get("meta", {}),
+        "by_consensus_strength": data.get("by_consensus_strength", []),
+        "by_market_type": data.get("by_market_type", []),
+    }
+    # For hot streaks, use anonymous_label and strip source info
+    streaks = []
+    for s in data.get("top_hot_streaks", []):
+        streaks.append({
+            "description": s.get("anonymous_label", s.get("description", "")),
+            "window": s.get("window"),
+            "wins": s.get("wins"),
+            "losses": s.get("losses"),
+            "n": s.get("n"),
+            "win_pct": s.get("win_pct"),
+        })
+    safe["top_hot_streaks"] = streaks
+    return safe
 
 
 def sanitize_report_rows(rows: list) -> list:
@@ -161,12 +218,15 @@ def export_picks(date: str) -> None:
     meta = data["meta"]
     plays = data["plays"]
 
-    # Sort by tier (A first) then composite_score descending
+    # Sort by tier (A first) then Wilson score descending
     tier_order = {"A": 0, "B": 1, "C": 2, "D": 3}
-    plays.sort(key=lambda p: (tier_order.get(p["tier"], 9), -p["composite_score"]))
+    plays.sort(key=lambda p: (
+        tier_order.get(p["tier"], 9),
+        -(p.get("wilson_score", p.get("composite_score", 0))),
+    ))
 
-    # Sanitize ALL plays
-    sanitized_plays = [sanitize_play(p) for p in plays]
+    # Sanitize quality-gated plays only (A and B tiers)
+    sanitized_plays = [sanitize_play(p) for p in plays if p["tier"] in ("A", "B")]
 
     # Teaser picks: top N A-tier picks with full details
     teaser_picks = []
@@ -188,7 +248,8 @@ def export_picks(date: str) -> None:
             "tier": p["tier"],
             "market_type": sig["market_type"],
             "matchup": matchup,
-            "positive_dimensions": p["positive_dimensions"],
+            "confidence": p.get("confidence", "low"),
+            "positive_dimensions": p.get("positive_dimensions", 0),
         })
 
     public_data = {
@@ -272,33 +333,71 @@ def export_reports() -> None:
             json.dump(data, f, indent=2)
         copied += 1
 
+    # Recent trends — strip source-specific data, keep consensus/market
+    src = REPORTS_DIR / "recent_trends.json"
+    if src.exists():
+        with open(src) as f:
+            data = json.load(f)
+        sanitized = _sanitize_recent_trends(data)
+        dst = reports_dir / "recent_trends.json"
+        with open(dst, "w") as f:
+            json.dump(sanitized, f, indent=2)
+        copied += 1
+
     print(f"[export] Reports: exported {copied} sanitized files to {reports_dir}")
 
 
 def export_tier_performance() -> None:
-    """Generate tier performance summary from score bucket data."""
+    """Generate tier performance summary by aggregating history files."""
     reports_dir = WEB_PUBLIC_DIR / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
+    dst = reports_dir / "tier_performance.json"
 
-    score_bucket_path = REPORTS_DIR / "by_score_bucket.json"
-    if score_bucket_path.exists():
-        with open(score_bucket_path) as f:
-            buckets = json.load(f)
-        tier_data = []
-        rows = buckets.get("rows", buckets) if isinstance(buckets, dict) else buckets
-        for row in rows:
-            if isinstance(row, dict) and "n" in row:
-                tier_data.append(_strip_roi(row))
-        dst = reports_dir / "tier_performance.json"
-        with open(dst, "w") as f:
-            json.dump(tier_data, f, indent=2)
-        print(f"[export] Tier performance: {dst}")
-    else:
-        # Write empty array as placeholder
-        dst = reports_dir / "tier_performance.json"
+    history_dir = WEB_PRIVATE_DIR / "history"
+    if not history_dir.exists():
         with open(dst, "w") as f:
             json.dump([], f)
-        print("[export] Tier performance: placeholder (no score bucket data)")
+        print("[export] Tier performance: placeholder (no history dir)")
+        return
+
+    tier_stats: dict[str, dict[str, int]] = {}
+    for hf in sorted(history_dir.glob("history_*.json")):
+        try:
+            with open(hf) as f:
+                day = json.load(f)
+        except Exception:
+            continue
+        for play in day.get("plays", []):
+            tier = play.get("tier")
+            result = play.get("result")
+            if not tier or result not in ("WIN", "LOSS", "PUSH"):
+                continue
+            if tier not in tier_stats:
+                tier_stats[tier] = {"wins": 0, "losses": 0, "pushes": 0}
+            if result == "WIN":
+                tier_stats[tier]["wins"] += 1
+            elif result == "LOSS":
+                tier_stats[tier]["losses"] += 1
+            elif result == "PUSH":
+                tier_stats[tier]["pushes"] += 1
+
+    tier_data = []
+    for tier in sorted(tier_stats):
+        s = tier_stats[tier]
+        decided = s["wins"] + s["losses"]
+        win_pct = s["wins"] / decided if decided > 0 else 0.0
+        tier_data.append({
+            "tier": tier,
+            "wins": s["wins"],
+            "losses": s["losses"],
+            "pushes": s["pushes"],
+            "n": decided + s["pushes"],
+            "win_pct": round(win_pct, 4),
+        })
+
+    with open(dst, "w") as f:
+        json.dump(tier_data, f, indent=2)
+    print(f"[export] Tier performance: {dst} ({len(tier_data)} tiers from {len(list(history_dir.glob('history_*.json')))} days)")
 
 
 def cleanup_stale_reports() -> None:
@@ -321,6 +420,130 @@ def cleanup_stale_reports() -> None:
         print(f"[export] Cleaned up {removed} stale report files")
 
 
+GRADES_PATH = Path("data/ledger/grades_latest.jsonl")
+
+
+def _load_grades_index() -> dict:
+    """Load grades keyed by signal_id → result string."""
+    grades: dict = {}
+    if not GRADES_PATH.exists():
+        return grades
+    with open(GRADES_PATH) as f:
+        for line in f:
+            g = json.loads(line)
+            sid = g.get("signal_id", "")
+            if not sid or sid in grades:
+                continue
+            result = g.get("result")
+            if result in ("WIN", "LOSS", "PUSH"):
+                grades[sid] = result
+            else:
+                grades[sid] = "PENDING"
+    return grades
+
+
+def export_history() -> None:
+    """Generate graded history files for all past dates (paid members only)."""
+    grades = _load_grades_index()
+    if not grades:
+        print("[export] History: no grades found, skipping")
+        return
+
+    history_dir = WEB_PRIVATE_DIR / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+
+    index_entries = []
+
+    for plays_file in sorted(PLAYS_DIR.glob("plays_*.json")):
+        date = plays_file.stem.replace("plays_", "")
+        with open(plays_file) as f:
+            data = json.load(f)
+
+        meta = data["meta"]
+        plays = data["plays"]
+
+        # Sort by tier then score
+        tier_order = {"A": 0, "B": 1, "C": 2, "D": 3}
+        plays.sort(key=lambda p: (
+            tier_order.get(p.get("tier", "D"), 9),
+            -(p.get("wilson_score") or p.get("composite_score", 0) or 0),
+        ))
+
+        graded_plays = []
+        wins, losses, pushes, pending = 0, 0, 0, 0
+        a_wins, a_losses = 0, 0
+
+        for p in plays:
+            tier = p.get("tier")
+            if tier not in ("A", "B"):
+                continue
+
+            sanitized = sanitize_play(p)
+
+            sig = p.get("signal", {})
+            sid = sig.get("signal_id", "")
+            result = grades.get(sid, "PENDING")
+            sanitized["result"] = result
+            graded_plays.append(sanitized)
+
+            if result == "WIN":
+                wins += 1
+                if tier == "A":
+                    a_wins += 1
+            elif result == "LOSS":
+                losses += 1
+                if tier == "A":
+                    a_losses += 1
+            elif result == "PUSH":
+                pushes += 1
+            else:
+                pending += 1
+
+        if not graded_plays:
+            continue
+
+        day_data = {
+            "meta": meta,
+            "plays": graded_plays,
+            "summary": {
+                "wins": wins,
+                "losses": losses,
+                "pushes": pushes,
+                "pending": pending,
+            },
+        }
+        day_path = history_dir / f"history_{date}.json"
+        with open(day_path, "w") as f:
+            json.dump(day_data, f, indent=2)
+
+        index_entries.append({
+            "date": date,
+            "day_of_week": meta.get("day_of_week", ""),
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "pending": pending,
+            "a_wins": a_wins,
+            "a_losses": a_losses,
+            "total_picks": len(graded_plays),
+        })
+
+    # Remove stale history files not in current index
+    indexed_dates = {e["date"] for e in index_entries}
+    for old_file in history_dir.glob("history_*.json"):
+        old_date = old_file.stem.replace("history_", "")
+        if old_date not in indexed_dates:
+            old_file.unlink()
+
+    # Write index (most recent first)
+    index_entries.sort(key=lambda x: x["date"], reverse=True)
+    index_path = history_dir / "index.json"
+    with open(index_path, "w") as f:
+        json.dump({"dates": index_entries}, f, indent=2)
+
+    print(f"[export] History: {len(index_entries)} days exported to {history_dir}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Export pipeline data for web")
     ap.add_argument("--date", type=str, default=None,
@@ -331,6 +554,7 @@ def main():
     print(f"[export] Exporting data for {date}")
 
     export_picks(date)
+    export_history()
     export_reports()
     export_tier_performance()
     cleanup_stale_reports()

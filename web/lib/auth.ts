@@ -6,7 +6,7 @@ const clientId = process.env.WHOP_CLIENT_ID || "";
 const clientSecret = process.env.WHOP_CLIENT_SECRET || "";
 
 /** Whether Whop auth is configured (credentials present) */
-export const isAuthEnabled = Boolean(clientId && clientSecret);
+export const isAuthEnabled = Boolean(clientId);
 
 export const authOptions: NextAuthOptions = {
   providers: isAuthEnabled
@@ -14,55 +14,52 @@ export const authOptions: NextAuthOptions = {
         {
           id: "whop",
           name: "Whop",
-          type: "oauth",
+          type: "oauth" as const,
+          wellKnown:
+            "https://api.whop.com/.well-known/openid-configuration",
           clientId,
           clientSecret,
+          client: {
+            token_endpoint_auth_method: "client_secret_post",
+            id_token_signed_response_alg: "ES256",
+          },
           authorization: {
-            url: "https://api.whop.com/oauth/authorize",
-            params: { scope: "openid offline" },
+            params: { scope: "openid profile email" },
           },
-          token: "https://data.whop.com/api/v3/oauth/token",
-          userinfo: {
-            url: "https://api.whop.com/api/v5/me",
-            async request({ tokens }) {
-              const res = await fetch("https://api.whop.com/api/v5/me", {
-                headers: { Authorization: `Bearer ${tokens.access_token}` },
-              });
-              if (!res.ok) throw new Error("Failed to fetch Whop user");
-              return res.json();
-            },
-          },
-          checks: ["pkce", "state"],
-          profile(profile) {
+          idToken: true,
+          checks: ["pkce", "state", "nonce"],
+          profile(profile: {
+            sub: string;
+            name?: string;
+            email?: string;
+            picture?: string;
+          }) {
             return {
-              id: profile.id,
-              name: profile.username || profile.name || profile.id,
+              id: profile.sub,
+              name: profile.name || profile.sub,
               email: profile.email || null,
-              image: profile.profile_pic_url || null,
+              image: profile.picture || null,
             };
           },
         },
       ]
     : [],
   callbacks: {
-    async jwt({ token, account, profile }) {
-      // On initial sign-in, persist Whop-specific fields
-      if (account && profile) {
-        token.whopUserId = (profile as { id: string }).id;
+    async jwt({ token, account, user }) {
+      if (user) {
+        token.whopUserId = user.id;
+      }
+      if (account) {
         token.accessToken = account.access_token;
       }
       return token;
     },
     async session({ session, token }) {
-      // Expose whopUserId to the session so server components can use it
       if (token.whopUserId) {
         (session as any).whopUserId = token.whopUserId as string;
       }
       return session;
     },
-  },
-  pages: {
-    signIn: "/api/auth/signin",
   },
   secret: process.env.NEXTAUTH_SECRET,
 };

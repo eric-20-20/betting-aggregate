@@ -31,10 +31,11 @@ export default function FactorBar({ factors }: { factors: Factor[] }) {
     <div className="flex flex-wrap gap-1.5">
       {factors.map((f) => {
         const label = DIMENSION_LABELS[f.dimension] || f.dimension;
+        const edge = f.edge ?? 0;
         const edgeStr =
           f.verdict === "no_data"
             ? "—"
-            : `${f.edge > 0 ? "+" : ""}${(f.edge * 100).toFixed(1)}%`;
+            : `${edge > 0 ? "+" : ""}${(edge * 100).toFixed(1)}%`;
         const tooltip =
           f.verdict === "no_data"
             ? `${label}: Insufficient data`
@@ -46,14 +47,14 @@ export default function FactorBar({ factors }: { factors: Factor[] }) {
             title={tooltip}
           >
             <span
-              className={`w-2 h-2 rounded-full ${verdictColor(f.verdict)}`}
+              className={`w-2 h-2 rounded-full ${verdictColor(f.verdict ?? "neutral")}`}
             />
             <span className="text-gray-400">{label}</span>
             <span
               className={
-                f.verdict === "positive"
+                (f.verdict ?? "neutral") === "positive"
                   ? "text-emerald-400"
-                  : f.verdict === "negative"
+                  : (f.verdict ?? "neutral") === "negative"
                     ? "text-red-400"
                     : "text-gray-500"
               }

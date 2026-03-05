@@ -27,7 +27,7 @@ export const authOptions: NextAuthOptions = {
             params: { scope: "openid profile email" },
           },
           idToken: true,
-          checks: ["pkce", "state", "nonce"],
+          checks: ["pkce", "state"],
           profile(profile: {
             sub: string;
             name?: string;

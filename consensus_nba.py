@@ -50,6 +50,7 @@ INPUT_FILES_BY_SPORT = {
         "normalized_dimers_ncaab.json",
         "normalized_oddstrader_ncaab.json",
         "normalized_oddstrader_prop_ncaab.json",
+        "normalized_juicereel_ncaab.json",
     ],
 }
 

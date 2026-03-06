@@ -390,6 +390,15 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
     },
 ]
 
+# ── NCAAB Pattern Registry ────────────────────────────────────────────────────
+# Separate registry for NCAAB signals. Same schema as PATTERN_REGISTRY.
+# Currently empty — need to accumulate graded NCAAB history before patterns
+# can be validated. Add patterns here as data grows (aim for n≥50 per pattern).
+# Sources active for NCAAB: action, covers, sportsline, dimers, oddstrader, juicereel.
+PATTERN_REGISTRY_NCAAB: List[Dict[str, Any]] = [
+    # TODO: add validated NCAAB patterns once sufficient graded data exists
+]
+
 # Known bad combos by market type — exclude from scoring regardless of other criteria
 # These have large sample sizes showing negative/coin-flip results
 EXCLUDED_COMBOS_BY_MARKET: set = {
@@ -1474,6 +1483,7 @@ def score_signal(
     tables: Dict[str, Any],
     recent_tables: Optional[Dict[str, Any]] = None,
     day_of_week: str = "",
+    pattern_registry: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Score a signal using Wilson-based combo×market ranking.
 
@@ -1499,7 +1509,8 @@ def score_signal(
     wilson_score = primary["wilson_lower"] + total_adjustment
 
     # 5. A-tier eligibility (pattern registry matching)
-    matched_pattern = _match_patterns(signal)
+    _registry = pattern_registry if pattern_registry is not None else PATTERN_REGISTRY
+    matched_pattern = _match_patterns(signal, registry=_registry)
     a_tier_eligible = (matched_pattern is not None
                        and matched_pattern.get("tier_eligible") == "A")
 
@@ -2071,6 +2082,7 @@ def main() -> None:
 
     sport = args.sport
     reports_dir, signals_path, plays_dir = get_sport_paths(sport)
+    active_pattern_registry = PATTERN_REGISTRY_NCAAB if sport == "NCAAB" else PATTERN_REGISTRY
 
     date_str = args.date or date.today().strftime("%Y-%m-%d")
     try:
@@ -2134,7 +2146,8 @@ def main() -> None:
     scored: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
     for signal in after_exclusions:
         score_data = score_signal(signal, tables, recent_tables=recent_tables,
-                                  day_of_week=day_of_week)
+                                  day_of_week=day_of_week,
+                                  pattern_registry=active_pattern_registry)
         scored.append((signal, score_data))
 
     # Load current market lines (if available)

@@ -46,6 +46,7 @@ def main(out_dir: Path, debug: bool = False) -> None:
     norm_betql_prop = out_dir / base / "normalized_betql_prop_nba.json"
     raw_juicereel = out_dir / base / "raw_juicereel_nba.json"
     norm_juicereel = out_dir / base / "normalized_juicereel_nba.json"
+    norm_juicereel_ncaab = out_dir / base / "normalized_juicereel_ncaab.json"
 
     action_records = normalize_file(str(raw_action), str(norm_action), debug=debug)
     covers_records = normalize_file(str(raw_covers), str(norm_covers), debug=debug)
@@ -54,7 +55,32 @@ def main(out_dir: Path, debug: bool = False) -> None:
     betql_total_records = normalize_betql(str(raw_betql_total), str(norm_betql_total), debug=debug)
     betql_sharp_records = normalize_betql(str(raw_betql_sharp), str(norm_betql_sharp), debug=debug)
     betql_prop_records = normalize_betql_props(str(raw_betql_prop), str(norm_betql_prop), debug=debug)
-    juicereel_records = normalize_juicereel(str(raw_juicereel), str(norm_juicereel), debug=debug)
+    juicereel_records = normalize_juicereel(str(raw_juicereel), str(norm_juicereel), debug=debug, sport="NBA")
+
+    # Also normalize JuiceReel NCAAB picks from the same raw file (picks are mixed by sport)
+    # The normalizer uses sport param to route team lookups and build event keys correctly.
+    # Pre-filter to only NCAAB-tagged raw records so NBA and NCAAB outputs are cleanly separated.
+    import json as _json
+    _raw_jr_path = str(raw_juicereel)
+    if os.path.exists(_raw_jr_path):
+        with open(_raw_jr_path) as _f:
+            _raw_jr_all = _json.load(_f) if _f.readable() else []
+        _raw_jr_ncaab = [r for r in _raw_jr_all if isinstance(r, dict) and r.get("sport") == "NCAAB"]
+        if _raw_jr_ncaab:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as _tmp:
+                _json.dump(_raw_jr_ncaab, _tmp)
+                _tmp_path = _tmp.name
+            juicereel_ncaab_records = normalize_juicereel(_tmp_path, str(norm_juicereel_ncaab), debug=debug, sport="NCAAB")
+            os.unlink(_tmp_path)
+        else:
+            from store import write_json as _wj
+            _wj(str(norm_juicereel_ncaab), [])
+            juicereel_ncaab_records = []
+    else:
+        from store import write_json as _wj
+        _wj(str(norm_juicereel_ncaab), [])
+        juicereel_ncaab_records = []
 
     # Merge sharp (probet) into main BetQL outputs by market
     from store import write_json
@@ -129,8 +155,15 @@ def main(out_dir: Path, debug: bool = False) -> None:
         for reason, count in reasons.most_common():
             print(f"    {reason}: {count}")
 
-    print("JuiceReel")
+    print("JuiceReel (NBA)")
     total, eligible, ineligible, reasons = summarize(juicereel_records)
+    print(f"  total={total} eligible={eligible} ineligible={ineligible}")
+    if ineligible:
+        for reason, count in reasons.most_common():
+            print(f"    {reason}: {count}")
+
+    print("JuiceReel (NCAAB)")
+    total, eligible, ineligible, reasons = summarize(juicereel_ncaab_records)
     print(f"  total={total} eligible={eligible} ineligible={ineligible}")
     if ineligible:
         for reason, count in reasons.most_common():

@@ -324,6 +324,10 @@ echo ""
 echo "── NCAAB Step 6: Scoring today's signals ──"
 python3 scripts/score_signals.py --sport NCAAB $DEBUG 2>&1 | tail -20
 
+echo ""
+echo "── NCAAB Step 7: Exporting web data ──"
+python3 scripts/export_web_data.py --sport NCAAB 2>&1 | tail -5
+
 fi  # end RUN_NCAAB
 
 # ─── Summary ─────────────────────────────────────────────────────────

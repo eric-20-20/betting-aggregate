@@ -548,10 +548,21 @@ def main():
     ap = argparse.ArgumentParser(description="Export pipeline data for web")
     ap.add_argument("--date", type=str, default=None,
                     help="Date to export (default: latest)")
+    ap.add_argument("--sport", type=str, default="NBA", choices=["NBA", "NCAAB"],
+                    help="Sport to export (default: NBA)")
     args = ap.parse_args()
 
+    # Re-bind module-level path constants based on sport so all export functions
+    # automatically use the correct directories without needing individual changes.
+    global PLAYS_DIR, REPORTS_DIR, WEB_PUBLIC_DIR, WEB_PRIVATE_DIR
+    if args.sport == "NCAAB":
+        PLAYS_DIR = Path("data/plays/ncaab")
+        REPORTS_DIR = Path("data/reports/ncaab")
+        WEB_PUBLIC_DIR = Path("web/public/data/ncaab")
+        WEB_PRIVATE_DIR = Path("web/data/private/ncaab")
+
     date = args.date or find_latest_plays_date()
-    print(f"[export] Exporting data for {date}")
+    print(f"[export] Exporting data for {date} ({args.sport})")
 
     export_picks(date)
     export_history()
@@ -559,7 +570,8 @@ def main():
     export_tier_performance()
     cleanup_stale_reports()
 
-    print(f"[export] Done. Web data ready in web/public/data/ and web/data/private/")
+    sport_label = f"web/public/data/{args.sport.lower()}/" if args.sport != "NBA" else "web/public/data/"
+    print(f"[export] Done. Web data ready in {sport_label} and web/data/private/{args.sport.lower() if args.sport != 'NBA' else ''}")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,10 @@ from typing import Dict, List, Optional, Tuple
 PLAYS_DIR = Path("data/plays")
 GRADES_PATH = Path("data/ledger/grades_latest.jsonl")
 
+SPORT_PATHS = {
+    "NCAAB": (Path("data/plays/ncaab"), Path("data/ledger/ncaab/grades_latest.jsonl")),
+}
+
 
 def load_grades_index() -> Dict[str, dict]:
     """Index grades by signal_id for matching."""
@@ -118,7 +122,14 @@ def main():
     parser.add_argument("--date", type=str, help="Specific date (YYYY-MM-DD)")
     parser.add_argument("--tier", choices=["A", "B"], help="Filter by tier")
     parser.add_argument("--verbose", action="store_true", help="Show individual picks")
+    parser.add_argument("--sport", choices=["NBA", "NCAAB"], default="NBA",
+                        help="Sport to grade (default: NBA)")
     args = parser.parse_args()
+
+    # Route to sport-specific paths
+    global PLAYS_DIR, GRADES_PATH
+    if args.sport in SPORT_PATHS:
+        PLAYS_DIR, GRADES_PATH = SPORT_PATHS[args.sport]
 
     grades = load_grades_index()
     print(f"Loaded {len(grades)} graded signals\n")

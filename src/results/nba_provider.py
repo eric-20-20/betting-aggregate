@@ -206,6 +206,12 @@ def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refre
             actual_count = meta_copy.get("games_count_actual", meta_copy.get("games_count", 0))
             meta_count = meta_copy.get("games_count_meta", meta_copy.get("games_count", 0))
             if actual_count == 0 and meta_count == 0:
+                # NBA API scoreboard is empty — try LGF before giving up (LGF cache may have scores)
+                lgf_result = lgf_provider.fetch_game_result(event_key, away, home, date_str, refresh_cache=refresh_cache)
+                if lgf_result and lgf_result.get("status") not in (None, "ERROR"):
+                    lgf_result["fallback_from"] = "empty_scoreboard_lgf"
+                    lgf_result["games_info"] = meta_copy
+                    return lgf_result
                 return {"status": "NO_GAMES", "notes": "no_games_for_date", "games_info": meta_copy}
             if game_id:
                 # Check if game is stale SCHEDULED and needs refresh

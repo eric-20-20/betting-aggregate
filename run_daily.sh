@@ -91,30 +91,30 @@ if [ "$SKIP_INGEST" = false ]; then
     run_with_timeout 120 python3 covers_ingest.py $DEBUG 2>&1 | tail -5 || echo "  ⚠ Covers ingest failed (continuing)"
 
     echo "  [3/10] SportsLine..."
+    python3 scripts/refresh_sportsline_token.py 2>&1 || echo "  ⚠ SportsLine token refresh failed (continuing)"
     if [ -f data/sportsline_storage_state.json ]; then
-        python3 scripts/refresh_sportsline_token.py 2>&1 || echo "  ⚠ SportsLine token refresh failed (using existing token)"
         run_with_timeout 180 python3 sportsline_ingest.py --storage data/sportsline_storage_state.json $DEBUG 2>&1 | tail -5 || echo "  ⚠ SportsLine ingest failed (continuing)"
     else
-        echo "  ⚠ SportsLine skipped (no storage state at data/sportsline_storage_state.json)"
+        echo "  ⚠ SportsLine skipped (storage state still missing after refresh)"
     fi
 
     echo "  [4/10] Dimers..."
+    python3 scripts/refresh_dimers_token.py 2>&1 || echo "  ⚠ Dimers token refresh failed (continuing)"
     if [ -f dimers_storage_state.json ]; then
-        python3 scripts/refresh_dimers_token.py 2>&1 || echo "  ⚠ Dimers token refresh failed (using existing token)"
         run_with_timeout 180 python3 dimers_ingest.py --storage-state dimers_storage_state.json $DEBUG 2>&1 | tail -5 || echo "  ⚠ Dimers ingest failed (continuing)"
     else
-        echo "  ⚠ Dimers skipped (no storage state at dimers_storage_state.json)"
+        echo "  ⚠ Dimers skipped (storage state still missing after refresh)"
     fi
 
     echo "  [5/10] OddsTrader..."
     run_with_timeout 120 python3 oddstrader_ingest.py --props $DEBUG 2>&1 | tail -5 || echo "  ⚠ OddsTrader ingest failed (continuing)"
 
     echo "  [6/10] BetQL Spreads..."
+    python3 scripts/refresh_betql_token.py 2>&1 || echo "  ⚠ BetQL token refresh failed (continuing)"
     if [ -f data/betql_storage_state.json ]; then
-        python3 scripts/refresh_betql_token.py 2>&1 || echo "  ⚠ BetQL token refresh failed (using existing token)"
         run_with_timeout 120 python3 scripts/probe_betql_spread_nba.py $DEBUG 2>&1 | tail -5 || echo "  ⚠ BetQL Spreads failed (continuing)"
     else
-        echo "  ⚠ BetQL Spreads skipped (no storage state)"
+        echo "  ⚠ BetQL Spreads skipped (storage state still missing after refresh)"
     fi
 
     echo "  [7/10] BetQL Totals..."
@@ -146,11 +146,11 @@ if [ "$SKIP_INGEST" = false ]; then
     fi
 
     echo "  [11/11] JuiceReel..."
+    python3 scripts/refresh_juicereel_token.py 2>&1 || echo "  ⚠ JuiceReel token refresh failed (continuing)"
     if [ -f data/juicereel_storage_state.json ]; then
-        python3 scripts/refresh_juicereel_token.py 2>&1 || echo "  ⚠ JuiceReel token refresh failed (using existing token)"
         run_with_timeout 180 python3 juicereel_ingest.py --storage data/juicereel_storage_state.json $DEBUG 2>&1 | tail -5 || echo "  ⚠ JuiceReel ingest failed (continuing)"
     else
-        echo "  ⚠ JuiceReel skipped (no storage state at data/juicereel_storage_state.json)"
+        echo "  ⚠ JuiceReel skipped (storage state still missing after refresh)"
     fi
 else
     echo ""

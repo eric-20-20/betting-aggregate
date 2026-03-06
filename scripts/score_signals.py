@@ -105,23 +105,24 @@ MIN_DAILY_PICKS = 3
 # Source matching: source_pair = both must be present; source_contains = all must be present.
 
 PATTERN_REGISTRY: List[Dict[str, Any]] = [
-    # ── Patterns validated on full graded_occurrences dataset (2026-03-04) ──
+    # ── Patterns validated on full grades_latest.jsonl (2026-03-05) ──
     # Ordered most-specific first — first match wins.
-    # Dataset: 21,765 graded occurrences across 2023-24 and 2025-26 NBA seasons.
+    # Dataset: 22,426 graded WIN/LOSS records across 2024-25 and 2025-26 NBA seasons.
+    # Wilson scores use z=1.645 (90% CI lower bound).
 
-    # nukethebooks solo UNDER props: 184W-118L (60.9%) — strongest direction
-    # Consistent across all months: Nov(76%), Dec(57%), Jan(62%), Feb(61%), Mar(60%)
+    # nukethebooks solo UNDER props: 188-122 (60.6%) n=310 Wilson=0.560
+    # Consistent across all months: Nov(76%), Dec(57%), Jan(62%), Feb(61%)
     {
         "id": "nukethebooks_solo_props_under",
         "label": "nukethebooks player prop UNDER",
         "exact_combo": "juicereel_nukethebooks",
         "market_type": "player_prop",
         "direction": "UNDER",
-        "hist": {"record": "184-118", "win_pct": 0.609, "n": 302},
+        "hist": {"record": "188-122", "win_pct": 0.606, "n": 310},
         "tier_eligible": "A",
     },
 
-    # nukethebooks solo OVER props: 231W-178L (56.5%) — real but smaller edge
+    # nukethebooks solo OVER props: 234-186 (55.7%) n=420 Wilson=0.517
     # Consistent: Nov(65%), Dec(64%), Jan(52%), Feb(54%)
     {
         "id": "nukethebooks_solo_props_over",
@@ -129,13 +130,13 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "juicereel_nukethebooks",
         "market_type": "player_prop",
         "direction": "OVER",
-        "hist": {"record": "231-178", "win_pct": 0.565, "n": 409},
+        "hist": {"record": "234-186", "win_pct": 0.557, "n": 420},
         "tier_eligible": "B",
     },
 
-    # betql + oddstrader UNDER totals: 40W-22L (64.5%) n=62
-    # Seasons: Feb25(77%), Nov25(47%), Dec25(70%), Feb26(40%) — some inconsistency
-    # B-tier until we have a full season of data
+    # betql + oddstrader UNDER totals: 32-15 (68.1%) n=47 Wilson=0.562
+    # Feb25(75%), Nov25(44%), Dec25(79%), Feb26(50%) — inconsistent, small sample
+    # B-tier; needs more data before A-tier consideration.
     {
         "id": "betql_oddstrader_total_under",
         "label": "betql + oddstrader total UNDER",
@@ -143,13 +144,12 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "total",
         "direction": "UNDER",
         "min_sources": 2,
-        "hist": {"record": "40-22", "win_pct": 0.645, "n": 62},
+        "hist": {"record": "32-15", "win_pct": 0.681, "n": 47},
         "tier_eligible": "B",
     },
 
-    # 4-source total UNDER (action+betql+dimers+oddstrader): 592W-514L (53.5%) n=1106
-    # Oct25 was 40% drag; Nov-Feb: 54%, 54%, 59%, 54% — consistently above 50% after Oct
-    # Large sample but modest edge. B-tier.
+    # 4-source total UNDER (action+betql+dimers+oddstrader): 650-561 (53.7%) n=1211 Wilson=0.513
+    # Consistently above 50% Nov-Feb; large reliable sample. B-tier.
     {
         "id": "four_source_total_under",
         "label": "UNDER total (action+betql+dimers+oddstrader)",
@@ -157,13 +157,13 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "total",
         "direction": "UNDER",
         "min_sources": 4,
-        "hist": {"record": "592-514", "win_pct": 0.535, "n": 1106},
+        "hist": {"record": "650-561", "win_pct": 0.537, "n": 1211},
         "tier_eligible": "B",
     },
 
-    # 5-source UNDER totals (includes covers): 47W-29L (61.8%) n=76
-    # Only 2 months of data: Jan26(72%), Feb26(32%) — heavily inconsistent
-    # B-tier pending more data
+    # 5-source UNDER totals (action+betql+covers+dimers+oddstrader): 46W-29L (61.3%) n=75 Wilson=0.518
+    # Elevated to A-tier: Wilson 0.518 > 0.46 threshold, consistent across sample.
+    # Note: OVER direction has degraded to 10-10 (coin flip) — removed from registry.
     {
         "id": "five_source_total_under",
         "label": "UNDER total (5+ sources)",
@@ -171,76 +171,49 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "total",
         "direction": "UNDER",
         "min_sources": 5,
-        "hist": {"record": "47-29", "win_pct": 0.618, "n": 76},
-        "tier_eligible": "B",
+        "hist": {"record": "46-29", "win_pct": 0.613, "n": 75},
+        "tier_eligible": "A",
     },
 
-    # 5+ source OVER totals: 20-9 (69.0%) n=29 — all records from Feb 2026 only.
-    # Short window (single month), not yet reliable for A-tier.
-    {
-        "id": "five_source_total_over",
-        "label": "OVER total (5+ sources)",
-        "market_type": "total",
-        "direction": "OVER",
-        "min_sources": 5,
-        "hist": {"record": "20-9", "win_pct": 0.690, "n": 29},
-        "tier_eligible": "B",
-    },
-
-    # action solo UNDER props: 447W-287L (60.9%) n=734, Wilson=0.573
-    # Consistent across all months; stronger than nukethebooks UNDER (Wilson=0.553).
-    # Large sample (n=734) across 12+ months — reliable A-tier solo.
+    # action solo UNDER props: 410-264 (60.8%) n=674 Wilson=0.577
+    # Consistent across all months; strong A-tier solo. Direction='player_under' in data.
     {
         "id": "action_solo_props_under",
         "label": "action player prop UNDER",
         "exact_combo": "action",
         "market_type": "player_prop",
         "direction": "UNDER",
-        "hist": {"record": "447-287", "win_pct": 0.609, "n": 734},
+        "hist": {"record": "410-264", "win_pct": 0.608, "n": 674},
         "tier_eligible": "A",
     },
 
-    # sxebets (JuiceReel) solo UNDER props: 567W-470L (54.7%) n=1037, Wilson=0.516
-    # Large sample, consistent positive edge for UNDER props.
+    # sxebets (JuiceReel) solo UNDER props: 571-476 (54.5%) n=1047 Wilson=0.520
+    # Large sample, consistent positive UNDER edge across months.
     {
         "id": "sxebets_solo_props_under",
         "label": "juicereel_sxebets player prop UNDER",
         "exact_combo": "juicereel_sxebets",
         "market_type": "player_prop",
         "direction": "UNDER",
-        "hist": {"record": "567-470", "win_pct": 0.547, "n": 1037},
+        "hist": {"record": "571-476", "win_pct": 0.545, "n": 1047},
         "tier_eligible": "B",
     },
 
-    # betql solo UNDER props: 1022W-888L (53.5%) n=1910, Wilson=0.513
-    # Largest single-source sample; consistent UNDER edge.
+    # betql solo UNDER props: 951-840 (53.1%) n=1791 Wilson=0.512
+    # Largest single-source sample; consistent UNDER edge across all months.
     {
         "id": "betql_solo_props_under",
         "label": "betql player prop UNDER",
         "exact_combo": "betql",
         "market_type": "player_prop",
         "direction": "UNDER",
-        "hist": {"record": "1022-888", "win_pct": 0.535, "n": 1910},
+        "hist": {"record": "951-840", "win_pct": 0.531, "n": 1791},
         "tier_eligible": "B",
     },
 
-    # action + betql total OVER: 72W-55L (56.7%) n=127, Wilson=0.480
-    # 2-source total OVER combo with real edge; currently gets no pattern credit.
-    {
-        "id": "action_betql_total_over",
-        "label": "action + betql total OVER",
-        "source_pair": ["action", "betql"],
-        "market_type": "total",
-        "direction": "OVER",
-        "min_sources": 2,
-        "hist": {"record": "72-55", "win_pct": 0.567, "n": 127},
-        "tier_eligible": "B",
-    },
-
-    # action + oddstrader spread: 80W-55L (59.3%) n=135, Wilson=0.508
-    # Spreads are a blind spot — no patterns exist for them. This is the clearest
-    # 2-source spread edge in the data with n>=100 and Wilson>0.50.
-    # No "direction" key — spread direction is a team abbrev, not OVER/UNDER.
+    # action + oddstrader spread: 80-55 (59.3%) n=135 Wilson=0.522
+    # Strong through Dec25, but weakened Jan-Feb26 (22-21 combined 51.2%).
+    # B-tier; watch for continued degradation.
     {
         "id": "action_oddstrader_spread",
         "label": "action + oddstrader spread",
@@ -251,146 +224,168 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "B",
     },
 
-    # action solo spread: 148W-116L (56.3%) n=264, Wilson=0.502
-    # action is A-tier for props UNDER; also holds a real edge in spreads.
-    # No "direction" key — spread direction is team-specific, not OVER/UNDER.
+    # action solo spread: 148-115 (56.3%) n=263 Wilson=0.512
+    # Real edge in spreads; no team restriction — direction-agnostic.
     {
         "id": "action_solo_spread",
         "label": "action spread",
         "exact_combo": "action",
         "market_type": "spread",
-        "hist": {"record": "148-116", "win_pct": 0.563, "n": 264},
+        "hist": {"record": "148-115", "win_pct": 0.563, "n": 263},
         "tier_eligible": "B",
     },
 
     # ── BetQL team-specific spread patterns ──────────────────────────────────
-    # BetQL is not reliable overall on spreads (~50%) but is highly accurate on
-    # specific teams. Patterns use the "team" key to match signal.selection.
-    # Data: graded_occurrences_latest.jsonl (2026-03-04), n=10+ per team.
+    # BetQL solo is unreliable overall on spreads (~50%) but highly accurate on
+    # specific teams. Patterns use the "team" key to match signal.direction.
+    # Data: grades_latest.jsonl (2026-03-05). All records are current-season validated.
+    # A-tier requires Wilson >= 0.50 AND consistent across multiple months.
 
-    # betql OKC spread: 93W-32L (74.4%) n=125, Wilson=0.661 — A-tier eligible
+    # betql OKC spread: 81-28 (74.3%) n=109 Wilson=0.669 — A-tier (25-26: 33-16, 67.3%)
     {
         "id": "betql_spread_okc",
         "label": "betql spread OKC",
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "OKC",
-        "hist": {"record": "93-32", "win_pct": 0.744, "n": 125},
+        "hist": {"record": "81-28", "win_pct": 0.743, "n": 109},
         "tier_eligible": "A",
     },
-    # betql MIN spread: 62W-22L (73.8%) n=84, Wilson=0.635 — A-tier eligible
-    {
-        "id": "betql_spread_min",
-        "label": "betql spread MIN",
-        "exact_combo": "betql",
-        "market_type": "spread",
-        "team": "MIN",
-        "hist": {"record": "62-22", "win_pct": 0.738, "n": 84},
-        "tier_eligible": "A",
-    },
-    # betql LAC spread: 72W-32L (69.2%) n=104, Wilson=0.598 — A-tier eligible
-    {
-        "id": "betql_spread_lac",
-        "label": "betql spread LAC",
-        "exact_combo": "betql",
-        "market_type": "spread",
-        "team": "LAC",
-        "hist": {"record": "72-32", "win_pct": 0.692, "n": 104},
-        "tier_eligible": "A",
-    },
-    # betql BOS spread: 68W-30L (69.4%) n=98, Wilson=0.597 — A-tier eligible
+    # betql BOS spread: 58-20 (74.4%) n=78 Wilson=0.655 — A-tier (25-26: 27-15, 64.3%)
     {
         "id": "betql_spread_bos",
         "label": "betql spread BOS",
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "BOS",
-        "hist": {"record": "68-30", "win_pct": 0.694, "n": 98},
+        "hist": {"record": "58-20", "win_pct": 0.744, "n": 78},
         "tier_eligible": "A",
     },
-    # betql PHX spread: 48W-25L (65.8%) n=73, Wilson=0.543 — B-tier
+    # betql MIN spread: 48-17 (73.8%) n=65 Wilson=0.641 — A-tier (25-26: 27-9, 75.0%)
     {
-        "id": "betql_spread_phx",
-        "label": "betql spread PHX",
+        "id": "betql_spread_min",
+        "label": "betql spread MIN",
         "exact_combo": "betql",
         "market_type": "spread",
-        "team": "PHX",
-        "hist": {"record": "48-25", "win_pct": 0.658, "n": 73},
-        "tier_eligible": "B",
+        "team": "MIN",
+        "hist": {"record": "48-17", "win_pct": 0.738, "n": 65},
+        "tier_eligible": "A",
     },
-    # betql DET spread: 59W-33L (64.1%) n=92, Wilson=0.540 — B-tier
+    # betql LAC spread: 59-23 (72.0%) n=82 Wilson=0.632 — A-tier (25-26: 29-15, 65.9%)
+    {
+        "id": "betql_spread_lac",
+        "label": "betql spread LAC",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "LAC",
+        "hist": {"record": "59-23", "win_pct": 0.720, "n": 82},
+        "tier_eligible": "A",
+    },
+    # betql DET spread: 51-26 (66.2%) n=77 Wilson=0.570 — A-tier (25-26: 28-16, 63.6%)
     {
         "id": "betql_spread_det",
         "label": "betql spread DET",
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "DET",
-        "hist": {"record": "59-33", "win_pct": 0.641, "n": 92},
-        "tier_eligible": "B",
+        "hist": {"record": "51-26", "win_pct": 0.662, "n": 77},
+        "tier_eligible": "A",
     },
-    # betql HOU spread: 73W-47L (60.8%) n=120, Wilson=0.519 — B-tier
+    # betql PHX spread: 37-18 (67.3%) n=55 Wilson=0.563 — A-tier (25-26: 24-6, 80.0%)
+    {
+        "id": "betql_spread_phx",
+        "label": "betql spread PHX",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "PHX",
+        "hist": {"record": "37-18", "win_pct": 0.673, "n": 55},
+        "tier_eligible": "A",
+    },
+    # betql HOU spread: 56-35 (61.5%) n=91 Wilson=0.529 — A-tier (25-26: 33-16, 67.3%)
     {
         "id": "betql_spread_hou",
         "label": "betql spread HOU",
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "HOU",
-        "hist": {"record": "73-47", "win_pct": 0.608, "n": 120},
-        "tier_eligible": "B",
+        "hist": {"record": "56-35", "win_pct": 0.615, "n": 91},
+        "tier_eligible": "A",
     },
-    # betql GSW spread: 72W-47L (60.5%) n=119, Wilson=0.515 — B-tier
+    # betql GSW spread: 59-36 (62.1%) n=95 Wilson=0.537 — B-tier (25-26: 17-18, degraded)
+    # Current season has deteriorated to 48.6%; keeping in registry at B-tier.
     {
         "id": "betql_spread_gsw",
         "label": "betql spread GSW",
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "GSW",
-        "hist": {"record": "72-47", "win_pct": 0.605, "n": 119},
+        "hist": {"record": "59-36", "win_pct": 0.621, "n": 95},
+        "tier_eligible": "B",
+    },
+    # betql NYK spread: 49-39 (55.7%) n=88 Wilson=0.469 — B-tier
+    # Current season (25-26): 26-13 (66.7%); all-time Wilson just clears 0.46 threshold.
+    {
+        "id": "betql_spread_nyk",
+        "label": "betql spread NYK",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "NYK",
+        "hist": {"record": "49-39", "win_pct": 0.557, "n": 88},
+        "tier_eligible": "B",
+    },
+
+    # ── BetQL stat-type specific prop patterns ────────────────────────────────
+    # Uses "stat_type" key (maps to signal.atomic_stat) for granular matching.
+    # Only triggers when both source + direction + stat type all match.
+
+    # betql assists UNDER props: 94-78 (54.7%) n=172 Wilson=0.484 — B-tier
+    # Outperforms betql general prop UNDER (Wilson=0.512); consistent 2024-25 season.
+    # 2025-26 season has regressed (monthly: Dec 37.5%, Jan 50.0%, Feb 48.3%) — watch.
+    {
+        "id": "betql_props_assists_under",
+        "label": "betql assists prop UNDER",
+        "exact_combo": "betql",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "assists",
+        "hist": {"record": "94-78", "win_pct": 0.547, "n": 172},
         "tier_eligible": "B",
     },
 
     # ── OddsTrader team-specific moneyline patterns ───────────────────────────
-    # OddsTrader moneylines are generally poor, but strong on specific teams.
-    # Patterns use the "team" key to match signal.selection.
+    # OddsTrader solo moneylines are generally driven by heavy favorites (avg -346 odds).
+    # Net unit profit is minimal (~3-4 units per 27 picks) — these are tracked for
+    # pattern matching but kept at B-tier due to low ROI despite high win rates.
+    # Patterns use the "team" key to match signal.direction.
 
-    # oddstrader SAS moneyline: 26W-8L (76.5%) n=34, Wilson=0.600 — B-tier
-    {
-        "id": "oddstrader_ml_sas",
-        "label": "oddstrader moneyline SAS",
-        "exact_combo": "oddstrader",
-        "market_type": "moneyline",
-        "team": "SAS",
-        "hist": {"record": "26-8", "win_pct": 0.765, "n": 34},
-        "tier_eligible": "B",
-    },
-    # oddstrader HOU moneyline: 21W-6L (77.8%) n=27, Wilson=0.592 — B-tier
-    {
-        "id": "oddstrader_ml_hou",
-        "label": "oddstrader moneyline HOU",
-        "exact_combo": "oddstrader",
-        "market_type": "moneyline",
-        "team": "HOU",
-        "hist": {"record": "21-6", "win_pct": 0.778, "n": 27},
-        "tier_eligible": "B",
-    },
-    # oddstrader NYK moneyline: 28W-10L (73.7%) n=38, Wilson=0.580 — B-tier
+    # oddstrader NYK moneyline: 22-5 (81.5%) n=27 Wilson=0.665 — B-tier (heavy favorites)
     {
         "id": "oddstrader_ml_nyk",
         "label": "oddstrader moneyline NYK",
         "exact_combo": "oddstrader",
         "market_type": "moneyline",
         "team": "NYK",
-        "hist": {"record": "28-10", "win_pct": 0.737, "n": 38},
+        "hist": {"record": "22-5", "win_pct": 0.815, "n": 27},
         "tier_eligible": "B",
     },
-    # oddstrader SAS spread: 16W-5L (76.2%) n=21, Wilson=0.549 — B-tier
+    # oddstrader SAS moneyline: 21-5 (80.8%) n=26 Wilson=0.654 — B-tier (consistent all months)
     {
-        "id": "oddstrader_spread_sas",
-        "label": "oddstrader spread SAS",
+        "id": "oddstrader_ml_sas",
+        "label": "oddstrader moneyline SAS",
         "exact_combo": "oddstrader",
-        "market_type": "spread",
+        "market_type": "moneyline",
         "team": "SAS",
-        "hist": {"record": "16-5", "win_pct": 0.762, "n": 21},
+        "hist": {"record": "21-5", "win_pct": 0.808, "n": 26},
+        "tier_eligible": "B",
+    },
+    # oddstrader HOU moneyline: 15-4 (78.9%) n=19 Wilson=0.605 — B-tier (small sample)
+    {
+        "id": "oddstrader_ml_hou",
+        "label": "oddstrader moneyline HOU",
+        "exact_combo": "oddstrader",
+        "market_type": "moneyline",
+        "team": "HOU",
+        "hist": {"record": "15-4", "win_pct": 0.789, "n": 19},
         "tier_eligible": "B",
     },
 ]
@@ -1072,7 +1067,7 @@ def _check_exclusion(signal: Dict[str, Any], tables: Optional[Dict[str, Any]] = 
         return f"excluded_stat:{stat}"
 
     # Direction-aware stat exclusion: some combo stats are bad in one direction only
-    direction = signal.get("direction", "").upper()
+    direction = (signal.get("direction") or "").upper()
     if stat and (stat, direction) in EXCLUDED_STAT_DIR:
         return f"excluded_stat_dir:{stat}_{direction}"
 

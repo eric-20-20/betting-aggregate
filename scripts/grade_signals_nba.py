@@ -203,6 +203,11 @@ def derive_teams(signal: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
         if not isinstance(val, str):
             return None, None
         if "@" in val:
+            # Handle NBA event_key format: "NBA:2026:03:03:OKC@CHI" — take only the last segment
+            last = val.rsplit(":", 1)[-1] if ":" in val else val
+            if "@" in last:
+                a, h = last.split("@", 1)
+                return a, h
             a, h = val.split("@", 1)
             return a, h
         if "-" in val:
@@ -341,8 +346,9 @@ def check_eligibility(signal: Dict[str, Any], date_str: Optional[str]) -> Tuple[
     has_cgk = isinstance(cgk, (list, tuple)) and len(cgk) >= 4 and cgk[2] and cgk[3]
     has_explicit_matchup = bool(signal.get("away_team") and signal.get("home_team"))
     away_team, home_team = derive_teams(signal)
+    has_derived_matchup = bool(away_team and home_team)
     if market == "player_prop":
-        if not (has_cgk or has_explicit_matchup):
+        if not (has_cgk or has_explicit_matchup or has_derived_matchup):
             if not has_cgk:
                 missing.append("canonical_game_key")
             if not signal.get("away_team"):

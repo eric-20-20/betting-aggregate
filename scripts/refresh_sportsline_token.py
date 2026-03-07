@@ -47,7 +47,8 @@ def load_env() -> None:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, _, v = line.partition("=")
-                os.environ.setdefault(k.strip(), v.strip())
+                v = v.strip().strip("'\"")
+                os.environ.setdefault(k.strip(), v)
 
 
 def get_credentials() -> tuple[str, str]:

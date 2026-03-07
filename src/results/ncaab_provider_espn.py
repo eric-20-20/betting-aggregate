@@ -59,9 +59,57 @@ STAT_KEY_TO_LABEL = {
 }
 
 # Map known abbreviation mismatches: our_code → ESPN code
+# Derived by comparing event_key team codes against ESPN scoreboard abbreviations.
 ABBREV_MAP: Dict[str, str] = {
-    # Add entries here if ESPN uses different abbreviations
-    # e.g., "GTOWN": "GTWN",
+    "AC": "AMER",    # American University
+    "AFA": "AF",     # Air Force
+    "ALBY": "UALB",  # UAlbany
+    "BSU": "BOIS",   # Boise State
+    "BUFF": "BUF",   # Buffalo
+    "CAMP": "CAM",   # Campbell
+    "CCAR": "CCU",   # Coastal Carolina
+    "CHAR": "COFC",  # College of Charleston
+    "CHAT": "UTC",   # Chattanooga
+    "CLEV": "CLE",   # Cleveland State
+    "CLMB": "COLU",  # Columbia
+    "CSB": "CSUB",   # Cal State Bakersfield
+    "CSN": "CSUN",   # Cal State Northridge
+    "DET": "DETM",   # Detroit Mercy
+    "EKY": "EKU",    # Eastern Kentucky
+    "GTOWN": "GTWN", # Georgetown
+    "IND": "IU",     # Indiana
+    "IW": "UIW",     # Incarnate Word
+    "JVST": "JXST",  # Jacksonville State
+    "KAN": "KU",     # Kansas
+    "LINW": "LIN",   # Lindenwood
+    "MASSL": "UML",  # UMass Lowell
+    "MCNS": "MCN",   # McNeese
+    "MIL": "MILW",   # Milwaukee
+    "MIO": "M-OH",   # Miami (Ohio)
+    "MIZZ": "MIZ",   # Missouri
+    "MOSU": "MOST",  # Missouri State
+    "MTU": "MTSU",   # Middle Tennessee
+    "MURR": "MUR",   # Murray State
+    "NCST": "NCSU",  # NC State
+    "NHC": "UNH",    # New Hampshire (NHC = NH Cats)
+    "NIAG": "NIA",   # Niagara
+    "NW": "NU",      # Northwestern
+    "OH": "OHIO",    # Ohio (Bobcats)
+    "OKLA": "OU",    # Oklahoma
+    "SBON": "SBU",   # St. Bonaventure
+    "SCAR": "SC",    # South Carolina
+    "SPC": "SPU",    # Saint Peter's
+    "STLO": "SLU",   # Saint Louis
+    "STON": "STO",   # Stonehill
+    "TARL": "TAR",   # Tarleton State
+    "TXAM": "TA&M",  # Texas A&M
+    "UALR": "LR",    # Little Rock (Arkansas-Little Rock → ESPN: LR)
+    "UCRV": "UCR",   # UC Riverside
+    "ULL": "UL",     # Louisiana (Lafayette)
+    "UMKC": "KC",    # Kansas City (UMKC)
+    "UTRGV": "RGV",  # UT Rio Grande Valley
+    "UWGA": "WGA",   # West Georgia
+    "WAS": "WASH",   # Washington
 }
 
 # Reverse map: ESPN code → our code

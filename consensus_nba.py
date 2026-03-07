@@ -2038,19 +2038,18 @@ def build_solo_signals(
     with picks from other sources. These are tracked separately to give each
     source credit for their individual calls.
     """
-    # Collect all record fingerprints that are in consensus groups
-    # A record is "in consensus" if it's in a group with source_strength >= 2 OR expert_strength >= 2
-    consensus_fingerprints: Set[Tuple[Any, ...]] = set()
+    # Collect per-pick fingerprints that are in consensus groups.
+    # A record is "in consensus" if it's in a group with source_strength >= 2.
+    # We fingerprint per raw_fingerprint (unique pick hash) so that an expert
+    # with 10 picks where only 1 matched another source doesn't have all 10
+    # excluded from solo signals.
+    consensus_fingerprints: Set[str] = set()
 
     def add_fingerprints_from_supports(supports: List[Dict[str, Any]]) -> None:
         for sup in supports:
-            src = sup.get("source_id")
-            url = sup.get("canonical_url")
-            expert = sup.get("expert_handle") or sup.get("expert_name")
-            if src and url:
-                consensus_fingerprints.add((src, url))
-            if src and expert:
-                consensus_fingerprints.add((src, expert))
+            raw_fp = sup.get("raw_fingerprint")
+            if raw_fp:
+                consensus_fingerprints.add(raw_fp)
 
     # Process hard groups - records in groups with source_strength >= 2 are in consensus
     for g in hard_groups:
@@ -2080,15 +2079,11 @@ def build_solo_signals(
         prov = rec.get("provenance") or {}
 
         src = prov.get("source_id")
-        url = prov.get("canonical_url")
         expert = prov.get("expert_handle") or prov.get("expert_name")
+        raw_fp = prov.get("raw_fingerprint")
 
-        # Check if this record is in consensus
-        in_consensus = False
-        if src and url and (src, url) in consensus_fingerprints:
-            in_consensus = True
-        if src and expert and (src, expert) in consensus_fingerprints:
-            in_consensus = True
+        # Check if this specific pick is in consensus (per raw_fingerprint)
+        in_consensus = bool(raw_fp and raw_fp in consensus_fingerprints)
 
         if in_consensus:
             continue
@@ -2163,7 +2158,7 @@ def build_solo_signals(
                 "line_hint": prov.get("line_hint"),
                 "raw_pick_text": prov.get("raw_pick_text"),
                 "raw_block": (prov.get("raw_block") or "")[:300] if prov.get("raw_block") else None,
-                "canonical_url": url,
+                "canonical_url": prov.get("canonical_url"),
                 "expert_name": prov.get("expert_name"),
                 "expert_handle": prov.get("expert_handle"),
                 # Dimers-specific fields

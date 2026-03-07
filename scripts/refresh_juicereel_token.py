@@ -43,7 +43,8 @@ def load_env() -> None:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, _, v = line.partition("=")
-                os.environ.setdefault(k.strip(), v.strip())
+                v = v.strip().strip("'\"")
+                os.environ.setdefault(k.strip(), v)
 
 
 def get_credentials() -> tuple[str, str]:
@@ -89,8 +90,8 @@ def do_login(email: str, password: str) -> bool:
             page.fill('input[type="password"]', password)
             page.click('button:has-text("Login")')
 
-            # Wait to navigate away from login page
-            deadline = time.time() + 20
+            # Wait to navigate away from login page (allow up to 45s for slow redirects)
+            deadline = time.time() + 45
             logged_in = False
             while time.time() < deadline:
                 if "login" not in page.url:
@@ -99,7 +100,7 @@ def do_login(email: str, password: str) -> bool:
                 page.wait_for_timeout(500)
 
             if not logged_in:
-                print(f"  ERROR: Still on login page after 20s. URL: {page.url}", file=sys.stderr)
+                print(f"  ERROR: Still on login page after 45s. URL: {page.url}", file=sys.stderr)
                 browser.close()
                 return False
 

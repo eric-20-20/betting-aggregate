@@ -700,7 +700,7 @@ def grade_signal(
     game_id = game_result.get("game_id")
 
     tried_heal = False
-    while status_raw and status_raw != "FINAL":
+    while status_raw and status_raw not in {"FINAL", "STATUS_FINAL"}:
         reason = pending_reason(status_raw, date_str, games_info)
         if (
             not debug
@@ -1208,9 +1208,9 @@ def pending_reason(status_raw: Optional[str], date_str: Optional[str], games_inf
     if not status_raw:
         return "pending_unknown_status"
     status = str(status_raw).upper().strip()
-    if status in {"IN_PROGRESS", "LIVE", "HALF", "Q1", "Q2", "Q3", "Q4"}:
+    if status in {"IN_PROGRESS", "LIVE", "HALF", "Q1", "Q2", "Q3", "Q4", "STATUS_IN_PROGRESS"}:
         return "pending_in_progress"
-    if status in {"SCHEDULED", "PRE"}:
+    if status in {"SCHEDULED", "PRE", "STATUS_SCHEDULED"}:
         requested_dt = None
         try:
             requested_dt = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else None
@@ -1233,7 +1233,7 @@ def pending_reason(status_raw: Optional[str], date_str: Optional[str], games_inf
         return "pending_scheduled"
     if status in {"POSTPONED", "PPD", "CANCELLED"}:
         return "pending_postponed"
-    if status == "FINAL":
+    if status in {"FINAL", "STATUS_FINAL"}:
         return ""
     return f"pending_{status.lower()}"
 

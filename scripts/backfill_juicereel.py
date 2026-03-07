@@ -745,8 +745,16 @@ def build_records_from_rows(
             # Parse market info from pick text
             market_type, selection, line_val, side, player_name, prop_line, stat_key = _infer_market_from_pick(pick_text)
 
-            # Parse teams from matchup
+            # Parse teams from matchup — try NBA first, then NCAAB
             away_team, home_team = _parse_matchup(matchup_text, store=data_store, sport="NBA")
+            detected_sport = "NBA"
+            if not (away_team and home_team):
+                from store import get_data_store as _gds
+                _ncaab_store = _gds("NCAAB")
+                ncaab_away, ncaab_home = _parse_matchup(matchup_text, store=_ncaab_store, sport="NCAAB")
+                if ncaab_away and ncaab_home:
+                    away_team, home_team = ncaab_away, ncaab_home
+                    detected_sport = "NCAAB"
 
             # For moneyline/spread picks with just "Moneyline"/"Spread" as pick text,
             # infer selection from WIN/LOSS result + LGF game scores.
@@ -804,7 +812,7 @@ def build_records_from_rows(
             record = RawPickRecord(
                 source_id=source_id,
                 source_surface="juicereel_backfill",
-                sport="NBA",
+                sport=detected_sport,
                 market_family="player_prop" if market_type == "player_prop" else "standard",
                 observed_at_utc=observed_at.isoformat(),
                 canonical_url=url,
@@ -1400,17 +1408,32 @@ def main() -> None:
     removed = len(all_records) - len([r for r in all_records if r.raw_fingerprint in seen_fps])
     print(f"\n[backfill] Total: {len(all_records)} raw → {len(merged)} after dedup ({len(all_records) - len(merged)} removed)")
 
-    # Normalize
+    # Normalize NBA records
     from src.normalizer_juicereel_nba import normalize_juicereel_records
-    normalized = normalize_juicereel_records(deduped_records_for_norm, debug=args.debug, sport="NBA")
+    nba_records = [r for r in deduped_records_for_norm if r.get("sport") != "NCAAB"]
+    ncaab_records = [r for r in deduped_records_for_norm if r.get("sport") == "NCAAB"]
 
+    normalized = normalize_juicereel_records(nba_records, debug=args.debug, sport="NBA")
     norm_path = os.path.join(OUT_DIR, "normalized_juicereel_backfill_nba.json")
     write_json(norm_path, normalized)
     eligible = sum(1 for r in normalized if r.get("eligible_for_consensus"))
     pregraded = sum(1 for r in normalized if r.get("result"))
-    print(f"[backfill] Wrote normalized → {norm_path}")
+    print(f"[backfill] Wrote normalized NBA → {norm_path}")
     print(f"  Eligible for consensus: {eligible}/{len(normalized)}")
     print(f"  Pre-graded (has result): {pregraded}/{len(normalized)}")
+
+    # Normalize NCAAB records
+    if ncaab_records:
+        normalized_ncaab = normalize_juicereel_records(ncaab_records, debug=args.debug, sport="NCAAB")
+        norm_ncaab_path = os.path.join(OUT_DIR, "normalized_juicereel_backfill_ncaab.json")
+        write_json(norm_ncaab_path, normalized_ncaab)
+        eligible_ncaab = sum(1 for r in normalized_ncaab if r.get("eligible_for_consensus"))
+        pregraded_ncaab = sum(1 for r in normalized_ncaab if r.get("result"))
+        print(f"[backfill] Wrote normalized NCAAB → {norm_ncaab_path}")
+        print(f"  Eligible for consensus: {eligible_ncaab}/{len(normalized_ncaab)}")
+        print(f"  Pre-graded (has result): {pregraded_ncaab}/{len(normalized_ncaab)}")
+    else:
+        print("[backfill] No NCAAB records detected in backfill")
     print()
     print("Next steps:")
     print("  1. Copy out/normalized_juicereel_backfill_nba.json to out/")

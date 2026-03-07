@@ -396,16 +396,50 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
 # can be validated. Add patterns here as data grows (aim for n≥50 per pattern).
 # Sources active for NCAAB: action, covers, sportsline, dimers, oddstrader, juicereel.
 PATTERN_REGISTRY_NCAAB: List[Dict[str, Any]] = [
-    # TODO: add validated NCAAB patterns once sufficient graded data exists
+    # Validated 2026-03-06 from JuiceReel NCAAB backfill (Oct 2023 – Mar 2026)
+    # All B-tier: Wilson lower bound (z=1.645) ≥ 0.46
+    {
+        "name": "nukethebooks_ncaab_total",
+        "exact_combo": "juicereel_nukethebooks",
+        "market_type": "total",
+        "hist": {"record": "151-122", "win_pct": 0.553, "n": 273},
+        "tier_eligible": "B",
+    },
+    {
+        "name": "sxebets_ncaab_total",
+        "exact_combo": "juicereel_sxebets",
+        "market_type": "total",
+        "hist": {"record": "165-153", "win_pct": 0.519, "n": 318},
+        "tier_eligible": "B",
+    },
+    {
+        "name": "sxebets_ncaab_moneyline",
+        "exact_combo": "juicereel_sxebets",
+        "market_type": "moneyline",
+        "hist": {"record": "237-210", "win_pct": 0.530, "n": 447},
+        "tier_eligible": "B",
+    },
+    {
+        "name": "sxebets_ncaab_props",
+        "exact_combo": "juicereel_sxebets",
+        "market_type": "player_prop",
+        "hist": {"record": "39-26", "win_pct": 0.600, "n": 65},
+        "tier_eligible": "B",
+    },
 ]
 
 # Known bad combos by market type — exclude from scoring regardless of other criteria
 # These have large sample sizes showing negative/coin-flip results
 EXCLUDED_COMBOS_BY_MARKET: set = {
-    # JuiceReel solo moneylines: juicereel_nukethebooks ~38%, juicereel_sxebets ~40%
+    # NBA JuiceReel solo moneylines: juicereel_nukethebooks ~38%, juicereel_sxebets ~40%
     # Both are below the 42% hard-exclude threshold with large samples
     ("juicereel_nukethebooks", "moneyline"),
     ("juicereel_sxebets", "moneyline"),
+}
+
+# NCAAB-specific excluded combos (nukethebooks moneylines: n=642, 47.7%, Wilson=0.444)
+EXCLUDED_COMBOS_BY_MARKET_NCAAB: set = {
+    ("juicereel_nukethebooks", "moneyline"),
 }
 
 
@@ -927,7 +961,11 @@ def filter_wrong_date(
     return kept, dropped
 
 
-def filter_scorable(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def filter_scorable(
+    signals: List[Dict[str, Any]],
+    pattern_registry: Optional[List[Dict[str, Any]]] = None,
+    excluded_combos: Optional[set] = None,
+) -> List[Dict[str, Any]]:
     """Exclude single-source, avoid_conflict, and other non-actionable signals.
 
     Consensus picks require at least 2 agreeing sources — single-source picks
@@ -936,19 +974,22 @@ def filter_scorable(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     Exception: single-source signals that match an A-tier PATTERN_REGISTRY entry
     via exact_combo are allowed through (e.g. nukethebooks_solo_props).
     """
-    # Build sets of exact_combo values from PATTERN_REGISTRY for fast solo checks.
+    _registry = pattern_registry if pattern_registry is not None else PATTERN_REGISTRY
+    _excluded = excluded_combos if excluded_combos is not None else EXCLUDED_COMBOS_BY_MARKET
+
+    # Build sets of exact_combo values from registry for fast solo checks.
     # A-tier unconditional: patterns with no team/direction constraint (e.g. action UNDER props)
     # All other solo patterns (A or B tier with team/direction constraints) go into the
     # constrained list and are checked against the signal's market, direction, and team.
     solo_a_tier_unconditional = {
         p["exact_combo"]
-        for p in PATTERN_REGISTRY
+        for p in _registry
         if p.get("exact_combo") and p.get("tier_eligible") == "A" and not p.get("team")
     }
     # Constrained solo patterns: require market, direction, and/or team to match.
     # Includes: A-tier with team constraint (betql OKC), all B-tier exact_combo patterns.
     solo_constrained_patterns = [
-        p for p in PATTERN_REGISTRY
+        p for p in _registry
         if p.get("exact_combo") and (p.get("tier_eligible") == "B" or p.get("team"))
     ]
 
@@ -960,7 +1001,7 @@ def filter_scorable(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             return False
         # Exclude known-bad combo×market combinations
         combo = s.get("sources_combo", "")
-        if (combo, mkt) in EXCLUDED_COMBOS_BY_MARKET:
+        if (combo, mkt) in _excluded:
             return False
         n_sources = len(s.get("sources_present") or s.get("sources") or [])
         if n_sources >= 2:
@@ -1506,13 +1547,29 @@ def score_signal(
     total_adjustment = recency_adj + expert_adj + stat_adj + day_adj + line_adj
 
     # 4. Final score
-    wilson_score = primary["wilson_lower"] + total_adjustment
-
-    # 5. A-tier eligibility (pattern registry matching)
+    # 5. Pattern registry matching (needed before final score to allow pattern-seeded Wilson)
     _registry = pattern_registry if pattern_registry is not None else PATTERN_REGISTRY
     matched_pattern = _match_patterns(signal, registry=_registry)
     a_tier_eligible = (matched_pattern is not None
                        and matched_pattern.get("tier_eligible") == "A")
+
+    # When no lookup table data exists (e.g. NCAAB early season), seed from pattern hist.
+    # This lets B-tier pattern signals pass the quality gate based on historical record.
+    if primary["lookup_level"] == "none" and matched_pattern:
+        pat_hist = matched_pattern.get("hist", {})
+        pat_n = pat_hist.get("n", 0)
+        if pat_n >= MIN_SAMPLE_PRIMARY:
+            pat_wins = round(pat_hist.get("win_pct", 0) * pat_n)
+            pat_wilson = wilson_lower(pat_wins, pat_n, z=1.645)
+            primary = {
+                "lookup_level": "pattern_hist",
+                "label": matched_pattern.get("name", ""),
+                "win_pct": pat_hist.get("win_pct", 0),
+                "n": pat_n,
+                "wilson_lower": pat_wilson,
+            }
+
+    wilson_score = primary["wilson_lower"] + total_adjustment
 
     # 6. Confidence level
     n = primary["n"]
@@ -2082,7 +2139,12 @@ def main() -> None:
 
     sport = args.sport
     reports_dir, signals_path, plays_dir = get_sport_paths(sport)
-    active_pattern_registry = PATTERN_REGISTRY_NCAAB if sport == "NCAAB" else PATTERN_REGISTRY
+    if sport == "NCAAB":
+        active_pattern_registry = PATTERN_REGISTRY_NCAAB
+        active_excluded_combos = EXCLUDED_COMBOS_BY_MARKET_NCAAB
+    else:
+        active_pattern_registry = PATTERN_REGISTRY
+        active_excluded_combos = EXCLUDED_COMBOS_BY_MARKET
 
     date_str = args.date or date.today().strftime("%Y-%m-%d")
     try:
@@ -2104,7 +2166,8 @@ def main() -> None:
     # Load and filter signals
     signals = load_signals(date_str, sport=sport, signals_path=signals_path)
     total_signals = len(signals)
-    scorable = filter_scorable(signals)
+    scorable = filter_scorable(signals, pattern_registry=active_pattern_registry,
+                               excluded_combos=active_excluded_combos)
 
     # Filter out signals whose matchup didn't actually happen on this date
     scorable, wrong_date_count = filter_wrong_date(scorable, date_str)

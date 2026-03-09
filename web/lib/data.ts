@@ -37,6 +37,7 @@ export async function getAvailableDates(): Promise<string[]> {
     return files
       .filter((f) => f.startsWith("public_") && f.endsWith(".json"))
       .map((f) => f.replace("public_", "").replace(".json", ""))
+      .filter((d) => d >= "2025-10-01")
       .sort()
       .reverse();
   } catch {

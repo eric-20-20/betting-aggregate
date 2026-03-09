@@ -195,6 +195,7 @@ function ResultBadge({ result }: { result: string }) {
     LOSS: { label: "L", bg: "bg-red-500/20", text: "text-red-400" },
     PUSH: { label: "P", bg: "bg-gray-500/20", text: "text-gray-400" },
     PENDING: { label: "?", bg: "bg-amber-500/20", text: "text-amber-400" },
+    VOID: { label: "N/A", bg: "bg-gray-500/20", text: "text-gray-500" },
   };
   const c = config[result] || config.PENDING;
   return (

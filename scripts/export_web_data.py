@@ -437,6 +437,8 @@ def _load_grades_index() -> dict:
             result = g.get("result")
             if result in ("WIN", "LOSS", "PUSH"):
                 grades[sid] = result
+            elif result in ("VOID", "ERROR", "INELIGIBLE"):
+                grades[sid] = "VOID"
             else:
                 grades[sid] = "PENDING"
     return grades
@@ -449,6 +451,9 @@ def export_history() -> None:
         print("[export] History: no grades found, skipping")
         return
 
+    from datetime import date as _date
+    today = _date.today()
+
     history_dir = WEB_PRIVATE_DIR / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
 
@@ -456,6 +461,9 @@ def export_history() -> None:
 
     for plays_file in sorted(PLAYS_DIR.glob("plays_*.json")):
         date = plays_file.stem.replace("plays_", "")
+        # Only show current season (Oct 2025 onwards)
+        if date < "2025-10-01":
+            continue
         with open(plays_file) as f:
             data = json.load(f)
 
@@ -483,6 +491,15 @@ def export_history() -> None:
             sig = p.get("signal", {})
             sid = sig.get("signal_id", "")
             result = grades.get(sid, "PENDING")
+            # Any pick still PENDING 3+ days after game date is unresolvable → VOID
+            if result == "PENDING":
+                try:
+                    from datetime import date as _date2
+                    game_date = _date2.fromisoformat(date)
+                    if (today - game_date).days >= 3:
+                        result = "VOID"
+                except Exception:
+                    pass
             sanitized["result"] = result
             graded_plays.append(sanitized)
 
@@ -496,7 +513,7 @@ def export_history() -> None:
                     a_losses += 1
             elif result == "PUSH":
                 pushes += 1
-            else:
+            elif result != "VOID":
                 pending += 1
 
         if not graded_plays:

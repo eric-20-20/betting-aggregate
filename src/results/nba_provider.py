@@ -42,13 +42,15 @@ def _provider() -> str:
         return "nba_api"
     if os.environ.get("NBA_STATS") == "1":
         return "nba_stats"
-    # default to nba_api for games, nba_cdn for props (handled in routing)
+    # default: use LGF (LeagueGameFinder) to resolve game IDs, CDN for stats
     return "auto"
 
 
 def provider_info() -> Dict[str, Any]:
     prov = _provider()
-    if prov in {"auto", "nba_api"}:
+    if prov == "auto":
+        return {"provider": prov, "base": "lgf+cdn", "key_present": True}
+    if prov == "nba_api":
         return {"provider": prov, "base": "nba_api.stats", "key_present": True}
     if prov == "nba_cdn":
         return {"provider": "nba_cdn", "base": "cdn.nba.com", "key_present": True}
@@ -155,6 +157,27 @@ def _prepare_games_meta(games: List[Dict[str, Any]], meta: Dict[str, Any]) -> Tu
 
 def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refresh_cache: bool = False) -> Optional[Dict[str, Any]]:
     provider = _provider()
+
+    if provider == "auto":
+        # Primary path: LGF (LeagueGameFinder) resolves game_id, CDN fetches scores/stats
+        # LGF cache is fast and reliable; CDN has complete boxscores including player stats
+        lgf_result = lgf_provider.fetch_game_result(event_key, away, home, date_str, refresh_cache=refresh_cache)
+        if lgf_result and lgf_result.get("status") not in (None, "ERROR"):
+            # If it's a FINAL result with scores, return it directly
+            if lgf_result.get("status") == "FINAL" and lgf_result.get("game_id"):
+                # Try CDN for richer data (needed for player stats grading)
+                game_id = str(lgf_result["game_id"])
+                cdn_result, cdn_meta = nba_cdn.fetch_game_result(game_id, refresh_cache=refresh_cache)
+                if cdn_result and cdn_result.get("status") == "FINAL":
+                    cdn_result["game_id"] = game_id
+                    cdn_result["fallback_from"] = "auto_lgf_cdn"
+                    return cdn_result
+                # CDN unavailable — return LGF scores directly
+                lgf_result["fallback_from"] = "auto_lgf"
+                return lgf_result
+        # LGF failed or returned non-final — fall through to nba_api path
+        # (handles SCHEDULED games, missing LGF entries, etc.)
+
     if provider in {"nba_api", "auto"}:
         try:
             away_n = nba_api._norm_team(away)
@@ -429,6 +452,14 @@ def fetch_player_statline(event_key: str, player_id: str, stat_key: str, date_st
         return try_cdn(game_id, fallback_from=None)
 
     if provider == "auto":
+        # Try LGF first to get game_id (faster, more reliable than nba_api scoreboard)
+        lgf_result = lgf_provider.fetch_game_result(event_key, away, home, date_str, refresh_cache=refresh_cache)
+        lgf_game_id = lgf_result.get("game_id") if lgf_result else None
+        if lgf_game_id:
+            res = try_cdn(str(lgf_game_id), fallback_from="auto_lgf")
+            if isinstance(res, dict) and res.get("status") != "ERROR":
+                return res
+        # LGF didn't yield a game_id or CDN failed — fall back to nba_api scoreboard
         game_id, meta = resolve_game_id()
         res = try_cdn(game_id, fallback_from=None)
         if isinstance(res, dict) and res.get("status") != "ERROR":

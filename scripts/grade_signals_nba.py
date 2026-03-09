@@ -800,6 +800,15 @@ def grade_signal(
         )
 
     line = pick_line(signal)
+    # For spreads: prefer market_line (Odds API, has correct sign) over consensus line
+    # which may be unsigned/wrong-signed from scrapers like BetQL model spread
+    if market == "spread":
+        mkt_line = signal.get("market_line")
+        if mkt_line is not None:
+            try:
+                line = float(mkt_line)
+            except (TypeError, ValueError):
+                pass
     odds = pick_odds(signal)
     direction = parse_direction(signal)
 
@@ -1358,6 +1367,30 @@ def main() -> None:
     signals_path = Path(args.signals) if args.signals else signals_latest_path
     print(f"[grader] Reading {sport} signals from: {signals_path}")
     signals = read_jsonl(signals_path)
+
+    # Build market_line lookup from plays files (score_signals writes market_line there;
+    # grader needs it to grade spreads with correct sign)
+    _market_line_by_sid: Dict[str, float] = {}
+    _plays_dir = Path("data/plays")
+    if _plays_dir.exists():
+        for _pf in _plays_dir.glob("plays_*.json"):
+            try:
+                import json as _json
+                _d = _json.loads(_pf.read_text())
+                for _play in _d.get("plays", []):
+                    _sig = _play.get("signal") or {}
+                    _sid = _sig.get("signal_id")
+                    _ml = _sig.get("market_line")
+                    if _sid and _ml is not None:
+                        _market_line_by_sid[_sid] = float(_ml)
+            except Exception:
+                pass
+    if _market_line_by_sid:
+        # Inject market_line into signals so pick_line() can use it
+        for _s in signals:
+            _sid = _s.get("signal_id")
+            if _sid and _sid in _market_line_by_sid and _s.get("market_type") == "spread":
+                _s["market_line"] = _market_line_by_sid[_sid]
     # Pick best hydrated signal per id to fill missing matchup info
     best_by_signal_id: Dict[str, Dict[str, Any]] = {}
     def score_sig(s: Dict[str, Any]) -> int:

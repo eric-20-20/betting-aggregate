@@ -310,14 +310,19 @@ def resolve_grade_status(grade: Optional[Dict[str, Any]], signal: Dict[str, Any]
     status = grade.get("status")
     if status == "INELIGIBLE":
         return "INELIGIBLE", None, None
-    if status in {"WIN", "LOSS", "PUSH"}:
+    if status in {"WIN", "LOSS", "PUSH"} or (
+        status == "GRADED" and grade.get("result") in {"WIN", "LOSS", "PUSH"}
+    ):
+        # status='GRADED' is set by the fallback player-search path in the grader
+        # (graded_via_all_games_search). The actual result is in grade["result"].
+        result = grade.get("result") if status == "GRADED" else status
         odds = grade.get("best_odds")
         if odds is None:
             odds = pick_best_odds(signal)
         units = grade.get("units")
         if units is None:
-            units = american_odds_to_units(odds, status) if status else None
-        return "GRADED", status, units
+            units = american_odds_to_units(odds, result) if result else None
+        return "GRADED", result, units
     if status == "PENDING":
         return "PENDING", None, None
     if status == "ERROR":
@@ -337,12 +342,19 @@ def pick_best_grade(grades_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any
     if not grades_list:
         return None
 
+    # status='GRADED' is set by the fallback player-search path in the grader.
+    # It carries the actual result in grade["result"].
     TERMINAL = {"WIN", "LOSS", "PUSH"}
+    GRADED_FALLBACK = "GRADED"
+
+    def _is_terminal(g: Dict[str, Any]) -> bool:
+        s = g.get("status") or ""
+        return s in TERMINAL or (s == GRADED_FALLBACK and g.get("result") in TERMINAL)
 
     def grade_priority(g: Dict[str, Any]) -> Tuple[int, datetime]:
         status = g.get("status") or ""
         ts = parse_iso(g.get("graded_at_utc")) or datetime.min
-        if status in TERMINAL:
+        if _is_terminal(g):
             return (0, ts)  # highest priority
         if status == "INELIGIBLE":
             return (1, ts)
@@ -360,7 +372,7 @@ def pick_best_grade(grades_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any
     # Only return if it has a usable status
     if best:
         status = best.get("status")
-        if status in TERMINAL or status == "INELIGIBLE":
+        if status in TERMINAL or status == "INELIGIBLE" or _is_terminal(best):
             return best
 
     return None

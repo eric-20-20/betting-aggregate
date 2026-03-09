@@ -130,7 +130,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "juicereel_nukethebooks",
         "market_type": "player_prop",
         "direction": "OVER",
-        "hist": {"record": "234-186", "win_pct": 0.557, "n": 420},
+        "hist": {"record": "235-187", "win_pct": 0.557, "n": 422},
         "tier_eligible": "B",
     },
 
@@ -144,7 +144,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "total",
         "direction": "UNDER",
         "min_sources": 2,
-        "hist": {"record": "32-15", "win_pct": 0.681, "n": 47},
+        "hist": {"record": "32-17", "win_pct": 0.653, "n": 50},
         "tier_eligible": "B",
     },
 
@@ -157,7 +157,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "total",
         "direction": "UNDER",
         "min_sources": 4,
-        "hist": {"record": "650-561", "win_pct": 0.537, "n": 1211},
+        "hist": {"record": "623-549", "win_pct": 0.532, "n": 1172},
         "tier_eligible": "B",
     },
 
@@ -171,7 +171,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "total",
         "direction": "UNDER",
         "min_sources": 5,
-        "hist": {"record": "46-29", "win_pct": 0.613, "n": 75},
+        "hist": {"record": "51-32", "win_pct": 0.614, "n": 83},
         "tier_eligible": "A",
     },
 
@@ -183,7 +183,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "action",
         "market_type": "player_prop",
         "direction": "UNDER",
-        "hist": {"record": "410-264", "win_pct": 0.608, "n": 674},
+        "hist": {"record": "764-490", "win_pct": 0.609, "n": 1255},
         "tier_eligible": "A",
     },
 
@@ -195,7 +195,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "juicereel_sxebets",
         "market_type": "player_prop",
         "direction": "UNDER",
-        "hist": {"record": "571-476", "win_pct": 0.545, "n": 1047},
+        "hist": {"record": "571-476", "win_pct": 0.545, "n": 1068},
         "tier_eligible": "B",
     },
 
@@ -207,7 +207,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "betql",
         "market_type": "player_prop",
         "direction": "UNDER",
-        "hist": {"record": "951-840", "win_pct": 0.531, "n": 1791},
+        "hist": {"record": "2832-2336", "win_pct": 0.548, "n": 5172},
         "tier_eligible": "B",
     },
 
@@ -220,7 +220,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "source_pair": ["action", "oddstrader"],
         "market_type": "spread",
         "min_sources": 2,
-        "hist": {"record": "80-55", "win_pct": 0.593, "n": 135},
+        "hist": {"record": "125-87", "win_pct": 0.59, "n": 212},
         "tier_eligible": "B",
     },
 
@@ -231,7 +231,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "label": "action spread",
         "exact_combo": "action",
         "market_type": "spread",
-        "hist": {"record": "148-115", "win_pct": 0.563, "n": 263},
+        "hist": {"record": "258-205", "win_pct": 0.557, "n": 465},
         "tier_eligible": "B",
     },
 
@@ -258,7 +258,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "BOS",
-        "hist": {"record": "58-20", "win_pct": 0.744, "n": 78},
+        "hist": {"record": "57-20", "win_pct": 0.74, "n": 77},
         "tier_eligible": "A",
     },
     # betql MIN spread: 48-17 (73.8%) n=65 Wilson=0.641 — A-tier (25-26: 27-9, 75.0%)
@@ -268,7 +268,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "MIN",
-        "hist": {"record": "48-17", "win_pct": 0.738, "n": 65},
+        "hist": {"record": "48-17", "win_pct": 0.738, "n": 67},
         "tier_eligible": "A",
     },
     # betql LAC spread: 59-23 (72.0%) n=82 Wilson=0.632 — A-tier (25-26: 29-15, 65.9%)
@@ -298,7 +298,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "PHX",
-        "hist": {"record": "37-18", "win_pct": 0.673, "n": 55},
+        "hist": {"record": "37-18", "win_pct": 0.673, "n": 57},
         "tier_eligible": "A",
     },
     # betql HOU spread: 56-35 (61.5%) n=91 Wilson=0.529 — A-tier (25-26: 33-16, 67.3%)
@@ -319,7 +319,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "GSW",
-        "hist": {"record": "59-36", "win_pct": 0.621, "n": 95},
+        "hist": {"record": "58-35", "win_pct": 0.624, "n": 95},
         "tier_eligible": "B",
     },
     # betql NYK spread: 49-39 (55.7%) n=88 Wilson=0.469 — B-tier
@@ -330,7 +330,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "NYK",
-        "hist": {"record": "49-39", "win_pct": 0.557, "n": 88},
+        "hist": {"record": "49-39", "win_pct": 0.557, "n": 91},
         "tier_eligible": "B",
     },
 

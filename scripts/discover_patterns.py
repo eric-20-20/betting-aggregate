@@ -109,6 +109,11 @@ def find_report_row(
     team = pat.get("team")
     stat_type = pat.get("stat_type")
 
+    # Stat-type patterns (e.g. assists-only) can't be matched: the report has
+    # no stat_type breakdown — return None so health check skips them.
+    if stat_type:
+        return None
+
     for row in rows:
         if combo and row.get("sources_combo") != combo:
             continue
@@ -119,12 +124,6 @@ def find_report_row(
         if team:
             # Team-specific spread/ML: direction in report is the team abbreviation
             if row_dir != team:
-                continue
-        elif stat_type:
-            # Stat-type patterns: direction is OVER/UNDER, stat matched separately
-            if direction and row_dir != direction:
-                continue
-            if row.get("stat_type") and row.get("stat_type") != stat_type:
                 continue
         elif direction:
             if row_dir != direction:

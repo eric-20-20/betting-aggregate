@@ -134,22 +134,24 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "B",
     },
 
-    # betql + oddstrader UNDER totals: 32-15 (68.1%) n=47 Wilson=0.562
-    # Feb25(75%), Nov25(44%), Dec25(79%), Feb26(50%) — inconsistent, small sample
-    # B-tier; needs more data before A-tier consideration.
+    # 5-source UNDER totals (action+betql+covers+dimers+oddstrader): 51-32 (61.4%) n=83 Wilson=0.518
+    # Elevated to A-tier: Wilson 0.518 > 0.46 threshold, consistent across sample.
+    # Note: OVER direction has degraded to 10-10 (coin flip) — removed from registry.
+    # MUST be before four_source and betql_oddstrader patterns (more specific).
     {
-        "id": "betql_oddstrader_total_under",
-        "label": "betql + oddstrader total UNDER",
-        "source_pair": ["betql", "oddstrader"],
+        "id": "five_source_total_under",
+        "label": "UNDER total (5+ sources)",
+        "source_contains": ["action", "betql", "covers", "dimers", "oddstrader"],
         "market_type": "total",
         "direction": "UNDER",
-        "min_sources": 2,
-        "hist": {"record": "32-17", "win_pct": 0.653, "n": 50},
-        "tier_eligible": "B",
+        "min_sources": 5,
+        "hist": {"record": "51-32", "win_pct": 0.614, "n": 83},
+        "tier_eligible": "A",
     },
 
-    # 4-source total UNDER (action+betql+dimers+oddstrader): 650-561 (53.7%) n=1211 Wilson=0.513
+    # 4-source total UNDER (action+betql+dimers+oddstrader): 623-549 (53.2%) n=1172 Wilson=0.507
     # Consistently above 50% Nov-Feb; large reliable sample. B-tier.
+    # MUST be before betql_oddstrader pattern (more specific).
     {
         "id": "four_source_total_under",
         "label": "UNDER total (action+betql+dimers+oddstrader)",
@@ -161,18 +163,20 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "B",
     },
 
-    # 5-source UNDER totals (action+betql+covers+dimers+oddstrader): 46W-29L (61.3%) n=75 Wilson=0.518
-    # Elevated to A-tier: Wilson 0.518 > 0.46 threshold, consistent across sample.
-    # Note: OVER direction has degraded to 10-10 (coin flip) — removed from registry.
+    # betql + oddstrader UNDER totals: 32-17 (65.3%) n=50 Wilson=0.524
+    # Feb25(75%), Nov25(44%), Dec25(79%), Feb26(50%) — inconsistent, small sample
+    # B-tier; needs more data before A-tier consideration.
+    # NOTE: only matches signals that have ONLY betql+oddstrader (not 4- or 5-source,
+    # which are caught by the more-specific patterns above).
     {
-        "id": "five_source_total_under",
-        "label": "UNDER total (5+ sources)",
-        "source_contains": ["action", "betql", "covers", "dimers", "oddstrader"],
+        "id": "betql_oddstrader_total_under",
+        "label": "betql + oddstrader total UNDER",
+        "source_pair": ["betql", "oddstrader"],
         "market_type": "total",
         "direction": "UNDER",
-        "min_sources": 5,
-        "hist": {"record": "51-32", "win_pct": 0.614, "n": 83},
-        "tier_eligible": "A",
+        "min_sources": 2,
+        "hist": {"record": "32-17", "win_pct": 0.653, "n": 50},
+        "tier_eligible": "B",
     },
 
     # action solo UNDER props: 410-264 (60.8%) n=674 Wilson=0.577
@@ -199,8 +203,24 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "B",
     },
 
-    # betql solo UNDER props: 951-840 (53.1%) n=1791 Wilson=0.512
+    # betql assists UNDER props: 94-78 (54.7%) n=172 Wilson=0.484 — B-tier
+    # Outperforms betql general prop UNDER (Wilson=0.512); consistent 2024-25 season.
+    # 2025-26 season has regressed (monthly: Dec 37.5%, Jan 50.0%, Feb 48.3%) — watch.
+    # MUST be before betql_solo_props_under (more specific — stat_type constraint).
+    {
+        "id": "betql_props_assists_under",
+        "label": "betql assists prop UNDER",
+        "exact_combo": "betql",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "assists",
+        "hist": {"record": "94-78", "win_pct": 0.547, "n": 172},
+        "tier_eligible": "B",
+    },
+
+    # betql solo UNDER props: 2832-2336 (54.8%) n=5172 Wilson=0.534
     # Largest single-source sample; consistent UNDER edge across all months.
+    # Catches all betql UNDER props not matched by a more-specific betql pattern above.
     {
         "id": "betql_solo_props_under",
         "label": "betql player prop UNDER",
@@ -331,24 +351,6 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "spread",
         "team": "NYK",
         "hist": {"record": "49-39", "win_pct": 0.557, "n": 91},
-        "tier_eligible": "B",
-    },
-
-    # ── BetQL stat-type specific prop patterns ────────────────────────────────
-    # Uses "stat_type" key (maps to signal.atomic_stat) for granular matching.
-    # Only triggers when both source + direction + stat type all match.
-
-    # betql assists UNDER props: 94-78 (54.7%) n=172 Wilson=0.484 — B-tier
-    # Outperforms betql general prop UNDER (Wilson=0.512); consistent 2024-25 season.
-    # 2025-26 season has regressed (monthly: Dec 37.5%, Jan 50.0%, Feb 48.3%) — watch.
-    {
-        "id": "betql_props_assists_under",
-        "label": "betql assists prop UNDER",
-        "exact_combo": "betql",
-        "market_type": "player_prop",
-        "direction": "UNDER",
-        "stat_type": "assists",
-        "hist": {"record": "94-78", "win_pct": 0.547, "n": 172},
         "tier_eligible": "B",
     },
 

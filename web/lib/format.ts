@@ -19,13 +19,14 @@ export function formatPickSelection(signal: {
   direction: string;
   atomic_stat: string | null;
   line: number | null;
+  market_line?: number | null;
   away_team: string;
   home_team: string;
 }): { main: string; detail: string } {
-  const { selection, market_type, direction, atomic_stat, line } = signal;
+  const { selection, market_type, direction, atomic_stat, line, market_line } = signal;
 
   if (market_type === "player_prop") {
-    const parts = selection.replace("NBA:", "").split("::");
+    const parts = selection.replace("NBA:", "").replace("NCAAB:", "").split("::");
     const playerRaw = parts[0] || "";
     const nameParts = playerRaw.split("_");
     const firstName = nameParts[0]?.charAt(0).toUpperCase() + ".";
@@ -46,8 +47,15 @@ export function formatPickSelection(signal: {
   }
 
   if (market_type === "spread") {
+    // Use market_line (signed, from Odds API) when available so favorites show
+    // as negative (e.g. LAC -6.5). Fall back to consensus line if unavailable.
+    const displayLine = market_line != null ? market_line : line;
     const lineStr =
-      line !== null ? (line > 0 ? ` +${line}` : ` ${line}`) : "";
+      displayLine !== null && displayLine !== undefined
+        ? displayLine > 0
+          ? ` +${displayLine}`
+          : ` ${displayLine}`
+        : "";
     return {
       main: `${selection}${lineStr}`,
       detail: "Spread",

@@ -241,6 +241,10 @@ python3 scripts/report_trends.py 2>&1 | tail -5
 python3 scripts/report_recent_trends.py 2>&1 | tail -5
 
 echo ""
+echo "── NBA Step 7b: Pattern health check ──"
+python3 scripts/discover_patterns.py 2>&1 | tail -20 || echo "  (pattern check non-fatal)"
+
+echo ""
 echo "── NBA Step 8: Fetching current market lines ──"
 if [ -n "${ODDS_API_KEY:-}" ]; then
     python3 scripts/fetch_current_lines.py 2>&1 | tail -5 || echo "  ⚠ Line fetch failed (continuing without market lines)"

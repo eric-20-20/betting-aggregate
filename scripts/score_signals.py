@@ -1704,7 +1704,17 @@ def format_selection(signal: Dict[str, Any]) -> str:
         line_str = f" {sig_line}" if sig_line is not None else ""
         return f"{player} {stat} {d}{line_str}"
     elif market == "spread":
-        line_str = f" {'+' if sig_line and sig_line > 0 else ''}{sig_line}" if sig_line is not None else ""
+        # Prefer the signed market_line (from Odds API) over the unsigned consensus line.
+        # consensus `line` is always a magnitude (e.g. 6.5), so it can never show
+        # a team as a favorite. market_line carries the real +/- sign.
+        display_line = signal.get("market_line")
+        if display_line is None:
+            display_line = sig_line
+        if display_line is not None:
+            prefix = "+" if display_line > 0 else ""
+            line_str = f" {prefix}{display_line}"
+        else:
+            line_str = ""
         return f"{selection} spread{line_str}"
     elif market == "total":
         d = direction[0] if direction else "?"

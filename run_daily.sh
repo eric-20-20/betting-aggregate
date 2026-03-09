@@ -2,11 +2,13 @@
 # run_daily.sh — Daily pipeline: ingest → normalize → consensus → ledger → grade → report
 #
 # Usage:
-#   ./run_daily.sh            # run full pipeline (NBA + NCAAB)
-#   ./run_daily.sh --nba-only # only run NBA pipeline
-#   ./run_daily.sh --ncaab-only # only run NCAAB pipeline
-#   ./run_daily.sh --skip-ingest  # skip scraping, just rebuild from existing data
-#   ./run_daily.sh --debug    # verbose output from all scripts
+#   ./run_daily.sh                      # run full pipeline (NBA + NCAAB)
+#   ./run_daily.sh --nba-only           # only run NBA pipeline
+#   ./run_daily.sh --ncaab-only         # only run NCAAB pipeline
+#   ./run_daily.sh --quick              # fast mode: skip grading/reports (~5-8 min)
+#   ./run_daily.sh --nba-only --quick   # quick NBA-only run (ingest → score → export)
+#   ./run_daily.sh --skip-ingest        # skip scraping, just rebuild from existing data
+#   ./run_daily.sh --debug              # verbose output from all scripts
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -34,6 +36,7 @@ run_with_timeout() {
 
 DEBUG=""
 SKIP_INGEST=false
+QUICK=false
 RUN_NBA=true
 RUN_NCAAB=true
 
@@ -41,6 +44,7 @@ for arg in "$@"; do
     case "$arg" in
         --debug) DEBUG="--debug" ;;
         --skip-ingest) SKIP_INGEST=true ;;
+        --quick) QUICK=true ;;
         --nba-only) RUN_NCAAB=false ;;
         --ncaab-only) RUN_NBA=false ;;
         *) echo "Unknown arg: $arg"; exit 1 ;;
@@ -79,79 +83,75 @@ echo "╔═══════════════════════�
 echo "║           NBA PIPELINE                ║"
 echo "╚═══════════════════════════════════════╝"
 
-# ─── Step 1: Ingest NBA picks ────────────────────────────────────────
+# ─── Step 1: Ingest NBA picks (parallel) ─────────────────────────────
 if [ "$SKIP_INGEST" = false ]; then
     echo ""
-    echo "── NBA Step 1: Ingesting picks ──"
+    echo "── NBA Step 1: Refreshing auth tokens ──"
+    python3 scripts/refresh_sportsline_token.py 2>&1 | tail -2 || echo "  ⚠ SportsLine token refresh failed"
+    python3 scripts/refresh_dimers_token.py 2>&1 | tail -2 || echo "  ⚠ Dimers token refresh failed"
+    python3 scripts/refresh_betql_token.py 2>&1 | tail -2 || echo "  ⚠ BetQL token refresh failed"
+    python3 scripts/refresh_juicereel_token.py 2>&1 | tail -2 || echo "  ⚠ JuiceReel token refresh failed"
 
-    echo "  [1/10] Action Network..."
-    run_with_timeout 120 python3 action_ingest.py $DEBUG 2>&1 | tail -5 || echo "  ⚠ Action ingest failed (continuing)"
+    echo ""
+    echo "── NBA Step 1: Ingesting picks (parallel) ──"
 
-    echo "  [2/10] Covers..."
-    run_with_timeout 120 python3 covers_ingest.py $DEBUG 2>&1 | tail -5 || echo "  ⚠ Covers ingest failed (continuing)"
+    # Launch all scrapers simultaneously in background.
+    # Each writes to its own output file — no conflicts.
+    declare -a _INGEST_PIDS=()
+    declare -a _INGEST_NAMES=()
+    _INGEST_START=$SECONDS
 
-    echo "  [3/10] SportsLine..."
-    python3 scripts/refresh_sportsline_token.py 2>&1 || echo "  ⚠ SportsLine token refresh failed (continuing)"
+    _run_ingest_bg() {
+        local name="$1"; shift
+        local secs="$1"; shift
+        run_with_timeout "$secs" "$@" > "/tmp/ingest_nba_${name}.log" 2>&1 &
+        _INGEST_PIDS+=($!)
+        _INGEST_NAMES+=("$name")
+    }
+
+    _run_ingest_bg "action"       120  python3 action_ingest.py $DEBUG
+    _run_ingest_bg "covers"       120  python3 covers_ingest.py $DEBUG
+    _run_ingest_bg "oddstrader"   120  python3 oddstrader_ingest.py --props $DEBUG
     if [ -f data/sportsline_storage_state.json ]; then
-        run_with_timeout 180 python3 sportsline_ingest.py --storage data/sportsline_storage_state.json $DEBUG 2>&1 | tail -5 || echo "  ⚠ SportsLine ingest failed (continuing)"
+        _run_ingest_bg "sportsline"   180  python3 sportsline_ingest.py --storage data/sportsline_storage_state.json $DEBUG
     else
-        echo "  ⚠ SportsLine skipped (storage state still missing after refresh)"
+        echo "  ⚠ SportsLine skipped (no storage state)"
     fi
-
-    echo "  [4/10] Dimers..."
-    python3 scripts/refresh_dimers_token.py 2>&1 || echo "  ⚠ Dimers token refresh failed (continuing)"
     if [ -f dimers_storage_state.json ]; then
-        run_with_timeout 180 python3 dimers_ingest.py --storage-state dimers_storage_state.json $DEBUG 2>&1 | tail -5 || echo "  ⚠ Dimers ingest failed (continuing)"
+        _run_ingest_bg "dimers"       180  python3 dimers_ingest.py --storage-state dimers_storage_state.json $DEBUG
     else
-        echo "  ⚠ Dimers skipped (storage state still missing after refresh)"
+        echo "  ⚠ Dimers skipped (no storage state)"
     fi
-
-    echo "  [5/10] OddsTrader..."
-    run_with_timeout 120 python3 oddstrader_ingest.py --props $DEBUG 2>&1 | tail -5 || echo "  ⚠ OddsTrader ingest failed (continuing)"
-
-    echo "  [6/10] BetQL Spreads..."
-    python3 scripts/refresh_betql_token.py 2>&1 || echo "  ⚠ BetQL token refresh failed (continuing)"
     if [ -f data/betql_storage_state.json ]; then
-        run_with_timeout 120 python3 scripts/probe_betql_spread_nba.py $DEBUG 2>&1 | tail -5 || echo "  ⚠ BetQL Spreads failed (continuing)"
+        _run_ingest_bg "betql_spread" 120  python3 scripts/probe_betql_spread_nba.py $DEBUG
+        _run_ingest_bg "betql_totals" 120  python3 scripts/probe_betql_totals_nba.py $DEBUG
+        _run_ingest_bg "betql_sharp"  120  python3 scripts/probe_betql_sharp_nba.py $DEBUG
+        _run_ingest_bg "betql_props"  300  python3 scripts/probe_betql_prop_picks_nba.py $DEBUG
     else
-        echo "  ⚠ BetQL Spreads skipped (storage state still missing after refresh)"
+        echo "  ⚠ BetQL skipped (no storage state)"
     fi
-
-    echo "  [7/10] BetQL Totals..."
-    if [ -f data/betql_storage_state.json ]; then
-        run_with_timeout 120 python3 scripts/probe_betql_totals_nba.py $DEBUG 2>&1 | tail -5 || echo "  ⚠ BetQL Totals failed (continuing)"
-    else
-        echo "  ⚠ BetQL Totals skipped (no storage state)"
-    fi
-
-    echo "  [8/10] BetQL Sharp..."
-    if [ -f data/betql_storage_state.json ]; then
-        run_with_timeout 120 python3 scripts/probe_betql_sharp_nba.py $DEBUG 2>&1 | tail -5 || echo "  ⚠ BetQL Sharp failed (continuing)"
-    else
-        echo "  ⚠ BetQL Sharp skipped (no storage state)"
-    fi
-
-    echo "  [9/10] BetQL Props..."
-    if [ -f data/betql_storage_state.json ]; then
-        run_with_timeout 300 python3 scripts/probe_betql_prop_picks_nba.py $DEBUG 2>&1 | tail -5 || echo "  ⚠ BetQL Props failed (continuing)"
-    else
-        echo "  ⚠ BetQL Props skipped (no storage state)"
-    fi
-
-    echo "  [10/10] VegasInsider..."
     if [ -f data/vegasinsider_storage_state.json ]; then
-        run_with_timeout 180 python3 vegasinsider_ingest.py --storage data/vegasinsider_storage_state.json $DEBUG 2>&1 | tail -5 || echo "  ⚠ VegasInsider ingest failed (continuing)"
+        _run_ingest_bg "vegasinsider" 180  python3 vegasinsider_ingest.py --storage data/vegasinsider_storage_state.json $DEBUG
     else
-        echo "  ⚠ VegasInsider skipped (no storage state at data/vegasinsider_storage_state.json)"
+        echo "  ⚠ VegasInsider skipped (no storage state)"
+    fi
+    if [ -f data/juicereel_storage_state.json ]; then
+        _run_ingest_bg "juicereel"    180  python3 juicereel_ingest.py --storage data/juicereel_storage_state.json $DEBUG
+    else
+        echo "  ⚠ JuiceReel skipped (no storage state)"
     fi
 
-    echo "  [11/11] JuiceReel..."
-    python3 scripts/refresh_juicereel_token.py 2>&1 || echo "  ⚠ JuiceReel token refresh failed (continuing)"
-    if [ -f data/juicereel_storage_state.json ]; then
-        run_with_timeout 180 python3 juicereel_ingest.py --storage data/juicereel_storage_state.json $DEBUG 2>&1 | tail -5 || echo "  ⚠ JuiceReel ingest failed (continuing)"
-    else
-        echo "  ⚠ JuiceReel skipped (storage state still missing after refresh)"
-    fi
+    # Wait for all background scrapers, report results
+    for i in "${!_INGEST_PIDS[@]}"; do
+        _name="${_INGEST_NAMES[$i]}"
+        if wait "${_INGEST_PIDS[$i]}" 2>/dev/null; then
+            echo "  ✓ ${_name} ($(tail -1 /tmp/ingest_nba_${_name}.log 2>/dev/null || true))"
+        else
+            echo "  ⚠ ${_name} failed — last output:"
+            tail -3 "/tmp/ingest_nba_${_name}.log" 2>/dev/null | sed 's/^/      /' || true
+        fi
+    done
+    echo "  Ingest wall time: $((SECONDS - _INGEST_START))s"
 else
     echo ""
     echo "── NBA Step 1: Skipped (--skip-ingest) ──"
@@ -225,24 +225,29 @@ python3 scripts/build_signal_ledger.py $DEBUG \
     --include-normalized-jsonl data/latest/normalized_covers_backfill.jsonl \
     2>&1 | tail -10
 
-echo ""
-echo "── NBA Step 5: Grading signals ──"
-python3 scripts/grade_signals_nba.py $DEBUG 2>&1 | tail -10
+if [ "$QUICK" = false ]; then
+    echo ""
+    echo "── NBA Step 5: Grading signals ──"
+    python3 scripts/grade_signals_nba.py $DEBUG 2>&1 | tail -10
 
-echo ""
-echo "── NBA Step 6: Building research dataset ──"
-python3 scripts/build_research_dataset_nba_occurrences.py 2>&1 | tail -5
-python3 scripts/build_research_dataset_nba.py 2>&1 | tail -5
+    echo ""
+    echo "── NBA Step 6: Building research dataset ──"
+    python3 scripts/build_research_dataset_nba_occurrences.py 2>&1 | tail -5
+    python3 scripts/build_research_dataset_nba.py 2>&1 | tail -5
 
-echo ""
-echo "── NBA Step 7: Generating reports ──"
-python3 scripts/report_records.py 2>&1 | tail -5
-python3 scripts/report_trends.py 2>&1 | tail -5
-python3 scripts/report_recent_trends.py 2>&1 | tail -5
+    echo ""
+    echo "── NBA Step 7: Generating reports ──"
+    python3 scripts/report_records.py 2>&1 | tail -5
+    python3 scripts/report_trends.py 2>&1 | tail -5
+    python3 scripts/report_recent_trends.py 2>&1 | tail -5
 
-echo ""
-echo "── NBA Step 7b: Pattern health check ──"
-python3 scripts/discover_patterns.py 2>&1 | tail -20 || echo "  (pattern check non-fatal)"
+    echo ""
+    echo "── NBA Step 7b: Pattern health check ──"
+    python3 scripts/discover_patterns.py 2>&1 | tail -20 || echo "  (pattern check non-fatal)"
+else
+    echo ""
+    echo "── NBA Steps 5-7: Skipped (--quick mode) ──"
+fi
 
 echo ""
 echo "── NBA Step 8: Fetching current market lines ──"
@@ -275,33 +280,47 @@ echo "╔═══════════════════════�
 echo "║          NCAAB PIPELINE               ║"
 echo "╚═══════════════════════════════════════╝"
 
-# ─── NCAAB Step 1: Ingest ────────────────────────────────────────────
+# ─── NCAAB Step 1: Ingest (parallel) ────────────────────────────────
 if [ "$SKIP_INGEST" = false ]; then
     echo ""
-    echo "── NCAAB Step 1: Ingesting picks ──"
+    echo "── NCAAB Step 1: Ingesting picks (parallel) ──"
 
-    echo "  [1/5] Action Network..."
-    run_with_timeout 120 python3 action_ingest.py --sport NCAAB $DEBUG 2>&1 | tail -5 || echo "  ⚠ Action NCAAB failed (continuing)"
+    declare -a _INGEST_NCAAB_PIDS=()
+    declare -a _INGEST_NCAAB_NAMES=()
+    _INGEST_NCAAB_START=$SECONDS
 
-    echo "  [2/5] Covers..."
-    run_with_timeout 120 python3 covers_ingest.py --sport NCAAB $DEBUG 2>&1 | tail -5 || echo "  ⚠ Covers NCAAB failed (continuing)"
+    _run_ncaab_bg() {
+        local name="$1"; shift
+        local secs="$1"; shift
+        run_with_timeout "$secs" "$@" > "/tmp/ingest_ncaab_${name}.log" 2>&1 &
+        _INGEST_NCAAB_PIDS+=($!)
+        _INGEST_NCAAB_NAMES+=("$name")
+    }
 
-    echo "  [3/5] SportsLine..."
+    _run_ncaab_bg "action"     120  python3 action_ingest.py --sport NCAAB $DEBUG
+    _run_ncaab_bg "covers"     120  python3 covers_ingest.py --sport NCAAB $DEBUG
+    _run_ncaab_bg "oddstrader" 120  python3 oddstrader_ingest.py --sport NCAAB $DEBUG
     if [ -f data/sportsline_storage_state.json ]; then
-        run_with_timeout 180 python3 sportsline_ingest.py --sport NCAAB --storage data/sportsline_storage_state.json $DEBUG 2>&1 | tail -5 || echo "  ⚠ SportsLine NCAAB failed (continuing)"
+        _run_ncaab_bg "sportsline" 180  python3 sportsline_ingest.py --sport NCAAB --storage data/sportsline_storage_state.json $DEBUG
     else
         echo "  ⚠ SportsLine NCAAB skipped (no storage state)"
     fi
-
-    echo "  [4/5] Dimers..."
     if [ -f dimers_storage_state.json ]; then
-        run_with_timeout 180 python3 dimers_ingest.py --sport NCAAB --storage-state dimers_storage_state.json $DEBUG 2>&1 | tail -5 || echo "  ⚠ Dimers NCAAB failed (continuing)"
+        _run_ncaab_bg "dimers"     180  python3 dimers_ingest.py --sport NCAAB --storage-state dimers_storage_state.json $DEBUG
     else
         echo "  ⚠ Dimers NCAAB skipped (no storage state)"
     fi
 
-    echo "  [5/5] OddsTrader..."
-    run_with_timeout 120 python3 oddstrader_ingest.py --sport NCAAB $DEBUG 2>&1 | tail -5 || echo "  ⚠ OddsTrader NCAAB failed (continuing)"
+    for i in "${!_INGEST_NCAAB_PIDS[@]}"; do
+        _name="${_INGEST_NCAAB_NAMES[$i]}"
+        if wait "${_INGEST_NCAAB_PIDS[$i]}" 2>/dev/null; then
+            echo "  ✓ ${_name} ($(tail -1 /tmp/ingest_ncaab_${_name}.log 2>/dev/null || true))"
+        else
+            echo "  ⚠ ${_name} failed — last output:"
+            tail -3 "/tmp/ingest_ncaab_${_name}.log" 2>/dev/null | sed 's/^/      /' || true
+        fi
+    done
+    echo "  Ingest wall time: $((SECONDS - _INGEST_NCAAB_START))s"
 else
     echo ""
     echo "── NCAAB Step 1: Skipped (--skip-ingest) ──"

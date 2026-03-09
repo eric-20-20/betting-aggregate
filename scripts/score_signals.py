@@ -149,8 +149,21 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "A",
     },
 
+    # Any 4+ source UNDER total (any combo): 812-709 (53.6%) n=1521 Wilson=0.510
+    # Large sample, consistent positive edge. Any 4+ sources agreeing on UNDER is A-tier.
+    # MUST be before the specific action+betql+dimers+oddstrader pattern below.
+    {
+        "id": "four_source_total_under_any",
+        "label": "UNDER total (4+ sources)",
+        "market_type": "total",
+        "direction": "UNDER",
+        "min_sources": 4,
+        "hist": {"record": "812-709", "win_pct": 0.536, "n": 1521},
+        "tier_eligible": "A",
+    },
+
     # 4-source total UNDER (action+betql+dimers+oddstrader): 623-549 (53.2%) n=1172 Wilson=0.507
-    # Consistently above 50% Nov-Feb; large reliable sample. B-tier.
+    # Kept for historical reference; now superseded by four_source_total_under_any above.
     # MUST be before betql_oddstrader pattern (more specific).
     {
         "id": "four_source_total_under",
@@ -545,7 +558,7 @@ def _normalize_direction(signal: Dict[str, Any]) -> Optional[str]:
     market = signal.get("market_type", "")
     if market not in ("player_prop", "total"):
         return None
-    d = (signal.get("direction") or "").upper()
+    d = (signal.get("direction") or signal.get("selection") or "").upper()
     if "OVER" in d:
         return "OVER"
     if "UNDER" in d:
@@ -876,6 +889,11 @@ def load_game_schedule(date_str: str) -> Optional[Set[Tuple[str, str]]]:
                 if raw_away not in _NBA_TEAMS and _canon_team(raw_away) not in _NBA_TEAMS:
                     continue
                 if raw_home not in _NBA_TEAMS and _canon_team(raw_home) not in _NBA_TEAMS:
+                    continue
+                # Skip pre-game placeholder entries (both scores < 40 = not a real NBA final)
+                h_score = g.get("home_score") or 0
+                a_score = g.get("away_score") or 0
+                if g.get("status") == "FINAL" and h_score < 40 and a_score < 40:
                     continue
                 away = _canon_team(raw_away)
                 home = _canon_team(raw_home)
@@ -1933,6 +1951,46 @@ def build_output(
     if len(deduped_passed) < len(passed_raw):
         print(f"  Deduped {len(passed_raw) - len(deduped_passed)} duplicate picks")
     passed_raw = deduped_passed
+
+    # Conflict filter: remove picks where the same player+stat has both OVER and UNDER.
+    # This prevents showing users contradictory picks (e.g. Filipowski OVER 13 pts AND UNDER 16.5 pts).
+    # Keep the higher-Wilson pick; drop the other.
+    def _prop_conflict_key(sig: Dict[str, Any]) -> Optional[str]:
+        """Return (player, stat) key for player props, else None."""
+        if sig.get("market_type") != "player_prop":
+            return None
+        sel = sig.get("selection", "")
+        parts = sel.replace("NBA:", "").replace("NCAAB:", "").split("::")
+        player = parts[0] if parts else ""
+        stat = sig.get("atomic_stat") or (parts[1] if len(parts) > 1 else "")
+        ek = sig.get("event_key", "")
+        return f"{player}|{stat}|{ek}" if player else None
+
+    conflict_map: Dict[str, List[int]] = {}  # key -> list of indices in passed_raw
+    for idx, (signal, score_data, tier) in enumerate(passed_raw):
+        ck = _prop_conflict_key(signal)
+        if ck:
+            conflict_map.setdefault(ck, []).append(idx)
+
+    conflict_drop: set = set()
+    for ck, indices in conflict_map.items():
+        if len(indices) < 2:
+            continue
+        # Multiple picks for same player+stat — check if directions conflict
+        directions = [_normalize_direction(passed_raw[i][0]) for i in indices]
+        if len(set(directions)) > 1:
+            # Conflict: keep highest-Wilson, drop rest
+            best_idx = max(indices, key=lambda i: passed_raw[i][1]["wilson_score"])
+            for i in indices:
+                if i != best_idx:
+                    conflict_drop.add(i)
+            sig = passed_raw[best_idx][0]
+            sel = sig.get("selection", "")
+            print(f"  Conflict: {ck} — kept {_normalize_direction(sig)}, dropped {len(indices)-1} conflicting pick(s)")
+
+    if conflict_drop:
+        passed_raw = [item for i, item in enumerate(passed_raw) if i not in conflict_drop]
+        print(f"  Removed {len(conflict_drop)} conflicting opposite-direction picks")
 
     # Minimum floor: relax gate if too few pass
     if len(passed_raw) < MIN_DAILY_PICKS and scored:

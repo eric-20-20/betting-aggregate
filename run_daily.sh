@@ -30,7 +30,7 @@ run_with_timeout() {
     wait "$pid" 2>/dev/null
     local rc=$?
     kill "$watchdog" 2>/dev/null
-    wait "$watchdog" 2>/dev/null
+    wait "$watchdog" 2>/dev/null || true  # discard watchdog exit code
     return $rc
 }
 

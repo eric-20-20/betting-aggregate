@@ -20,6 +20,23 @@ export { formatOdds, formatWinPct, formatRecord, formatPickSelection } from "./f
 const PUBLIC_DATA_DIR = path.join(process.cwd(), "public", "data");
 const PRIVATE_DATA_DIR = path.join(process.cwd(), "data", "private");
 
+// Known source/expert names that should never appear in public-facing labels
+const SOURCE_NAMES = [
+  "nukethebooks", "juicereel_nukethebooks", "juicereel_sxebets", "sxebets",
+  "action", "betql", "covers", "dimers", "sportsline", "oddstrader",
+  "vegasinsider", "juicereel",
+];
+
+function sanitizePatternLabel(label: string): string {
+  let s = label;
+  for (const src of SOURCE_NAMES) {
+    s = s.replace(new RegExp(src, "gi"), "source");
+  }
+  // Collapse "source source" or "source_source" artifacts
+  s = s.replace(/source[_ ]source/gi, "multi-source");
+  return s.trim();
+}
+
 async function readJSON<T>(filePath: string): Promise<T | null> {
   try {
     const raw = await fs.readFile(filePath, "utf-8");
@@ -192,7 +209,9 @@ export async function getAggregatedTimeline(tiers: string[] = ["A"]): Promise<Ti
         market_type: sig.market_type,
         line: sig.line,
         best_odds: sig.best_odds,
-        pattern_label: play.matched_pattern?.label ?? null,
+        pattern_label: play.matched_pattern?.label
+          ? sanitizePatternLabel(play.matched_pattern.label)
+          : null,
         pattern_record: play.matched_pattern?.hist?.record ?? null,
         matchup,
       });

@@ -258,6 +258,10 @@ else
 fi
 
 echo ""
+echo "── NBA Step 8b: Refreshing game schedule cache ──"
+python3 scripts/fetch_cdn_scoreboards.py "$DATE" 2>&1 | tail -3 || echo "  ⚠ Scoreboard cache refresh failed (continuing)"
+
+echo ""
 echo "── NBA Step 9: Scoring today's signals ──"
 python3 scripts/score_signals.py 2>&1 | tail -20
 

@@ -33,6 +33,7 @@ export interface Signal {
   line_max: number | null;
   market_line?: number | null;
   line_diff?: number | null;
+  game_time_et?: string | null;
 }
 
 export interface Factor {

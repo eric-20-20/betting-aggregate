@@ -5,6 +5,8 @@ import {
   getTopTrends,
   getTierPerformance,
   getRecentTrends,
+  getHistoryIndex,
+  getPLChartData,
   formatWinPct,
   formatRecord,
 } from "@/lib/data";
@@ -17,16 +19,80 @@ import type {
   RecentWindowRecord,
   HotStreak,
 } from "@/lib/types";
-import type { TierPerformance } from "@/lib/data";
+import type { TierPerformance, PLDataPoint } from "@/lib/data";
+
+function PLChart({ data }: { data: PLDataPoint[] }) {
+  if (data.length < 2) return null;
+
+  const values = data.map((d) => d.cumulative_units);
+  const minVal = Math.min(0, ...values);
+  const maxVal = Math.max(0, ...values);
+  const range = maxVal - minVal || 1;
+
+  const W = 600;
+  const H = 120;
+  const PAD = 8;
+  const innerW = W - PAD * 2;
+  const innerH = H - PAD * 2;
+
+  const toX = (i: number) => PAD + (i / (data.length - 1)) * innerW;
+  const toY = (v: number) => PAD + (1 - (v - minVal) / range) * innerH;
+
+  const zeroY = toY(0);
+  const lastVal = values[values.length - 1];
+  const isPositive = lastVal >= 0;
+
+  const points = data.map((d, i) => `${toX(i)},${toY(d.cumulative_units)}`).join(" ");
+  const areaPoints = `${PAD},${zeroY} ${points} ${toX(data.length - 1)},${zeroY}`;
+
+  return (
+    <div className="w-full">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="none">
+        {/* Zero line */}
+        <line
+          x1={PAD} y1={zeroY} x2={W - PAD} y2={zeroY}
+          stroke="#374151" strokeWidth="1" strokeDasharray="4,3"
+        />
+        {/* Area fill */}
+        <polygon
+          points={areaPoints}
+          fill={isPositive ? "rgba(16,185,129,0.10)" : "rgba(239,68,68,0.10)"}
+        />
+        {/* Line */}
+        <polyline
+          points={points}
+          fill="none"
+          stroke={isPositive ? "#10b981" : "#ef4444"}
+          strokeWidth="2"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {/* End dot */}
+        <circle
+          cx={toX(data.length - 1)}
+          cy={toY(lastVal)}
+          r="3.5"
+          fill={isPositive ? "#10b981" : "#ef4444"}
+        />
+      </svg>
+      <div className="flex justify-between text-xs text-gray-600 mt-1 px-1">
+        <span>{data[0].date}</span>
+        <span>{data[data.length - 1].date}</span>
+      </div>
+    </div>
+  );
+}
 
 export default async function TrackRecordPage() {
-  const [consensus, markets, stats, trends, tiers, recentTrends] = await Promise.all([
+  const [consensus, markets, stats, trends, tiers, recentTrends, historyIndex, plData] = await Promise.all([
     getConsensusStrengthRecords(),
     getMarketTypeRecords(),
     getStatTypeRecords(),
     getTopTrends(),
     getTierPerformance(),
     getRecentTrends(),
+    getHistoryIndex(),
+    getPLChartData(),
   ]);
 
   // Compute headline stats
@@ -48,10 +114,15 @@ export default async function TrackRecordPage() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold text-white mb-2">Track Record</h1>
-      <p className="text-gray-400 mb-8">
+      <p className="text-gray-400 mb-1">
         Full transparency on our historical performance. All picks are graded
         against final scores.
       </p>
+      {historyIndex && historyIndex.dates.length > 0 && (
+        <p className="text-gray-600 text-xs mb-8">
+          Tracking picks since {historyIndex.dates[historyIndex.dates.length - 1]?.date} · All picks generated before games tip off
+        </p>
+      )}
 
       {/* Headline Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
@@ -74,6 +145,31 @@ export default async function TrackRecordPage() {
           accent
         />
       </div>
+
+      {/* A-Tier P&L Chart */}
+      {plData.length >= 2 && (() => {
+        const lastPoint = plData[plData.length - 1];
+        const isUp = lastPoint.cumulative_units >= 0;
+        return (
+          <section className="mb-10">
+            <div className="flex items-baseline justify-between mb-3">
+              <h2 className="text-xl font-bold text-white">A-Tier Cumulative P&L</h2>
+              <div className="text-right">
+                <span className={`text-lg font-bold ${isUp ? "text-emerald-400" : "text-red-400"}`}>
+                  {isUp ? "+" : ""}{lastPoint.cumulative_units.toFixed(1)} units
+                </span>
+                <span className="text-gray-500 text-xs ml-2">at flat -110</span>
+              </div>
+            </div>
+            <p className="text-gray-500 text-sm mb-4">
+              Cumulative units won/lost betting every A-tier pick at -110 odds, 1 unit each.
+            </p>
+            <div className="bg-gray-800/40 border border-gray-700/40 rounded-lg p-4">
+              <PLChart data={plData} />
+            </div>
+          </section>
+        );
+      })()}
 
       {/* Recent Performance */}
       {recentTrends && (

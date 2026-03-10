@@ -1,6 +1,6 @@
 import { getServerSession } from "next-auth";
 import { authOptions, isAuthEnabled } from "@/lib/auth";
-import { getHistoryIndex } from "@/lib/data";
+import { getHistoryIndex, getAggregatedTimeline } from "@/lib/data";
 import { hasAccess } from "@/lib/whop";
 import HistoryClientWrapper from "./HistoryClientWrapper";
 import Link from "next/link";
@@ -55,7 +55,10 @@ export default async function HistoryPage({
     );
   }
 
-  const historyIndex = await getHistoryIndex();
+  const [historyIndex, timeline] = await Promise.all([
+    getHistoryIndex(),
+    getAggregatedTimeline(["A"]),
+  ]);
 
   if (!historyIndex || historyIndex.dates.length === 0) {
     return (
@@ -125,6 +128,7 @@ export default async function HistoryPage({
       <HistoryClientWrapper
         dates={historyIndex.dates}
         adminParam={query.admin as string | undefined}
+        timeline={timeline}
       />
     </div>
   );

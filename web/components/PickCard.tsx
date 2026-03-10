@@ -220,15 +220,20 @@ export default function PickCard({ play, result }: { play: Play; result?: string
         ? "bg-emerald-900/20 border-emerald-500/30 hover:border-emerald-400/50"
         : "bg-gray-800/60 border-gray-700/50 hover:border-gray-600/60"
     } border rounded-lg p-3 transition-colors flex flex-col gap-2`}>
-      {/* Top: tier + result badge + matchup */}
+      {/* Top: tier + result badge + matchup + game time */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <TierBadge tier={play.tier} />
           {result && <ResultBadge result={result} />}
         </div>
-        {matchup && (
-          <span className="text-gray-500 text-xs">{matchup}</span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {matchup && (
+            <span className="text-gray-500 text-xs">{matchup}</span>
+          )}
+          {signal.game_time_et && (
+            <span className="text-gray-600 text-xs">· {signal.game_time_et}</span>
+          )}
+        </div>
       </div>
 
       {/* Pick name + detail + line range */}

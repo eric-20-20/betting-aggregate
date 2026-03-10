@@ -1659,12 +1659,14 @@ def assign_tier(
     n: int,
     lookup_level: str,
     a_tier_eligible: bool = False,
+    has_pattern: bool = False,
+    sources_count: int = 0,
 ) -> str:
     """Assign tier based on pattern matching + Wilson lower bound.
 
-      A: Matched a profitable pattern in PATTERN_REGISTRY AND Wilson >= 0.47
-      B: Positive edge — Wilson >= 0.47
-      C: Marginal — Wilson >= 0.45 (not exported)
+      A: Matched a profitable pattern in PATTERN_REGISTRY AND Wilson >= 0.46
+      B: Positive edge — Wilson >= 0.46 AND (named pattern OR 2+ sources)
+      C: Marginal — Wilson >= 0.45, or B-worthy Wilson but single-source no-pattern
       D: Insufficient data or losing pattern
     """
     if n < MIN_SAMPLE_PRIMARY or lookup_level == "none":
@@ -1672,7 +1674,13 @@ def assign_tier(
     if a_tier_eligible and wilson_score >= WILSON_TIER_B:
         return "A"
     if wilson_score >= WILSON_TIER_B:
-        return "B"
+        # Require named pattern OR 2+ sources for B-tier
+        if has_pattern or sources_count >= 2:
+            return "B"
+        # Single-source no-pattern: demote to C (not exported)
+        if wilson_score >= WILSON_TIER_C:
+            return "C"
+        return "D"
     if wilson_score >= WILSON_TIER_C:
         return "C"
     return "D"
@@ -1754,6 +1762,67 @@ def load_current_lines() -> Dict[str, Any]:
             data = json.load(f)
         return data.get("games", {})
     except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def load_game_times(date_str: str) -> Dict[str, str]:
+    """Load game start times from the NBA API scoreboard cache.
+
+    Returns a dict mapping canonical event_key (e.g. 'NBA:2026:03:09:OKC@DEN')
+    to a time string like '7:30 pm ET'.
+    """
+    sb_path = CACHE_DIR / f"nba_api_scoreboard_{date_str}.json"
+    if not sb_path.exists():
+        return {}
+    try:
+        data = json.loads(sb_path.read_text())
+        # Build game_id -> time from GameHeader
+        gid_to_time: Dict[str, str] = {}
+        for rs in data.get("resultSets", []):
+            if rs.get("name") == "GameHeader":
+                hdrs = rs.get("headers", [])
+                rows = rs.get("rowSet", [])
+                gid_idx = hdrs.index("GAME_ID") if "GAME_ID" in hdrs else None
+                status_idx = hdrs.index("GAME_STATUS_TEXT") if "GAME_STATUS_TEXT" in hdrs else None
+                if gid_idx is None or status_idx is None:
+                    break
+                for row in rows:
+                    gid = row[gid_idx]
+                    status = (row[status_idx] or "").strip()
+                    # Only capture pre-game time strings (e.g. "7:00 pm ET"), not "Final"
+                    if "pm ET" in status or "am ET" in status:
+                        gid_to_time[gid] = status
+                break
+
+        # Build game_id -> (away, home) from LineScore
+        gid_to_teams: Dict[str, List[str]] = {}
+        for rs in data.get("resultSets", []):
+            if rs.get("name") == "LineScore":
+                hdrs = rs.get("headers", [])
+                rows = rs.get("rowSet", [])
+                gid_idx = hdrs.index("GAME_ID") if "GAME_ID" in hdrs else None
+                abbr_idx = hdrs.index("TEAM_ABBREVIATION") if "TEAM_ABBREVIATION" in hdrs else None
+                if gid_idx is None or abbr_idx is None:
+                    break
+                for row in rows:
+                    gid = row[gid_idx]
+                    team = _canon_team(row[abbr_idx])
+                    gid_to_teams.setdefault(gid, []).append(team)
+                break
+
+        # Build event_key -> time
+        result: Dict[str, str] = {}
+        year = date_str[:4]
+        month = date_str[5:7]
+        day = date_str[8:10]
+        for gid, time_str in gid_to_time.items():
+            teams = gid_to_teams.get(gid, [])
+            if len(teams) == 2:
+                away, home = teams[0], teams[1]
+                ek = f"NBA:{year}:{month}:{day}:{away}@{home}"
+                result[ek] = time_str
+        return result
+    except (json.JSONDecodeError, KeyError, ValueError):
         return {}
 
 
@@ -1880,6 +1949,11 @@ def build_signal_summary(signal: Dict[str, Any]) -> Dict[str, Any]:
         "day_key": signal.get("day_key"),
         "line_min": signal.get("line_min"),
         "line_max": signal.get("line_max"),
+        "market_line": signal.get("market_line"),
+        "line_diff": signal.get("line_diff"),
+        "sources_count": signal.get("sources_count"),
+        "consensus_strength": signal.get("consensus_strength"),
+        "game_time_et": signal.get("game_time_et"),
     }
 
 
@@ -1907,11 +1981,14 @@ def build_output(
         gate_pass, gate_reason = passes_quality_gate(signal, score_data)
 
         # Assign tier
+        _sources = signal.get("sources_present") or signal.get("sources") or []
         tier = assign_tier(
             score_data["wilson_score"],
             primary["n"],
             primary["lookup_level"],
             a_tier_eligible=score_data.get("a_tier_eligible", False),
+            has_pattern=score_data.get("matched_pattern") is not None,
+            sources_count=len(_sources),
         )
 
         if not gate_pass:
@@ -2287,6 +2364,23 @@ def main() -> None:
     market_lines = load_current_lines()
     if market_lines:
         print(f"  Loaded current market lines for {len(market_lines)} games")
+
+    # Inject game start times from scoreboard cache
+    game_times = load_game_times(date_str)
+    if game_times:
+        # Build reverse lookup so we match regardless of which team is listed first
+        game_times_both: Dict[str, str] = {}
+        for ek, t in game_times.items():
+            game_times_both[ek] = t
+            # Also add reversed matchup: NBA:Y:M:D:A@H -> NBA:Y:M:D:H@A
+            parts = ek.rsplit(":", 1)
+            if len(parts) == 2 and "@" in parts[1]:
+                away, home = parts[1].split("@", 1)
+                game_times_both[f"{parts[0]}:{home}@{away}"] = t
+        for signal in after_exclusions:
+            ek = signal.get("event_key", "")
+            if ek in game_times_both:
+                signal["game_time_et"] = game_times_both[ek]
 
     # Build output with quality gate
     output = build_output(

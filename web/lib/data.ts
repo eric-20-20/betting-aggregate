@@ -139,3 +139,118 @@ export async function getHistoryDay(
     path.join(PRIVATE_DATA_DIR, "history", `history_${date}.json`)
   );
 }
+
+export interface TimelineEntry {
+  date: string;
+  day_of_week: string;
+  tier: string;
+  result: string;
+  selection: string;
+  market_type: string;
+  line: number | null;
+  best_odds: number | null;
+  pattern_label: string | null;
+  pattern_record: string | null;
+  matchup: string;
+}
+
+export async function getAggregatedTimeline(tiers: string[] = ["A"]): Promise<TimelineEntry[]> {
+  const index = await getHistoryIndex();
+  if (!index) return [];
+
+  const entries: TimelineEntry[] = [];
+
+  for (const day of index.dates) {
+    const file = await getHistoryDay(day.date);
+    if (!file) continue;
+
+    for (const play of file.plays) {
+      if (!tiers.includes(play.tier)) continue;
+      const sig = play.signal;
+      // Build matchup string
+      let matchup = "";
+      if (sig.away_team && sig.home_team) {
+        matchup = `${sig.away_team} @ ${sig.home_team}`;
+      } else {
+        const ek = sig.event_key || "";
+        const atIdx = ek.lastIndexOf("@");
+        if (atIdx > 0) {
+          const beforeAt = ek.substring(0, atIdx);
+          const colonIdx = beforeAt.lastIndexOf(":");
+          const away = colonIdx >= 0 ? beforeAt.substring(colonIdx + 1) : beforeAt;
+          const home = ek.substring(atIdx + 1);
+          matchup = `${away} @ ${home}`;
+        }
+      }
+
+      entries.push({
+        date: day.date,
+        day_of_week: day.day_of_week,
+        tier: play.tier,
+        result: play.result || "PENDING",
+        selection: sig.selection,
+        market_type: sig.market_type,
+        line: sig.line,
+        best_odds: sig.best_odds,
+        pattern_label: play.matched_pattern?.label ?? null,
+        pattern_record: play.matched_pattern?.hist?.record ?? null,
+        matchup,
+      });
+    }
+  }
+
+  // Newest first
+  entries.reverse();
+  return entries;
+}
+
+export interface PLDataPoint {
+  date: string;
+  cumulative_units: number;
+  pick_count: number;
+}
+
+/**
+ * Build cumulative P&L chart data for A-tier picks at flat -110 odds.
+ * Each WIN = +0.909 units, each LOSS = -1 unit.
+ * Returns oldest-first array of {date, cumulative_units, pick_count}.
+ */
+export async function getPLChartData(): Promise<PLDataPoint[]> {
+  const index = await getHistoryIndex();
+  if (!index) return [];
+
+  const points: PLDataPoint[] = [];
+  let cumulative = 0;
+  let pickCount = 0;
+
+  // index.dates is already oldest-first from the export pipeline
+  const sorted = [...index.dates].sort((a, b) => a.date.localeCompare(b.date));
+
+  for (const day of sorted) {
+    const file = await getHistoryDay(day.date);
+    if (!file) continue;
+
+    for (const play of file.plays) {
+      if (play.tier !== "A") continue;
+      const result = play.result;
+      if (result === "WIN") {
+        cumulative += 0.909; // +$91 on $100 bet at -110
+        pickCount += 1;
+      } else if (result === "LOSS") {
+        cumulative -= 1.0;
+        pickCount += 1;
+      }
+      // PUSH/PENDING/VOID: no change
+    }
+
+    if (pickCount > 0) {
+      points.push({
+        date: day.date,
+        cumulative_units: Math.round(cumulative * 100) / 100,
+        pick_count: pickCount,
+      });
+    }
+  }
+
+  return points;
+}

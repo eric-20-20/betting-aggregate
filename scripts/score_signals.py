@@ -2157,7 +2157,8 @@ def build_output(
     # This prevents showing users contradictory picks (e.g. Filipowski OVER 13 pts AND UNDER 16.5 pts).
     # Keep the higher-Wilson pick; drop the other.
     def _prop_conflict_key(sig: Dict[str, Any]) -> Optional[str]:
-        """Return (player, stat) key for player props, else None."""
+        """Return (player, stat, game) key for player props, else None.
+        Game is normalized to sorted TEAM@TEAM so CHA@SAC == SAC@CHA."""
         if sig.get("market_type") != "player_prop":
             return None
         sel = sig.get("selection", "")
@@ -2165,7 +2166,14 @@ def build_output(
         player = parts[0] if parts else ""
         stat = sig.get("atomic_stat") or (parts[1] if len(parts) > 1 else "")
         ek = sig.get("event_key", "")
-        return f"{player}|{stat}|{ek}" if player else None
+        # Normalize team order: extract TEAM@TEAM and sort so CHA@SAC == SAC@CHA
+        m = re.search(r'([A-Z]{2,4})@([A-Z]{2,4})(?::\d+)?$', ek)
+        if m:
+            t1, t2 = _canon_team(m.group(1)), _canon_team(m.group(2))
+            game = "@".join(sorted([t1, t2]))
+        else:
+            game = ek
+        return f"{player}|{stat}|{game}" if player else None
 
     conflict_map: Dict[str, List[int]] = {}  # key -> list of indices in passed_raw
     for idx, (signal, score_data, tier) in enumerate(passed_raw):

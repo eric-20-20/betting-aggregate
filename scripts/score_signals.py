@@ -2196,55 +2196,92 @@ def build_output(
     # Game-level conflict filter: same event + market type, opposite sides.
     # e.g. CLE@ORL total UNDER (A-tier) vs CLE@ORL total OVER (B-tier) — keep higher Wilson.
     # Also handles spread (two different teams same game) and ML (two teams same game).
-    def _game_conflict_key(sig: Dict[str, Any]) -> Optional[str]:
+    def _game_key(sig: Dict[str, Any]) -> Optional[str]:
+        """Return canonical TEAM@TEAM key for game-level conflict detection, or None."""
         mkt = sig.get("market_type", "")
         if mkt not in ("total", "spread", "moneyline"):
             return None
         ek = sig.get("event_key", "")
-        # Normalize event_key to canonical TEAM@TEAM form for grouping
         m = re.search(r'([A-Z]{2,4})@([A-Z]{2,4})(?::\d+)?$', ek)
         if not m:
             return None
         away, home = _canon_team(m.group(1)), _canon_team(m.group(2))
-        teams = f"{away}@{home}"
-        return f"{teams}|{mkt}"
+        return f"{away}@{home}"
 
+    def _pick_team(sig: Dict[str, Any], game_key: str) -> Optional[str]:
+        """
+        Return the team this pick is betting ON (i.e. the side that wins money).
+        - moneyline/spread: selection field is the team name (e.g. "LAC", "MIN")
+        - total: return None (no team side, handled separately)
+        """
+        mkt = sig.get("market_type", "")
+        if mkt == "total":
+            return None
+        sel = sig.get("selection", "")
+        # Canonicalize the selection team
+        return _canon_team(sel) if sel else None
+
+    # Group all game picks by canonical game key
     game_conflict_map: Dict[str, List[int]] = {}
     for idx, (signal, score_data, tier) in enumerate(passed_raw):
-        ck = _game_conflict_key(signal)
-        if ck:
-            game_conflict_map.setdefault(ck, []).append(idx)
+        gk = _game_key(signal)
+        if gk:
+            game_conflict_map.setdefault(gk, []).append(idx)
 
     game_conflict_drop: set = set()
-    for ck, indices in game_conflict_map.items():
+    tier_rank = {"A": 0, "B": 1, "C": 2, "D": 3}
+
+    for gk, indices in game_conflict_map.items():
         if len(indices) < 2:
             continue
-        # Check if any two picks are on opposite sides
-        sels = [(i, passed_raw[i][0].get("selection", ""), passed_raw[i][0].get("direction", "")) for i in indices]
-        # For totals: directions OVER vs UNDER conflict
-        # For spreads/ML: different team selections conflict
-        mkt = passed_raw[indices[0]][0].get("market_type", "")
-        if mkt == "total":
-            dirs = set(_normalize_direction(passed_raw[i][0]) for i in indices)
-            has_conflict = "OVER" in dirs and "UNDER" in dirs
-        else:
-            # spread or moneyline: conflicting if more than one distinct team
-            teams = set(passed_raw[i][0].get("selection", "") for i in indices)
-            has_conflict = len(teams) > 1
-        if not has_conflict:
-            continue
-        # Keep best pick: tier first (A > B), then Wilson score
-        tier_rank = {"A": 0, "B": 1, "C": 2, "D": 3}
-        best_idx = min(indices, key=lambda i: (tier_rank.get(passed_raw[i][2], 9), -passed_raw[i][1]["wilson_score"]))
-        best_sig = passed_raw[best_idx][0]
-        best_tier = passed_raw[best_idx][2]
-        dropped_tiers = []
-        for i in indices:
-            if i != best_idx:
-                game_conflict_drop.add(i)
-                dropped_tiers.append(passed_raw[i][2])
-        kept_sel = best_sig.get("selection", "")
-        print(f"  Game conflict {ck}: kept {kept_sel} (Tier {best_tier}), dropped {len(indices)-1} pick(s) (Tier {'/'.join(dropped_tiers)})")
+
+        away, home = gk.split("@")
+
+        # --- Total conflicts: OVER vs UNDER in same game ---
+        total_idxs = [i for i in indices if passed_raw[i][0].get("market_type") == "total"]
+        if len(total_idxs) >= 2:
+            dirs = set(_normalize_direction(passed_raw[i][0]) for i in total_idxs)
+            if "OVER" in dirs and "UNDER" in dirs:
+                best_idx = min(total_idxs, key=lambda i: (tier_rank.get(passed_raw[i][2], 9), -passed_raw[i][1]["wilson_score"]))
+                best_tier = passed_raw[best_idx][2]
+                dropped_tiers = []
+                for i in total_idxs:
+                    if i != best_idx:
+                        game_conflict_drop.add(i)
+                        dropped_tiers.append(passed_raw[i][2])
+                kept_sel = _normalize_direction(passed_raw[best_idx][0])
+                print(f"  Game conflict {gk}|total: kept {kept_sel} (Tier {best_tier}), dropped {len(total_idxs)-1} pick(s) (Tier {'/'.join(dropped_tiers)})")
+
+        # --- Spread/ML team conflicts: picks on opposite teams in the same game ---
+        # A spread on LAC and a moneyline on MIN are mutually exclusive outcomes.
+        side_idxs = [i for i in indices if passed_raw[i][0].get("market_type") in ("spread", "moneyline")]
+        if len(side_idxs) >= 2:
+            # Determine which team each pick is on
+            pick_teams = []
+            for i in side_idxs:
+                sig = passed_raw[i][0]
+                t = _pick_team(sig, gk)
+                # Normalize: if the selection matches home or away team
+                if t:
+                    t = _canon_team(t)
+                pick_teams.append((i, t))
+
+            # Conflict exists if we have picks on both teams
+            teams_present = set(t for _, t in pick_teams if t)
+            has_conflict = away in teams_present and home in teams_present
+
+            if has_conflict:
+                best_idx = min(side_idxs, key=lambda i: (tier_rank.get(passed_raw[i][2], 9), -passed_raw[i][1]["wilson_score"]))
+                best_sig = passed_raw[best_idx][0]
+                best_tier = passed_raw[best_idx][2]
+                dropped_tiers = []
+                for i in side_idxs:
+                    if i != best_idx:
+                        game_conflict_drop.add(i)
+                        dropped_tiers.append(passed_raw[i][2])
+                kept_sel = best_sig.get("selection", "")
+                kept_mkt = best_sig.get("market_type", "")
+                print(f"  Game conflict {gk}|side: kept {kept_sel} {kept_mkt} (Tier {best_tier}), dropped {len(side_idxs)-1} pick(s) (Tier {'/'.join(dropped_tiers)})")
 
     if game_conflict_drop:
         passed_raw = [item for i, item in enumerate(passed_raw) if i not in game_conflict_drop]

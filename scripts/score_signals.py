@@ -134,8 +134,8 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "B",
     },
 
-    # 5-source UNDER totals (action+betql+covers+dimers+oddstrader): 51-32 (61.4%) n=83 Wilson=0.518
-    # Elevated to A-tier: Wilson 0.518 > 0.46 threshold, consistent across sample.
+    # 5-source UNDER totals (action+betql+covers+dimers+oddstrader): 51-29 (63.7%) n=80 Wilson=0.546
+    # Elevated to A-tier: Wilson 0.546 > 0.52 threshold, consistent across sample.
     # Note: OVER direction has degraded to 10-10 (coin flip) — removed from registry.
     # MUST be before four_source and betql_oddstrader patterns (more specific).
     {
@@ -145,12 +145,13 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "total",
         "direction": "UNDER",
         "min_sources": 5,
-        "hist": {"record": "51-32", "win_pct": 0.614, "n": 83},
+        "hist": {"record": "51-29", "win_pct": 0.637, "n": 80},
         "tier_eligible": "A",
     },
 
-    # Any 4+ source UNDER total (any combo): 812-709 (53.6%) n=1521 Wilson=0.510
+    # Any 4+ source UNDER total (any combo): 698-596 (53.9%) n=1294 Wilson=0.517
     # Large sample, consistent positive edge. Any 4+ sources agreeing on UNDER is A-tier.
+    # Updated 2026-03-11: was 812-709 before bad-line cleanup removed ~227 noisy records.
     # MUST be before the specific action+betql+dimers+oddstrader pattern below.
     {
         "id": "four_source_total_under_any",
@@ -158,12 +159,12 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "total",
         "direction": "UNDER",
         "min_sources": 4,
-        "hist": {"record": "812-709", "win_pct": 0.536, "n": 1521},
+        "hist": {"record": "698-596", "win_pct": 0.539, "n": 1294},
         "tier_eligible": "A",
     },
 
-    # 4-source total UNDER (action+betql+dimers+oddstrader): 623-549 (53.2%) n=1172 Wilson=0.507
-    # Kept for historical reference; now superseded by four_source_total_under_any above.
+    # 4-source total UNDER (action+betql+dimers+oddstrader): 622-533 (53.9%) n=1155 Wilson=0.514
+    # Superseded by four_source_total_under_any above (B-tier fallback).
     # MUST be before betql_oddstrader pattern (more specific).
     {
         "id": "four_source_total_under",
@@ -172,7 +173,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "total",
         "direction": "UNDER",
         "min_sources": 4,
-        "hist": {"record": "623-549", "win_pct": 0.532, "n": 1172},
+        "hist": {"record": "622-533", "win_pct": 0.539, "n": 1155},
         "tier_eligible": "B",
     },
 
@@ -192,19 +193,9 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "B",
     },
 
-    # action + betql UNDER totals: 134-70 (65.7%) n=204 Wilson=0.600 — A-tier
-    # Oct25(41%) was an outlier; Nov-Dec-Jan: 62/76/100%. Strong 2025-26 trend.
-    # exact_combo excludes 3+ source signals (caught by 4-source patterns above).
-    # Cleaned 2026-03-11: removed 9 bad-line (<150) BettingPros history records.
-    {
-        "id": "action_betql_total_under",
-        "label": "action + betql total UNDER",
-        "exact_combo": "action|betql",
-        "market_type": "total",
-        "direction": "UNDER",
-        "hist": {"record": "134-70", "win_pct": 0.657, "n": 204},
-        "tier_eligible": "A",
-    },
+    # action_betql_total_under REMOVED 2026-03-11: current data shows 13-21 (38.2%) — negative edge.
+    # Was 134-70 when added; collapsed after bad-line cleanup and dedup fixes.
+    # These signals are now caught by four_source_total_under_any (if 4+ sources) or not scored.
 
     # action UNDER pts_reb props: 144-52 (73.5%) n=196 Wilson=0.680 — A-tier
     # Exceptional consistency: Oct(70%), Nov(73%), Dec(65%), Jan(78%), Feb(83%)

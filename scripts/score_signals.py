@@ -99,6 +99,13 @@ EXCLUDED_STAT_DIR: Set[Tuple[str, str]] = {
 MAX_PROP_LINE = 30.5
 MIN_DAILY_PICKS = 3
 
+# ── Player availability: ruled-out players ────────────────────────────────
+# Add (player_key, "YYYY-MM-DD") tuples for players confirmed out on a specific date.
+# Only affects scoring for that exact date — future games are unaffected automatically.
+RULED_OUT_PLAYERS: Set[Tuple[str, str]] = {
+    ("russell_westbrook", "2026-03-11"),
+}
+
 # ── Pattern Registry ─────────────────────────────────────────────────────
 # Curated profitable patterns from analysis of 6,547 graded signals.
 # Ordered most-specific first — first match wins.
@@ -1236,6 +1243,18 @@ def _check_exclusion(signal: Dict[str, Any], tables: Optional[Dict[str, Any]] = 
     market = signal.get("market_type", "")
     stat = signal.get("atomic_stat")
     line = signal.get("line")
+
+    # Player availability: skip props for ruled-out players
+    if RULED_OUT_PLAYERS and market == "player_prop":
+        # selection format: "NBA:player_key::stat::DIRECTION"
+        sel = signal.get("selection", "")
+        player_key = sel.split("::")[0].split(":")[-1] if "::" in sel else ""
+        # day_key format: "NBA:2026:03:11" → "2026-03-11"
+        dk = signal.get("day_key") or ""
+        parts = dk.split(":")
+        signal_date = f"{parts[1]}-{parts[2]}-{parts[3]}" if len(parts) == 4 else (signal.get("derived_date") or "")[:10]
+        if player_key and (player_key, signal_date) in RULED_OUT_PLAYERS:
+            return f"player_ruled_out:{player_key}"
 
     # Stat type blacklist
     if stat and stat in EXCLUDED_STAT_TYPES:

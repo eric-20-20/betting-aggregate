@@ -2183,6 +2183,63 @@ def build_output(
         passed_raw = [item for i, item in enumerate(passed_raw) if i not in conflict_drop]
         print(f"  Removed {len(conflict_drop)} conflicting opposite-direction picks")
 
+    # Game-level conflict filter: same event + market type, opposite sides.
+    # e.g. CLE@ORL total UNDER (A-tier) vs CLE@ORL total OVER (B-tier) — keep higher Wilson.
+    # Also handles spread (two different teams same game) and ML (two teams same game).
+    def _game_conflict_key(sig: Dict[str, Any]) -> Optional[str]:
+        mkt = sig.get("market_type", "")
+        if mkt not in ("total", "spread", "moneyline"):
+            return None
+        ek = sig.get("event_key", "")
+        # Normalize event_key to canonical TEAM@TEAM form for grouping
+        m = re.search(r'([A-Z]{2,4})@([A-Z]{2,4})(?::\d+)?$', ek)
+        if not m:
+            return None
+        away, home = _canon_team(m.group(1)), _canon_team(m.group(2))
+        teams = f"{away}@{home}"
+        return f"{teams}|{mkt}"
+
+    game_conflict_map: Dict[str, List[int]] = {}
+    for idx, (signal, score_data, tier) in enumerate(passed_raw):
+        ck = _game_conflict_key(signal)
+        if ck:
+            game_conflict_map.setdefault(ck, []).append(idx)
+
+    game_conflict_drop: set = set()
+    for ck, indices in game_conflict_map.items():
+        if len(indices) < 2:
+            continue
+        # Check if any two picks are on opposite sides
+        sels = [(i, passed_raw[i][0].get("selection", ""), passed_raw[i][0].get("direction", "")) for i in indices]
+        # For totals: directions OVER vs UNDER conflict
+        # For spreads/ML: different team selections conflict
+        mkt = passed_raw[indices[0]][0].get("market_type", "")
+        if mkt == "total":
+            dirs = set(_normalize_direction(passed_raw[i][0]) for i in indices)
+            has_conflict = "OVER" in dirs and "UNDER" in dirs
+        else:
+            # spread or moneyline: conflicting if more than one distinct team
+            teams = set(passed_raw[i][0].get("selection", "") for i in indices)
+            has_conflict = len(teams) > 1
+        if not has_conflict:
+            continue
+        # Keep best pick: tier first (A > B), then Wilson score
+        tier_rank = {"A": 0, "B": 1, "C": 2, "D": 3}
+        best_idx = min(indices, key=lambda i: (tier_rank.get(passed_raw[i][2], 9), -passed_raw[i][1]["wilson_score"]))
+        best_sig = passed_raw[best_idx][0]
+        best_tier = passed_raw[best_idx][2]
+        dropped_tiers = []
+        for i in indices:
+            if i != best_idx:
+                game_conflict_drop.add(i)
+                dropped_tiers.append(passed_raw[i][2])
+        kept_sel = best_sig.get("selection", "")
+        print(f"  Game conflict {ck}: kept {kept_sel} (Tier {best_tier}), dropped {len(indices)-1} pick(s) (Tier {'/'.join(dropped_tiers)})")
+
+    if game_conflict_drop:
+        passed_raw = [item for i, item in enumerate(passed_raw) if i not in game_conflict_drop]
+        print(f"  Removed {len(game_conflict_drop)} conflicting game-level picks")
+
     # Minimum floor: relax gate if too few pass
     if len(passed_raw) < MIN_DAILY_PICKS and scored:
         all_by_wilson = sorted(scored, key=lambda x: -x[1]["wilson_score"])

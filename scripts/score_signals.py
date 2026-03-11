@@ -192,15 +192,72 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "B",
     },
 
-    # action solo UNDER props: 410-264 (60.8%) n=674 Wilson=0.577
-    # Consistent across all months; strong A-tier solo. Direction='player_under' in data.
+    # action + betql UNDER totals: 134-70 (65.7%) n=204 Wilson=0.600 — A-tier
+    # Oct25(41%) was an outlier; Nov-Dec-Jan: 62/76/100%. Strong 2025-26 trend.
+    # exact_combo excludes 3+ source signals (caught by 4-source patterns above).
+    # Cleaned 2026-03-11: removed 9 bad-line (<150) BettingPros history records.
+    {
+        "id": "action_betql_total_under",
+        "label": "action + betql total UNDER",
+        "exact_combo": "action|betql",
+        "market_type": "total",
+        "direction": "UNDER",
+        "hist": {"record": "134-70", "win_pct": 0.657, "n": 204},
+        "tier_eligible": "A",
+    },
+
+    # action UNDER pts_reb props: 144-52 (73.5%) n=196 Wilson=0.680 — A-tier
+    # Exceptional consistency: Oct(70%), Nov(73%), Dec(65%), Jan(78%), Feb(83%)
+    # MUST be before action_solo_props_under (more specific — stat_type constraint).
+    {
+        "id": "action_props_pts_reb_under",
+        "label": "action pts+reb prop UNDER",
+        "exact_combo": "action",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "pts_reb",
+        "hist": {"record": "144-52", "win_pct": 0.735, "n": 196},
+        "tier_eligible": "A",
+    },
+
+    # action UNDER assists props: 46-28 (62.2%) n=74 Wilson=0.526 — B-tier
+    # 2024-25: 67% (33-16), but 2025-26 regressing to 52% (13-12). Watch.
+    # MUST be before action_solo_props_under (more specific — stat_type constraint).
+    {
+        "id": "action_props_assists_under",
+        "label": "action assists prop UNDER",
+        "exact_combo": "action",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "assists",
+        "hist": {"record": "46-28", "win_pct": 0.622, "n": 74},
+        "tier_eligible": "B",
+    },
+
+    # action UNDER pts_ast props: 30-17 (63.8%) n=47 Wilson=0.518 — B-tier
+    # Limited per-month samples; consistent direction but watch for regression.
+    # MUST be before action_solo_props_under (more specific — stat_type constraint).
+    {
+        "id": "action_props_pts_ast_under",
+        "label": "action pts+ast prop UNDER",
+        "exact_combo": "action",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "pts_ast",
+        "hist": {"record": "30-17", "win_pct": 0.638, "n": 47},
+        "tier_eligible": "B",
+    },
+
+    # action solo UNDER props: 399-257 (60.8%) n=656 Wilson=0.576
+    # Consistent across all months; strong A-tier solo.
+    # Catches all action UNDER props not matched by a more-specific stat_type pattern above.
     {
         "id": "action_solo_props_under",
         "label": "action player prop UNDER",
         "exact_combo": "action",
         "market_type": "player_prop",
         "direction": "UNDER",
-        "hist": {"record": "764-490", "win_pct": 0.609, "n": 1255},
+        "hist": {"record": "399-257", "win_pct": 0.608, "n": 656},
         "tier_eligible": "A",
     },
 
@@ -213,6 +270,21 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "player_prop",
         "direction": "UNDER",
         "hist": {"record": "571-476", "win_pct": 0.545, "n": 1068},
+        "tier_eligible": "B",
+    },
+
+    # betql UNDER rebounds props: 200-135 (59.7%) n=335 Wilson=0.552 — B-tier
+    # 2024-25: strong Feb(78%), but crashed Mar(33%) and Apr(49%). 2025-26 recovering.
+    # Not consistent enough for A-tier but Wilson clears threshold comfortably.
+    # MUST be before betql_solo_props_under (more specific — stat_type constraint).
+    {
+        "id": "betql_props_rebounds_under",
+        "label": "betql rebounds prop UNDER",
+        "exact_combo": "betql",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "rebounds",
+        "hist": {"record": "200-135", "win_pct": 0.597, "n": 335},
         "tier_eligible": "B",
     },
 
@@ -366,6 +438,17 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "hist": {"record": "49-39", "win_pct": 0.557, "n": 91},
         "tier_eligible": "B",
     },
+    # betql CHI spread: 11-2 (84.6%) n=13 Wilson=0.625 — B-tier (small sample, caution)
+    # 2024-25 playoffs: 6-0, 2-0; 2025-26: 3-2. Very small n; B-tier until more data.
+    {
+        "id": "betql_spread_chi",
+        "label": "betql spread CHI",
+        "exact_combo": "betql",
+        "market_type": "spread",
+        "team": "CHI",
+        "hist": {"record": "11-2", "win_pct": 0.846, "n": 13},
+        "tier_eligible": "B",
+    },
 
     # ── OddsTrader team-specific moneyline patterns ───────────────────────────
     # OddsTrader solo moneylines are generally driven by heavy favorites (avg -346 odds).
@@ -401,6 +484,35 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "moneyline",
         "team": "HOU",
         "hist": {"record": "15-4", "win_pct": 0.789, "n": 19},
+        "tier_eligible": "B",
+    },
+
+    # ── BettingPros Experts patterns ─────────────────────────────────────────
+    # Validated on 3,805 graded records from bettingpros_experts backfill (2024–2026).
+    # Wilson scores use z=1.645 (90% CI lower bound).
+    # Key finding: action+bettingpros_experts is the sweet spot — adding betql collapses
+    # totals performance from 60.6% to 48.8%. Must be exact_combo to exclude betql.
+
+    # action + bettingpros_experts UNDER totals: 60-39 (60.6%) n=99 Wilson=0.523
+    # OVER direction is a coin flip (49.2%) — direction-specific pattern, UNDER only.
+    {
+        "id": "action_bettingpros_total_under",
+        "label": "action + bettingpros experts total UNDER",
+        "exact_combo": "action|bettingpros_experts",
+        "market_type": "total",
+        "direction": "UNDER",
+        "hist": {"record": "76-49", "win_pct": 0.608, "n": 125},
+        "tier_eligible": "B",
+    },
+
+    # action + bettingpros_experts spreads: 87-73 (54.4%) n=160 Wilson=0.479
+    # No direction edge detected — applies to both OVER/UNDER spread sides.
+    {
+        "id": "action_bettingpros_spread",
+        "label": "action + bettingpros experts spread",
+        "exact_combo": "action|bettingpros_experts",
+        "market_type": "spread",
+        "hist": {"record": "87-73", "win_pct": 0.544, "n": 160},
         "tier_eligible": "B",
     },
 ]
@@ -965,7 +1077,9 @@ def filter_wrong_date(
     dropped = 0
     for s in signals:
         event_key = s.get("event_key") or ""
-        match = re.search(r'([A-Z]{2,4})@([A-Z]{2,4})$', event_key)
+        # Match TEAM@TEAM at end of string, or TEAM@TEAM followed by :HHMM suffix
+        # (e.g. NBA:20260311:MIN@LAL:0300 has a trailing time component)
+        match = re.search(r'([A-Z]{2,4})@([A-Z]{2,4})(?::\d+)?$', event_key)
         if not match:
             # Can't extract teams (e.g. player props without event_key) — keep
             kept.append(s)

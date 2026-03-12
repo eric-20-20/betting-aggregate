@@ -314,16 +314,167 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "B",
     },
 
-    # action + oddstrader spread: 80-55 (59.3%) n=135 Wilson=0.522
-    # Strong through Dec25, but weakened Jan-Feb26 (22-21 combined 51.2%).
-    # B-tier; watch for continued degradation.
+    # action + oddstrader spread: REMOVED 2026-03-12
+    # Was 125-87 (59%) overall but completely collapsed: Feb26 3W-14L (17.6%), Jan26 31-35 (47%).
+    # Early-season hot streak (Oct25: 22-2) inflated historical numbers. No longer reliable.
+
+    # ── JuiceReel cross-source patterns (added 2026-03-12) ───────────────────
+    # Validated on 27,027 graded records including UnitVacuum backfill (Oct 2023 – Mar 2026).
+    # Wilson scores use z=1.645 (90% CI lower bound).
+
+    # action + nukethebooks moneyline: 33-12 (73.3%) n=45 Wilson=0.614 — A-tier
+    # Independent sources (model + retail expert) agreeing on moneyline winner.
+    # MUST be before any solo action/nukethebooks moneyline patterns.
     {
-        "id": "action_oddstrader_spread",
-        "label": "action + oddstrader spread",
-        "source_pair": ["action", "oddstrader"],
+        "id": "action_nukethebooks_moneyline",
+        "label": "action + nukethebooks moneyline",
+        "source_pair": ["action", "juicereel_nukethebooks"],
+        "market_type": "moneyline",
+        "min_sources": 2,
+        "hist": {"record": "33-12", "win_pct": 0.733, "n": 45},
+        "tier_eligible": "A",
+    },
+
+    # action + betql + nukethebooks spread: 29-11 (72.5%) n=40 Wilson=0.597 — A-tier
+    # Three-source agreement (model + analytics + retail expert) on spread.
+    {
+        "id": "action_betql_nukethebooks_spread",
+        "label": "action + betql + nukethebooks spread",
+        "source_contains": ["action", "betql", "juicereel_nukethebooks"],
+        "market_type": "spread",
+        "min_sources": 3,
+        "hist": {"record": "29-11", "win_pct": 0.725, "n": 40},
+        "tier_eligible": "A",
+    },
+
+    # All 3 JuiceReel experts agree on total: 52-28 (65.0%) n=80 Wilson=0.559 — A-tier
+    # MUST be before the 2-expert pattern below (more specific).
+    {
+        "id": "all_jr_total",
+        "label": "all 3 JuiceReel experts total",
+        "source_contains": ["juicereel_nukethebooks", "juicereel_sxebets", "juicereel_unitvacuum"],
+        "market_type": "total",
+        "min_sources": 3,
+        "hist": {"record": "52-28", "win_pct": 0.650, "n": 80},
+        "tier_eligible": "A",
+    },
+
+    # nukethebooks + sxebets agree on total: 112-64 (63.6%) n=176 Wilson=0.575 — A-tier
+    # Two expert agreement on game total; strong and consistent sample.
+    {
+        "id": "nukethebooks_sxebets_total",
+        "label": "nukethebooks + sxebets total",
+        "source_contains": ["juicereel_nukethebooks", "juicereel_sxebets"],
+        "market_type": "total",
+        "min_sources": 2,
+        "hist": {"record": "112-64", "win_pct": 0.636, "n": 176},
+        "tier_eligible": "A",
+    },
+
+    # action + betql + sxebets total: 60-34 (63.8%) n=94 Wilson=0.554 — A-tier
+    # MUST be before betql+sxebets or action+betql patterns (more specific).
+    {
+        "id": "action_betql_sxebets_total",
+        "label": "action + betql + sxebets total",
+        "source_contains": ["action", "betql", "juicereel_sxebets"],
+        "market_type": "total",
+        "min_sources": 3,
+        "hist": {"record": "60-34", "win_pct": 0.638, "n": 94},
+        "tier_eligible": "A",
+    },
+
+    # sxebets + unitvacuum spread: 40-22 (64.5%) n=62 Wilson=0.541 — A-tier
+    # Two JuiceReel experts agreeing on spread direction is a strong signal.
+    {
+        "id": "sxebets_unitvacuum_spread",
+        "label": "sxebets + unitvacuum spread",
+        "source_pair": ["juicereel_sxebets", "juicereel_unitvacuum"],
         "market_type": "spread",
         "min_sources": 2,
-        "hist": {"record": "125-87", "win_pct": 0.59, "n": 212},
+        "hist": {"record": "40-22", "win_pct": 0.645, "n": 62},
+        "tier_eligible": "A",
+    },
+
+    # nukethebooks solo spread: 186-148 (55.7%) n=334 Wilson=0.512 — B-tier
+    # Large sample spread edge; consistent positive edge for nukethebooks on spreads.
+    {
+        "id": "nukethebooks_solo_spread",
+        "label": "nukethebooks spread",
+        "exact_combo": "juicereel_nukethebooks",
+        "market_type": "spread",
+        "hist": {"record": "186-148", "win_pct": 0.557, "n": 334},
+        "tier_eligible": "B",
+    },
+
+    # action + betql + unitvacuum spread: 35-22 (61.4%) n=57 Wilson=0.505 — B-tier
+    {
+        "id": "action_betql_unitvacuum_spread",
+        "label": "action + betql + unitvacuum spread",
+        "source_contains": ["action", "betql", "juicereel_unitvacuum"],
+        "market_type": "spread",
+        "min_sources": 3,
+        "hist": {"record": "35-22", "win_pct": 0.614, "n": 57},
+        "tier_eligible": "B",
+    },
+
+    # betql + nukethebooks total: 45-34 (57.0%) n=79 Wilson=0.477 — B-tier
+    {
+        "id": "betql_nukethebooks_total",
+        "label": "betql + nukethebooks total",
+        "source_pair": ["betql", "juicereel_nukethebooks"],
+        "market_type": "total",
+        "min_sources": 2,
+        "hist": {"record": "45-34", "win_pct": 0.570, "n": 79},
+        "tier_eligible": "B",
+    },
+
+    # unitvacuum solo total: 80-60 (57.1%) n=140 Wilson=0.502 — B-tier
+    {
+        "id": "unitvacuum_solo_total",
+        "label": "unitvacuum total",
+        "exact_combo": "juicereel_unitvacuum",
+        "market_type": "total",
+        "hist": {"record": "80-60", "win_pct": 0.571, "n": 140},
+        "tier_eligible": "B",
+    },
+
+    # unitvacuum solo moneyline: 56-42 (57.1%) n=98 Wilson=0.488 — B-tier
+    # Note: juicereel_nukethebooks moneyline is 43.6% (excluded). unitvacuum is different.
+    {
+        "id": "unitvacuum_solo_moneyline",
+        "label": "unitvacuum moneyline",
+        "exact_combo": "juicereel_unitvacuum",
+        "market_type": "moneyline",
+        "hist": {"record": "56-42", "win_pct": 0.571, "n": 98},
+        "tier_eligible": "B",
+    },
+
+    # betql + juicereel_sxebets player prop UNDER: 31-18 (63.3%) n=49 Wilson=0.515
+    # Independent sources (model + retail expert) agreeing on UNDER props.
+    # Matches any signal where both betql and sxebets are present (source_pair logic).
+    # A-tier; MUST be before betql_solo_props_under (more specific).
+    {
+        "id": "betql_sxebets_props_under",
+        "label": "betql + sxebets player prop UNDER",
+        "source_pair": ["betql", "juicereel_sxebets"],
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "min_sources": 2,
+        "hist": {"record": "31-18", "win_pct": 0.633, "n": 49},
+        "tier_eligible": "A",
+    },
+
+    # betql + juicereel_sxebets player prop OVER: 40-27 (59.7%) n=67 Wilson=0.497
+    # Weaker than UNDER side but still positive edge. B-tier.
+    # MUST be before betql_solo_props_under/over patterns (more specific).
+    {
+        "id": "betql_sxebets_props_over",
+        "label": "betql + sxebets player prop OVER",
+        "source_pair": ["betql", "juicereel_sxebets"],
+        "market_type": "player_prop",
+        "direction": "OVER",
+        "min_sources": 2,
+        "hist": {"record": "40-27", "win_pct": 0.597, "n": 67},
         "tier_eligible": "B",
     },
 
@@ -521,34 +672,62 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
 # can be validated. Add patterns here as data grows (aim for n≥50 per pattern).
 # Sources active for NCAAB: action, covers, sportsline, dimers, oddstrader, juicereel.
 PATTERN_REGISTRY_NCAAB: List[Dict[str, Any]] = [
-    # Validated 2026-03-06 from JuiceReel NCAAB backfill (Oct 2023 – Mar 2026)
-    # All B-tier: Wilson lower bound (z=1.645) ≥ 0.46
+    # Updated 2026-03-11: fixed sources_combo join (build_research_dataset now runs for NCAAB)
+    # Data: JuiceReel NCAAB backfill Oct 2023 – Mar 2026 (1,823 records) + daily sources since Feb 2026
+    # Wilson lower bound (z=1.645): A-tier ≥ 0.52, B-tier ≥ 0.46
+
+    # Both experts agree on a total: 127-90 (58.5%) Wilson=0.530 — A-tier
+    # When nukethebooks AND sxebets both like the same total, 58.5% win rate.
+    # MUST be before solo patterns (more specific).
     {
-        "name": "nukethebooks_ncaab_total",
+        "id": "ncaab_both_experts_total",
+        "label": "NCAAB total (both JuiceReel experts)",
+        "source_contains": ["juicereel_nukethebooks", "juicereel_sxebets"],
+        "market_type": "total",
+        "min_sources": 2,
+        "hist": {"record": "127-90", "win_pct": 0.585, "n": 217},
+        "tier_eligible": "A",
+    },
+
+    # nukethebooks alone on a total: 82-72 (53.2%) Wilson=0.466 — B-tier
+    # sxebets alone on totals is 48.4% (below threshold) — excluded.
+    {
+        "id": "ncaab_nukethebooks_total",
+        "label": "NCAAB total (nukethebooks)",
         "exact_combo": "juicereel_nukethebooks",
         "market_type": "total",
-        "hist": {"record": "151-122", "win_pct": 0.553, "n": 273},
+        "hist": {"record": "82-72", "win_pct": 0.532, "n": 154},
         "tier_eligible": "B",
     },
+
+    # nukethebooks moneyline spread picks: 120-99 (54.8%) Wilson=0.492 — B-tier
+    # "SPREAD" direction = picks where the selection is a spread-favored team on ML.
     {
-        "name": "sxebets_ncaab_total",
-        "exact_combo": "juicereel_sxebets",
-        "market_type": "total",
-        "hist": {"record": "165-153", "win_pct": 0.519, "n": 318},
+        "id": "ncaab_nukethebooks_ml",
+        "label": "NCAAB moneyline (nukethebooks)",
+        "exact_combo": "juicereel_nukethebooks",
+        "market_type": "moneyline",
+        "hist": {"record": "120-99", "win_pct": 0.548, "n": 219},
         "tier_eligible": "B",
     },
+
+    # sxebets moneyline spread picks: 87-71 (55.1%) Wilson=0.485 — B-tier
     {
-        "name": "sxebets_ncaab_moneyline",
+        "id": "ncaab_sxebets_ml",
+        "label": "NCAAB moneyline (sxebets)",
         "exact_combo": "juicereel_sxebets",
         "market_type": "moneyline",
-        "hist": {"record": "237-210", "win_pct": 0.530, "n": 447},
+        "hist": {"record": "87-71", "win_pct": 0.551, "n": 158},
         "tier_eligible": "B",
     },
+
+    # sxebets props OVER: 22-13 (62.9%) Wilson=0.490 — B-tier
     {
-        "name": "sxebets_ncaab_props",
+        "id": "ncaab_sxebets_props",
+        "label": "NCAAB player prop (sxebets)",
         "exact_combo": "juicereel_sxebets",
         "market_type": "player_prop",
-        "hist": {"record": "39-26", "win_pct": 0.600, "n": 65},
+        "hist": {"record": "22-13", "win_pct": 0.629, "n": 35},
         "tier_eligible": "B",
     },
 ]
@@ -556,8 +735,9 @@ PATTERN_REGISTRY_NCAAB: List[Dict[str, Any]] = [
 # Known bad combos by market type — exclude from scoring regardless of other criteria
 # These have large sample sizes showing negative/coin-flip results
 EXCLUDED_COMBOS_BY_MARKET: set = {
-    # NBA JuiceReel solo moneylines: juicereel_nukethebooks ~38%, juicereel_sxebets ~40%
-    # Both are below the 42% hard-exclude threshold with large samples
+    # NBA JuiceReel solo moneylines: juicereel_nukethebooks 43.6% (n=303), juicereel_sxebets ~40%
+    # Both are below the 42% hard-exclude threshold with large samples.
+    # unitvacuum moneyline is 57.1% (n=98) — NOT excluded, has its own B-tier pattern.
     ("juicereel_nukethebooks", "moneyline"),
     ("juicereel_sxebets", "moneyline"),
 }

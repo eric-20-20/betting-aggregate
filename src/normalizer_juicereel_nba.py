@@ -287,14 +287,22 @@ def normalize_juicereel_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict[
         elif line is None:
             eligible = False
             inelig_reason = "missing_line"
-            selection = selection.upper() if isinstance(selection, str) else None
-            side = selection
         else:
-            selection = selection.upper() if isinstance(selection, str) else None
+            # Spread selection is a team abbreviation (e.g. "DEN", "IND")
+            sel_norm = selection.upper() if isinstance(selection, str) else None
+            mapped = _map_team(sel_norm, store=store, sport=sport) if sel_norm else None
+            selection = mapped or sel_norm
             side = selection
-            if selection not in {"OVER", "UNDER"}:
+            if not selection:
                 eligible = False
                 inelig_reason = "invalid_direction"
+    elif market_type == "total":
+        if not selection or selection.upper() not in {"OVER", "UNDER"}:
+            eligible = False
+            inelig_reason = "missing_direction"
+        else:
+            selection = selection.upper()
+            side = selection
     elif market_type == "moneyline":
         if not selection:
             eligible = False
@@ -430,6 +438,13 @@ def normalize_juicereel_records(
         else:
             reason = rec.get("ineligibility_reason") or "unknown"
             inelig_reasons[reason] = inelig_reasons.get(reason, 0) + 1
+            # Also include ineligible records that have a pre-graded result —
+            # they can't contribute to consensus but can be graded for expert win-rate tracking.
+            # Require both teams to confirm it's an actual NBA/NCAAB game (filters NHL, UFC, etc.)
+            if (rec.get("result")
+                    and rec.get("event", {}).get("away_team")
+                    and rec.get("event", {}).get("home_team")):
+                normalized.append(rec)
 
     # Deduplicate by (event_key, source_id, market_type, selection, line)
     # Include source_id so both experts' picks on same game are preserved
@@ -440,12 +455,17 @@ def normalize_juicereel_records(
         ev = rec.get("event") or {}
         mk = rec.get("market") or {}
         prov = rec.get("provenance") or {}
+        # For ineligible records without a selection, use fingerprint to avoid collapsing
+        # distinct picks (e.g. expert bets same game twice with different results across days)
+        sel = mk.get("selection")
+        fp = prov.get("raw_fingerprint") if sel is None else None
         key = (
             ev.get("event_key"),
             prov.get("source_id"),
             mk.get("market_type"),
-            mk.get("selection"),
+            sel,
             mk.get("line"),
+            fp,
         )
         if key in deduped:
             removed += 1

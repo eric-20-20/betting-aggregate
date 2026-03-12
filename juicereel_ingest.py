@@ -63,6 +63,16 @@ EXPERTS = [
         # Risk/profit are in units (0.9u, +0.9u)
         "profit_type": "units",
     },
+    {
+        "source_id": "juicereel_unitvacuum",
+        "expert_name": "UnitVacuum",
+        "expert_slug": "unitvacuum",
+        "expert_handle": "UnitVacuum",
+        "url": "https://app.juicereel.com/users/UnitVacuum",
+        # Risk/profit are in dollars ($350.00, +$332.26)
+        # unit_size = risk / 100.0
+        "profit_type": "dollars",
+    },
 ]
 
 USER_AGENT = (

@@ -118,6 +118,262 @@ def _find_lgf_game(game_date: str, away_team: str, home_team: str) -> Optional[D
     return None
 
 
+# ─── NBA API scoreboard score cache ──────────────────────────────────────────
+
+_nba_api_score_cache: Dict[str, Any] = {}  # date_str → list of {away_team, home_team, away_score, home_score}
+
+_NBA_TEAM_ABBR_NORM = {
+    "BRK": "BKN", "PHO": "PHX", "CHO": "CHA", "SA": "SAS", "GS": "GSW",
+    "NY": "NYK", "NO": "NOP",
+}
+
+
+def _norm_nba_abbr(abbr: str) -> str:
+    if not abbr:
+        return abbr
+    a = abbr.upper()
+    return _NBA_TEAM_ABBR_NORM.get(a, a)
+
+
+def _load_scoreboard_for_date(game_date: str) -> List[Dict]:
+    """Load NBA API scoreboard scores for a given date. Returns list of game dicts."""
+    if game_date in _nba_api_score_cache:
+        return _nba_api_score_cache[game_date]
+    path = LGF_CACHE_DIR / f"nba_api_scoreboard_{game_date}.json"
+    if not path.exists():
+        _nba_api_score_cache[game_date] = []
+        return []
+    try:
+        with open(path) as f:
+            raw = json.load(f)
+        result_sets = raw.get("resultSets") or []
+        rs_by_name = {rs.get("name"): rs for rs in result_sets if isinstance(rs, dict)}
+        header = rs_by_name.get("GameHeader") or {}
+        linescore = rs_by_name.get("LineScore") or {}
+        header_rows = header.get("rowSet") or []
+        header_cols = header.get("headers") or []
+        line_rows = linescore.get("rowSet") or []
+        line_cols = linescore.get("headers") or []
+
+        game_map: Dict[str, Dict] = {}
+        for row in header_rows:
+            rec = dict(zip(header_cols, row))
+            gid = str(rec.get("GAME_ID"))
+            game_map[gid] = {
+                "game_id": gid,
+                "home_team_id": rec.get("HOME_TEAM_ID"),
+                "away_team_id": rec.get("VISITOR_TEAM_ID"),
+                "status_id": rec.get("GAME_STATUS_ID"),
+            }
+        for row in line_rows:
+            rec = dict(zip(line_cols, row))
+            gid = str(rec.get("GAME_ID"))
+            if gid not in game_map:
+                continue
+            abbr = _norm_nba_abbr(rec.get("TEAM_ABBREVIATION", ""))
+            pts = rec.get("PTS")
+            tid = rec.get("TEAM_ID")
+            if tid == game_map[gid].get("home_team_id"):
+                game_map[gid]["home_team"] = abbr
+                game_map[gid]["home_score"] = pts
+            elif tid == game_map[gid].get("away_team_id"):
+                game_map[gid]["away_team"] = abbr
+                game_map[gid]["away_score"] = pts
+
+        games = []
+        for rec in game_map.values():
+            # Only include final games with valid scores
+            if rec.get("status_id") == 3 and rec.get("home_score") is not None and rec.get("away_score") is not None:
+                games.append({
+                    "away_team": rec.get("away_team"),
+                    "home_team": rec.get("home_team"),
+                    "away_score": rec["away_score"],
+                    "home_score": rec["home_score"],
+                })
+        _nba_api_score_cache[game_date] = games
+    except Exception:
+        _nba_api_score_cache[game_date] = []
+    return _nba_api_score_cache[game_date]
+
+
+def _find_nba_api_game(game_date: str, away_team: str, home_team: str) -> Optional[Dict]:
+    """Find a specific game in the NBA API scoreboard cache by date and teams."""
+    games = _load_scoreboard_for_date(game_date)
+    for g in games:
+        if {g.get("away_team"), g.get("home_team")} == {away_team, home_team}:
+            return g
+    return None
+
+
+def _find_game_scores(game_date: str, away_team: str, home_team: str) -> Optional[Dict]:
+    """Find game scores from LGF cache first, then NBA API scoreboard cache."""
+    game = _find_lgf_game(game_date, away_team, home_team)
+    if game:
+        return game
+    return _find_nba_api_game(game_date, away_team, home_team)
+
+
+# ─── NCAAB ESPN score cache ───────────────────────────────────────────────────
+
+_ncaab_score_cache: Dict[str, Any] = {}  # date_str → list of game dicts
+
+
+def _find_ncaab_game_scores(game_date: str, away_team: str, home_team: str) -> Optional[Dict]:
+    """Find NCAAB game scores from ESPN cache (fetching if missing)."""
+    if game_date not in _ncaab_score_cache:
+        try:
+            from src.results.ncaab_provider_espn import get_scoreboard, _match_game, _extract_scores
+            events = get_scoreboard(game_date)
+            _ncaab_score_cache[game_date] = events
+        except Exception:
+            _ncaab_score_cache[game_date] = []
+
+    events = _ncaab_score_cache.get(game_date, [])
+    if not events:
+        return None
+
+    try:
+        from src.results.ncaab_provider_espn import _match_game, _extract_scores, _to_espn_code
+        ev = _match_game(events, away_team, home_team)
+        if ev is None:
+            return None
+        scores = _extract_scores(ev, away_team, home_team)
+        if scores and scores.get("home_score") is not None and scores.get("away_score") is not None:
+            if scores.get("match_orientation") == "flipped":
+                # Normalize to our away/home convention
+                return {
+                    "away_team": away_team,
+                    "home_team": home_team,
+                    "away_score": scores["home_score"],
+                    "home_score": scores["away_score"],
+                }
+            return {
+                "away_team": away_team,
+                "home_team": home_team,
+                "away_score": scores["away_score"],
+                "home_score": scores["home_score"],
+            }
+    except Exception:
+        pass
+    return None
+
+
+def prefetch_scoreboards_for_dates(dates: List[str], verbose: bool = True) -> None:
+    """
+    Pre-fetch NBA API scoreboards for dates not already cached.
+    Writes cache files to data/cache/results/nba_api_scoreboard_{date}.json.
+    Clears in-memory cache so _load_scoreboard_for_date() picks up new files.
+    """
+    missing = [d for d in dates if not (LGF_CACHE_DIR / f"nba_api_scoreboard_{d}.json").exists()
+               and not _load_lgf_for_date(d)]
+    if not missing:
+        return
+    if verbose:
+        print(f"[scores] Fetching scoreboards for {len(missing)} dates not in cache...")
+    try:
+        from src.results.nba_provider_nba_api import get_scoreboard, _parse_games
+    except ImportError:
+        if verbose:
+            print("[scores] nba_api not available, skipping scoreboard prefetch")
+        return
+
+    fetched = 0
+    for d in sorted(missing):
+        # Skip if already in memory cache (may have been loaded by _load_scoreboard_for_date)
+        if d in _nba_api_score_cache and _nba_api_score_cache[d]:
+            continue
+        try:
+            payload, meta = get_scoreboard(d)
+            if payload and not meta.get("fetch_failed"):
+                fetched += 1
+            # Clear in-memory scoreboard cache so _load_scoreboard_for_date re-reads the file
+            if d in _nba_api_score_cache:
+                del _nba_api_score_cache[d]
+        except Exception as exc:
+            if verbose:
+                print(f"[scores] Failed to fetch {d}: {exc}")
+    if verbose:
+        print(f"[scores] Fetched {fetched}/{len(missing)} new scoreboard files")
+
+
+def _infer_spread_selection_from_result(
+    game: Dict, pregraded_result: str, away_team: str, home_team: str,
+    spread_line_away: Optional[float],
+) -> Optional[str]:
+    """
+    Infer which team was picked on a spread bet using game scores + spread line + WIN/LOSS.
+
+    spread_line_away: the spread line for the away team (e.g. -3.5 means away favored by 3.5).
+    Returns team abbreviation or None.
+    """
+    if pregraded_result not in ("WIN", "LOSS"):
+        return None
+    if spread_line_away is None:
+        return None
+    away_score = game.get("away_score")
+    home_score = game.get("home_score")
+    if away_score is None or home_score is None:
+        return None
+
+    # Normalize orientation: game may have teams flipped
+    g_away = game.get("away_team")
+    g_home = game.get("home_team")
+    if g_away == home_team and g_home == away_team:
+        away_score, home_score = home_score, away_score
+
+    # Spread result: away covered if (away_score + spread_line_away) > home_score
+    # (spread_line_away negative means away favored)
+    away_margin = away_score - home_score  # positive means away won outright
+    away_covered_margin = away_margin + spread_line_away  # > 0 means away covered
+
+    if abs(away_covered_margin) < 0.01:
+        return None  # push, can't determine
+
+    away_covered = away_covered_margin > 0
+
+    if away_covered:
+        covering_team = away_team
+        non_covering_team = home_team
+    else:
+        covering_team = home_team
+        non_covering_team = away_team
+
+    if pregraded_result == "WIN":
+        return covering_team
+    else:
+        return non_covering_team
+
+
+def _infer_total_side_from_result(
+    game: Dict, pregraded_result: str, away_team: str, home_team: str,
+    total_line: Optional[float],
+) -> Optional[str]:
+    """
+    Infer OVER/UNDER from game scores + total line + WIN/LOSS.
+
+    Returns "OVER" or "UNDER" or None.
+    """
+    if pregraded_result not in ("WIN", "LOSS"):
+        return None
+    if total_line is None:
+        return None
+    away_score = game.get("away_score")
+    home_score = game.get("home_score")
+    if away_score is None or home_score is None:
+        return None
+
+    combined = away_score + home_score
+    if abs(combined - total_line) < 0.01:
+        return None  # push
+
+    went_over = combined > total_line
+
+    if (pregraded_result == "WIN" and went_over) or (pregraded_result == "LOSS" and not went_over):
+        return "OVER"
+    else:
+        return "UNDER"
+
+
 def _infer_ml_selection_from_result(
     game: Dict, pregraded_result: str, away_team: str, home_team: str
 ) -> Optional[str]:
@@ -726,6 +982,14 @@ def build_records_from_rows(
     records: List[RawPickRecord] = []
     line_cache: Dict[str, Dict[str, Any]] = {}
 
+    # Pre-fetch NBA API scoreboards for dates not already cached (needed for direction inference)
+    all_dates = set()
+    for row in rows:
+        gd = _parse_date_from_row(row.get("date", ""))
+        if gd:
+            all_dates.add(gd)
+    prefetch_scoreboards_for_dates(sorted(all_dates), verbose=not debug)
+
     for row in rows:
         try:
             game_date = _parse_date_from_row(row["date"])
@@ -756,45 +1020,82 @@ def build_records_from_rows(
                     away_team, home_team = ncaab_away, ncaab_home
                     detected_sport = "NCAAB"
 
+            # Load lines from Odds API cache upfront for spread/total (needed for direction inference too)
+            cached_lines_game: Optional[Dict] = None
+            if market_type in ("spread", "total") and away_team and home_team and detected_sport == "NBA":
+                if game_date not in line_cache:
+                    line_cache[game_date] = fetch_historical_lines_for_date(game_date, debug=debug)
+                g_lines = line_cache[game_date]
+                cached_lines_game = g_lines.get(f"{away_team}@{home_team}") or g_lines.get(f"{home_team}@{away_team}")
+                if not cached_lines_game:
+                    for v in g_lines.values():
+                        if {v.get("away"), v.get("home")} == {away_team, home_team}:
+                            cached_lines_game = v
+                            break
+                if not cached_lines_game and debug:
+                    print(f"[lines] No lines for {away_team}@{home_team} on {game_date}")
+
             # For moneyline/spread picks with just "Moneyline"/"Spread" as pick text,
-            # infer selection from WIN/LOSS result + LGF game scores.
+            # infer selection from WIN/LOSS result + game scores.
+            # NBA: LGF then NBA API scoreboard. NCAAB: ESPN scoreboard.
             if market_type in ("moneyline", "spread") and selection is None and away_team and home_team and pregraded_result in ("WIN", "LOSS"):
-                lgf_game = _find_lgf_game(game_date, away_team, home_team)
-                if lgf_game:
-                    inferred = _infer_ml_selection_from_result(lgf_game, pregraded_result, away_team, home_team)
+                if detected_sport == "NCAAB":
+                    score_game = _find_ncaab_game_scores(game_date, away_team, home_team)
+                else:
+                    score_game = _find_game_scores(game_date, away_team, home_team)
+                if score_game:
+                    if market_type == "moneyline":
+                        inferred = _infer_ml_selection_from_result(score_game, pregraded_result, away_team, home_team)
+                    else:
+                        # Spread: need the spread line for the away team (NBA only; NCAAB has no lines cache)
+                        spread_line_away: Optional[float] = None
+                        if cached_lines_game:
+                            spread_line_away = cached_lines_game.get("spreads", {}).get(away_team)
+                            if spread_line_away is None:
+                                home_line = cached_lines_game.get("spreads", {}).get(home_team)
+                                if home_line is not None:
+                                    spread_line_away = -home_line
+                        inferred = _infer_spread_selection_from_result(
+                            score_game, pregraded_result, away_team, home_team, spread_line_away
+                        )
                     if inferred:
                         selection = inferred
                         side = inferred
 
-            # For spread/total without line: fetch from Odds API
-            if market_type in ("spread", "total") and away_team and home_team:
-                needs_line = (market_type == "spread" and line_val is None) or \
-                             (market_type == "total" and (line_val is None or selection is None))
-                if needs_line:
-                    if game_date not in line_cache:
-                        line_cache[game_date] = fetch_historical_lines_for_date(game_date, debug=debug)
-                    g_lines = line_cache[game_date]
-                    game = g_lines.get(f"{away_team}@{home_team}") or g_lines.get(f"{home_team}@{away_team}")
-                    if not game:
-                        for v in g_lines.values():
-                            if {v.get("away"), v.get("home")} == {away_team, home_team}:
-                                game = v
-                                break
-                    if game:
-                        if market_type == "total" and line_val is None:
-                            line_val = game.get("total")
-                        elif market_type == "spread" and line_val is None and selection:
-                            sel_abbr = _map_team(selection, sport="NBA")
-                            if sel_abbr:
-                                line_val = game.get("spreads", {}).get(sel_abbr)
-                                selection = sel_abbr
+            # For totals with no side: infer OVER/UNDER from game scores + total line + WIN/LOSS
+            if market_type == "total" and side is None and away_team and home_team and pregraded_result in ("WIN", "LOSS"):
+                total_line_val = line_val
+                if total_line_val is None and cached_lines_game:
+                    total_line_val = cached_lines_game.get("total")
+                if total_line_val is not None:
+                    if detected_sport == "NCAAB":
+                        score_game = _find_ncaab_game_scores(game_date, away_team, home_team)
+                    else:
+                        score_game = _find_game_scores(game_date, away_team, home_team)
+                    if score_game:
+                        inferred_side = _infer_total_side_from_result(
+                            score_game, pregraded_result, away_team, home_team, total_line_val
+                        )
+                        if inferred_side:
+                            side = inferred_side
+                            selection = inferred_side
                             if line_val is None:
-                                opp = home_team if sel_abbr == away_team else away_team
-                                opp_line = game.get("spreads", {}).get(opp)
-                                if opp_line is not None:
-                                    line_val = -opp_line
-                    elif debug:
-                        print(f"[lines] No lines for {away_team}@{home_team} on {game_date}")
+                                line_val = total_line_val
+
+            # Fill in remaining missing lines from Odds API cache
+            if market_type in ("spread", "total") and away_team and home_team and cached_lines_game:
+                if market_type == "total" and line_val is None:
+                    line_val = cached_lines_game.get("total")
+                elif market_type == "spread" and line_val is None and selection:
+                    sel_abbr = _map_team(selection, sport="NBA")
+                    if sel_abbr:
+                        line_val = cached_lines_game.get("spreads", {}).get(sel_abbr)
+                        selection = sel_abbr
+                    if line_val is None:
+                        opp = home_team if sel_abbr == away_team else away_team
+                        opp_line = cached_lines_game.get("spreads", {}).get(opp)
+                        if opp_line is not None:
+                            line_val = -opp_line
 
             actual_line = prop_line if market_type == "player_prop" else line_val
 
@@ -1274,7 +1575,7 @@ def main() -> None:
     ap.add_argument("--storage", default=DEFAULT_STORAGE_STATE, help="Path to Playwright storage state JSON")
     ap.add_argument("--debug", action="store_true", help="Enable verbose debug output")
     ap.add_argument("--dry-run", action="store_true", help="Parse and display picks without writing files")
-    ap.add_argument("--expert", choices=["sxebets", "nukethebooks", "all"], default="all",
+    ap.add_argument("--expert", choices=["sxebets", "nukethebooks", "unitvacuum", "all"], default="all",
                     help="Which expert to backfill (default: all)")
     ap.add_argument("--since", default=None, metavar="YYYY-MM-DD",
                     help="Only include picks on or after this date")
@@ -1289,7 +1590,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.clear_checkpoint:
-        for slug in ["sxebets", "nukethebooks"]:
+        for slug in ["sxebets", "nukethebooks", "unitvacuum"]:
             cp = _checkpoint_path(slug)
             if cp.exists():
                 cp.unlink()
@@ -1382,7 +1683,7 @@ def main() -> None:
     combined_raw_path = os.path.join(OUT_DIR, "raw_juicereel_backfill_nba.json")
     merged: List[Dict[str, Any]] = []
     seen_fps: set = set()
-    for slug in ["sxebets", "nukethebooks"]:
+    for slug in ["sxebets", "nukethebooks", "unitvacuum"]:
         expert_raw_path = os.path.join(OUT_DIR, f"raw_juicereel_{slug}_backfill_nba.json")
         if not os.path.exists(expert_raw_path):
             print(f"[backfill] Skipping missing file: {expert_raw_path}")

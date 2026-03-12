@@ -656,6 +656,8 @@ def collect_occurrences(
     oddstrader_history_root: Path | None = None,
     oddstrader_history_start: str | None = None,
     oddstrader_history_end: str | None = None,
+    include_bettingpros_experts_history: bool = False,
+    bettingpros_experts_history_path: Path | None = None,
     sport: str = NBA_SPORT,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int], List[Dict[str, Any]]]:
     occurrences: List[Dict[str, Any]] = []
@@ -1018,6 +1020,7 @@ def collect_occurrences(
                 atomic_stat=signal.get("atomic_stat"),
                 direction=signal.get("direction"),
                 team=signal.get("selection") if signal.get("market_type") in ("spread", "moneyline") else None,
+                event_key=signal.get("event_key"),
             )
 
             # Build offer_key (selection + line + odds)
@@ -1293,6 +1296,7 @@ def _history_row_to_occurrence(row: Dict[str, Any], source_tag: str = "betql_his
         atomic_stat=mk.get("stat_key"),
         direction=mk.get("side"),
         team=mk.get("selection") if mk.get("market_type") in ("spread", "moneyline") else None,
+        event_key=signal.get("event_key"),
     )
     signal["selection_key"] = selection_key
     signal["offer_key"] = build_offer_key(selection_key, mk.get("line"), None)
@@ -1454,6 +1458,16 @@ def main() -> None:
         default=None,
         help="Path to normalized JuiceReel backfill JSON (if not provided, defaults to out/normalized_juicereel_backfill_nba.json).",
     )
+    parser.add_argument(
+        "--include-bettingpros-experts-history",
+        action="store_true",
+        help="Include BettingPros expert scored pick history (default out/raw_bettingpros_experts_history_nba.json).",
+    )
+    parser.add_argument(
+        "--bettingpros-experts-history-path",
+        default=None,
+        help="Path to raw BettingPros experts history JSON (if not provided, defaults to out/raw_bettingpros_experts_history_nba.json).",
+    )
     args = parser.parse_args()
     sport = args.sport
     if args.include_betql_history and (not args.history_start or not args.history_end):
@@ -1478,6 +1492,8 @@ def main() -> None:
         oddstrader_history_root=Path(args.oddstrader_history_root) if args.oddstrader_history_root else None,
         oddstrader_history_start=args.oddstrader_history_start,
         oddstrader_history_end=args.oddstrader_history_end,
+        include_bettingpros_experts_history=args.include_bettingpros_experts_history,
+        bettingpros_experts_history_path=Path(args.bettingpros_experts_history_path) if args.bettingpros_experts_history_path else None,
         sport=sport,
     )
 
@@ -1541,7 +1557,8 @@ def main() -> None:
 
     # Load JuiceReel normalized backfill if requested
     if args.include_juicereel_history:
-        default_jr_path = "out/normalized_juicereel_backfill_nba.json"
+        sport_suffix = "ncaab" if sport == NCAAB_SPORT else "nba"
+        default_jr_path = f"out/normalized_juicereel_backfill_{sport_suffix}.json"
         path = Path(args.juicereel_history_path) if args.juicereel_history_path else Path(default_jr_path)
         if not path.exists():
             print(f"[WARN] Skipping missing JuiceReel history file: {path}")
@@ -1559,6 +1576,28 @@ def main() -> None:
                         print(f"[WARN] Failed to convert JuiceReel row: {e}")
                     continue
             print(f"Loaded {loaded} records from JuiceReel history: {path}")
+
+    if args.include_bettingpros_experts_history:
+        default_bpe_path = "out/raw_bettingpros_experts_history_nba.json"
+        path = Path(args.bettingpros_experts_history_path) if args.bettingpros_experts_history_path else Path(default_bpe_path)
+        if not path.exists():
+            print(f"[WARN] Skipping missing BettingPros experts history file: {path}")
+        else:
+            from src.normalizer_bettingpros_experts_nba import normalize_bettingpros_experts_records
+            with open(path) as f:
+                bpe_raw = json.load(f)
+            bpe_normalized = normalize_bettingpros_experts_records(bpe_raw)
+            loaded = 0
+            for row in bpe_normalized:
+                try:
+                    occ = _history_row_to_occurrence(row, source_tag="bettingpros_experts_history", sport=sport)
+                    occurrences.append(occ)
+                    loaded += 1
+                except Exception as e:
+                    if args.debug:
+                        print(f"[WARN] Failed to convert BettingPros experts row: {e}")
+                    continue
+            print(f"Loaded {loaded} records from BettingPros experts history: {path}")
 
     before = len(occurrences)
     deduped_map = {}

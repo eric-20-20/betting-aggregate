@@ -28,6 +28,7 @@ def build_selection_key(
     atomic_stat: Optional[str] = None,
     direction: Optional[str] = None,
     team: Optional[str] = None,
+    event_key: Optional[str] = None,
 ) -> str:
     """Build a selection_key that identifies the semantic bet identity.
 
@@ -42,6 +43,8 @@ def build_selection_key(
         atomic_stat: Stat type (e.g., "points", "rebounds")
         direction: OVER/UNDER for props/totals, or team code for spreads
         team: Team code for spread/moneyline (e.g., "BOS")
+        event_key: Full event key (e.g., "NBA:2026:03:12:IND@PHX") — required
+            for totals/spreads/moneylines to disambiguate multiple games per day.
 
     Returns:
         A stable SHA256 hash identifying this selection
@@ -80,12 +83,16 @@ def build_selection_key(
             "day_key": day_key_norm,
             "market_type": "spread",
             "team": team_code.upper().strip(),
+            "event_key": (event_key or "").strip(),
         }
     elif market_type == "total":
+        # event_key is critical here — without it every UNDER/OVER on the same day
+        # gets the same hash, causing cross-game source merges.
         payload = {
             "day_key": day_key_norm,
             "market_type": "total",
             "direction": (direction or "").upper().strip(),
+            "event_key": (event_key or "").strip(),
         }
     elif market_type == "moneyline":
         team_code = team or selection or ""
@@ -95,6 +102,7 @@ def build_selection_key(
             "day_key": day_key_norm,
             "market_type": "moneyline",
             "team": team_code.upper().strip(),
+            "event_key": (event_key or "").strip(),
         }
     else:
         # Fallback for unknown market types

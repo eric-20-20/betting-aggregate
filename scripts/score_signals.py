@@ -2345,7 +2345,7 @@ def build_output(
         parts = sel.replace("NBA:", "").replace("NCAAB:", "").split("::")
         player = parts[0] if parts else ""
         stat = sig.get("atomic_stat") or (parts[1] if len(parts) > 1 else "")
-        ek = sig.get("event_key", "")
+        ek = sig.get("event_key") or ""
         # Normalize team order: extract TEAM@TEAM and sort so CHA@SAC == SAC@CHA
         m = re.search(r'([A-Z]{2,4})@([A-Z]{2,4})(?::\d+)?$', ek)
         if m:

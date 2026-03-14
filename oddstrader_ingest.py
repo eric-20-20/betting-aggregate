@@ -640,14 +640,9 @@ def normalize_pick(
         except (ValueError, TypeError):
             pass
 
+    # event_key must use canonical format NBA:YYYY:MM:DD:AWAY@HOME for cross-source merging.
+    # The time-appended format (NBA:20260312:AWAY@HOME:2300) is incompatible with other sources.
     event_key = canonical_event_key
-    if event_time:
-        try:
-            dt = datetime.fromisoformat(event_time)
-            time_str = dt.strftime("%H%M")
-            event_key = f"{sport}:{dt.strftime('%Y%m%d')}:{away_code}@{home_code}:{time_str}"
-        except (ValueError, TypeError):
-            pass
 
     market_type = raw.get("market_type")
     side = raw.get("side")

@@ -48,12 +48,12 @@ function TimelineRow({ entry }: { entry: TimelineEntry }) {
     line_max: null,
     signal_id: "",
     score: 0,
-    best_odds: entry.best_odds,
+    expert_odds: (entry.expert_odds ?? entry.best_odds) as number | null,
     sources_count: 0,
     consensus_strength: "",
   };
   const { main, detail } = formatPickSelection(fakeSignal);
-  const odds = formatOdds(entry.best_odds);
+  const odds = formatOdds((entry.expert_odds ?? entry.best_odds) as number | null);
 
   return (
     <div className="grid grid-cols-[80px_1fr_auto] md:grid-cols-[100px_72px_1fr_auto] items-center gap-2 px-3 py-2.5 rounded-lg border border-gray-700/40 bg-gray-800/40 hover:bg-gray-800/60 transition-colors">

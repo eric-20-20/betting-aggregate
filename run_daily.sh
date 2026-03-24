@@ -109,8 +109,8 @@ if [ "$SKIP_INGEST" = false ]; then
         _INGEST_NAMES+=("$name")
     }
 
-    _run_ingest_bg "action"       120  python3 action_ingest.py $DEBUG
-    _run_ingest_bg "covers"       120  python3 covers_ingest.py $DEBUG
+    _run_ingest_bg "action"       300  python3 action_ingest.py $DEBUG
+    _run_ingest_bg "covers"       300  python3 covers_ingest.py $DEBUG
     _run_ingest_bg "oddstrader"   120  python3 oddstrader_ingest.py --props $DEBUG
     if [ -f data/sportsline_storage_state.json ]; then
         _run_ingest_bg "sportsline"   180  python3 sportsline_ingest.py --storage data/sportsline_storage_state.json $DEBUG
@@ -139,6 +139,12 @@ if [ "$SKIP_INGEST" = false ]; then
         _run_ingest_bg "juicereel"    180  python3 juicereel_ingest.py --storage data/juicereel_storage_state.json $DEBUG
     else
         echo "  ⚠ JuiceReel skipped (no storage state)"
+    fi
+    if [ -f data/bettingpros_storage_state.json ]; then
+        _run_ingest_bg "bettingpros"  180  python3 bettingpros_ingest.py --storage data/bettingpros_storage_state.json $DEBUG
+        _run_ingest_bg "bettingpros_experts"  300  python3 scripts/bettingpros_experts_ingest.py --storage data/bettingpros_storage_state.json $DEBUG
+    else
+        echo "  ⚠ BettingPros skipped (no storage state — run scripts/create_bettingpros_storage.py)"
     fi
 
     # Wait for all background scrapers, report results
@@ -205,6 +211,26 @@ echo "── NBA Step 3: Running consensus ──"
 python3 consensus_nba.py $DEBUG 2>&1 | tail -5
 
 echo ""
+echo "── Pre-ledger: Pruning superseded run directories ──"
+python3 -c "
+import shutil
+from pathlib import Path
+from collections import defaultdict
+runs = Path('data/runs')
+by_date = defaultdict(list)
+for d in sorted(runs.iterdir()):
+    if d.is_dir() and d.name != '<RUN_ID>':
+        by_date[d.name[:10]].append(d.name)
+deleted = 0
+for date, names in by_date.items():
+    for r in sorted(names)[:-1]:
+        shutil.rmtree(runs / r)
+        deleted += 1
+if deleted:
+    print(f'  Pruned {deleted} superseded run dirs')
+" 2>&1
+
+echo ""
 echo "── NBA Step 4: Building signal ledger ──"
 python3 scripts/build_signal_ledger.py $DEBUG \
     --include-betql-history \
@@ -221,8 +247,14 @@ python3 scripts/build_signal_ledger.py $DEBUG \
     --oddstrader-history-end "$DATE" \
     --include-dimers-history \
     --include-juicereel-history \
+    --include-bettingpros-experts-history \
+    --bettingpros-experts-history-path out/raw_bettingpros_experts_history_nba.json \
     --include-normalized-jsonl data/latest/normalized_sportsline_nba_expert_picks.jsonl \
     --include-normalized-jsonl data/latest/normalized_covers_backfill.jsonl \
+    --include-normalized-jsonl out/normalized_sportsline_nba_backfill.jsonl \
+    --include-normalized-jsonl out/normalized_dimers_backfill.jsonl \
+    --include-normalized-jsonl out/normalized_sportsline_expert_pages_combined.jsonl \
+    --include-normalized-jsonl out/normalized_sportsline_expert_pages_all_combined.jsonl \
     2>&1 | tail -10
 
 if [ "$QUICK" = false ]; then
@@ -244,6 +276,10 @@ if [ "$QUICK" = false ]; then
     echo ""
     echo "── NBA Step 7b: Pattern health check ──"
     python3 scripts/discover_patterns.py 2>&1 | tail -20 || echo "  (pattern check non-fatal)"
+
+    echo ""
+    echo "── NBA Step 7c: Pattern registry integrity check ──"
+    python3 scripts/validate_patterns.py --phase 1 --fail-only 2>&1 | tail -20 || echo "  ⚠ Pattern registry has FAIL-level issues — review validate_patterns.py output"
 else
     echo ""
     echo "── NBA Steps 5-7: Skipped (--quick mode) ──"
@@ -301,8 +337,8 @@ if [ "$SKIP_INGEST" = false ]; then
         _INGEST_NCAAB_NAMES+=("$name")
     }
 
-    _run_ncaab_bg "action"     120  python3 action_ingest.py --sport NCAAB $DEBUG
-    _run_ncaab_bg "covers"     120  python3 covers_ingest.py --sport NCAAB $DEBUG
+    _run_ncaab_bg "action"     300  python3 action_ingest.py --sport NCAAB $DEBUG
+    _run_ncaab_bg "covers"     300  python3 covers_ingest.py --sport NCAAB $DEBUG
     _run_ncaab_bg "oddstrader" 120  python3 oddstrader_ingest.py --sport NCAAB $DEBUG
     if [ -f data/sportsline_storage_state.json ]; then
         _run_ncaab_bg "sportsline" 180  python3 sportsline_ingest.py --sport NCAAB --storage data/sportsline_storage_state.json $DEBUG
@@ -313,6 +349,11 @@ if [ "$SKIP_INGEST" = false ]; then
         _run_ncaab_bg "dimers"     180  python3 dimers_ingest.py --sport NCAAB --storage-state dimers_storage_state.json $DEBUG
     else
         echo "  ⚠ Dimers NCAAB skipped (no storage state)"
+    fi
+    if [ -f data/vegasinsider_storage_state.json ]; then
+        _run_ncaab_bg "vegasinsider" 180  python3 vegasinsider_ingest.py --sport NCAAB --storage data/vegasinsider_storage_state.json $DEBUG
+    else
+        echo "  ⚠ VegasInsider NCAAB skipped (no storage state)"
     fi
 
     for i in "${!_INGEST_NCAAB_PIDS[@]}"; do
@@ -337,11 +378,40 @@ python3 consensus_nba.py --sport NCAAB $DEBUG 2>&1 | tail -5
 
 echo ""
 echo "── NCAAB Step 3: Building signal ledger ──"
-python3 scripts/build_signal_ledger.py --sport NCAAB $DEBUG 2>&1 | tail -10
+python3 scripts/build_signal_ledger.py --sport NCAAB \
+  --include-juicereel-history \
+  --juicereel-history-path out/normalized_juicereel_backfill_ncaab.json \
+  --include-oddstrader-history \
+  --oddstrader-history-root data/history/oddstrader \
+  --oddstrader-history-start 2024-11-01 \
+  --oddstrader-history-end "$DATE" \
+  --include-normalized-jsonl out/normalized_sportsline_ncaab_expert_picks.jsonl \
+  --include-normalized-jsonl out/normalized_sportsline_expert_pages_ncaab_combined.jsonl \
+  --include-normalized-jsonl out/normalized_action_ncaab_backfill.jsonl \
+  --include-normalized-jsonl out/normalized_dimers_ncaab_backfill.jsonl \
+  --include-normalized-jsonl out/normalized_juicereel_ncaab.json \
+  $DEBUG 2>&1 | tail -10
 
 echo ""
 echo "── NCAAB Step 4: Grading signals ──"
 python3 scripts/grade_signals_nba.py --sport NCAAB $DEBUG 2>&1 | tail -10
+
+echo ""
+echo "── NCAAB Step 4b: Building research dataset (signal+grade join) ──"
+python3 scripts/build_research_dataset_nba.py \
+  --signals data/ledger/ncaab/signals_occurrences.jsonl \
+  --grades data/ledger/ncaab/grades_occurrences.jsonl \
+  --out data/analysis/ncaab/graded_signals_latest.jsonl \
+  2>&1 | tail -5
+
+echo ""
+echo "── NCAAB Step 4c: Building occurrence-level research dataset ──"
+python3 scripts/build_research_dataset_nba_occurrences.py \
+  --signals data/ledger/ncaab/signals_occurrences.jsonl \
+  --grades data/ledger/ncaab/grades_occurrences.jsonl \
+  --ledger data/ledger/ncaab/signals_latest.jsonl \
+  --out data/analysis/ncaab/graded_occurrences_latest.jsonl \
+  2>&1 | tail -5
 
 echo ""
 echo "── NCAAB Step 5: Generating reports ──"
@@ -385,3 +455,8 @@ echo "  Reports: data/reports/"
 echo ""
 python3 scripts/verify_pipeline_auth.py 2>&1 | head -10 || true
 echo "========================================="
+
+# ─── Supabase push (non-blocking) ────────────────────────────────────
+echo ""
+echo "Pushing to Supabase..."
+python3 scripts/push_to_supabase.py || echo "  Supabase push skipped (credentials not set)"

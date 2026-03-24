@@ -33,10 +33,12 @@ INPUT_FILES_BY_SPORT = {
         "normalized_oddstrader_prop_nba.json",
         "normalized_vegasinsider_nba.json",
         "normalized_juicereel_nba.json",
-        # NOTE: normalized_juicereel_backfill_nba.json is intentionally excluded here.
-        # Backfill records span many past game dates and would merge with today's live picks
-        # (same player+stat+direction across different games). The ledger builder ingests
-        # the backfill via --include-juicereel-history for historical grading only.
+        "normalized_bettingpros_nba.json",
+        "normalized_bettingpros_experts_nba.json",
+        # NOTE: normalized_juicereel_backfill_nba.json and normalized_bettingpros_backfill_nba.json
+        # are intentionally excluded here. Backfill records span many past game dates and would
+        # merge with today's live picks (same player+stat+direction across different games). The
+        # ledger builder ingests backfills via --include-*-history for historical grading only.
         # Backfill data (historical picks from Action + BetQL)
         "merged_action_nba.json",
         "merged_betql_props_nba.json",
@@ -51,6 +53,7 @@ INPUT_FILES_BY_SPORT = {
         "normalized_oddstrader_ncaab.json",
         "normalized_oddstrader_prop_ncaab.json",
         "normalized_juicereel_ncaab.json",
+        "normalized_vegasinsider_ncaab.json",
     ],
 }
 
@@ -80,6 +83,7 @@ RAW_FILES_BY_SPORT = {
         "raw_dimers_ncaab.json",
         "raw_oddstrader_ncaab.json",
         "raw_oddstrader_prop_ncaab.json",
+        "raw_vegasinsider_ncaab.json",
     ],
 }
 
@@ -723,9 +727,13 @@ def _standard_line_tolerance(market_type: Optional[str], context: str = "directi
             return 1.5
         if market_type == "total":
             return 2.0
+        if market_type == "player_prop":
+            return 1.5
         return None
     if context == "soft":
         if market_type in {"spread", "total"}:
+            return 1.0
+        if market_type == "player_prop":
             return 1.0
         return 0.0
     return None
@@ -866,10 +874,11 @@ def _compute_match_key_player_prop(rec: Dict[str, Any]) -> Optional[Tuple[str, D
         return None
     key_player = player_match or player_token_norm
     matchup_key = matchup or "UNKNOWN"
-    # Player props: use player+stat+direction as the merge key (matchup-agnostic).
-    # A player plays exactly one game per day, so matchup is redundant in the key
-    # and would prevent merging sources that lack matchup data (e.g. JuiceReel solo cards).
-    key = f"{day}|{key_player}|{stat_token_norm}|{direction}"
+    # Player props: use day+event_key+player+stat+direction as the merge key.
+    # event_key scopes the key to the specific game, preventing cross-game merges
+    # on days where a player is listed in multiple games (e.g. back-to-backs, postponements).
+    event_key_val = event.get("event_key") or ""
+    key = f"{day}|{event_key_val}|{key_player}|{stat_token_norm}|{direction}"
     meta = {
         "day_key": day,
         "event_key": event.get("event_key"),
@@ -1078,7 +1087,8 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
             }
         )
 
-    # Player prop hard consensus clustering (line tolerance <= 1.0) grouped by match_key
+    # Player prop hard consensus clustering grouped by match_key
+    _prop_hard_tol = _standard_line_tolerance("player_prop", context="directional") or 1.0
     for match_key, entries in prop_groups.items():
         valid_entries = [e for e in entries if e.get("line") is not None]
         if not valid_entries:
@@ -1089,7 +1099,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
         cluster_min = None
         for ent in valid_entries:
             line_val = float(ent["line"])
-            if current and cluster_min is not None and line_val - cluster_min > 1.0:
+            if current and cluster_min is not None and line_val - cluster_min > _prop_hard_tol:
                 clusters.append(current)
                 current = []
                 cluster_min = None
@@ -1297,6 +1307,7 @@ def build_atomic_signals(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             signals.append(
                 {
                     "day_key": dk,
+                    "event_key": event.get("event_key"),
                     "player_id": player_id,
                     "atomic_stat": atomic,
                     "direction": direction,
@@ -1433,7 +1444,7 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
         if rec.get("eligible_for_consensus"):
             append_standard_signal(rec)
     for sig in signals:
-        key = (sig["day_key"], sig["player_id"], sig["atomic_stat"], sig["direction"])
+        key = (sig["day_key"], sig.get("event_key"), sig["player_id"], sig["atomic_stat"], sig["direction"])
         group = groups.setdefault(
             key,
             {
@@ -1515,6 +1526,9 @@ def group_soft(records: List[Dict[str, Any]], hard_identities: Optional[Set[Tupl
         if real_source_strength != 1:
             continue
         if not (expert_strength >= 2 or group["count_total"] >= 2):
+            continue
+        _prop_soft_tol = _standard_line_tolerance("player_prop", context="soft") or 1.0
+        if line_min is not None and line_max is not None and line_max - line_min > _prop_soft_tol:
             continue
         identity = (
             group["day_key"],
@@ -1655,7 +1669,7 @@ def group_within_source(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         source_id = sig.get("source_id")
         if not source_id:
             continue
-        key = (sig["day_key"], sig["player_id"], sig["atomic_stat"], sig["direction"], source_id)
+        key = (sig["day_key"], sig.get("event_key"), sig["player_id"], sig["atomic_stat"], sig["direction"], source_id)
         group = groups.setdefault(
             key,
             {
@@ -1698,10 +1712,14 @@ def group_within_source(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             }
         )
 
+    _prop_within_tol = _standard_line_tolerance("player_prop", context="soft") or 1.0
     results: List[Dict[str, Any]] = []
     for group in groups.values():
         expert_strength = len(group["experts_set"])
         sources = [group["source_id"]] if group.get("source_id") else []
+        sup_lines = [float(s["line"]) for s in group["supports"] if isinstance(s.get("line"), (int, float))]
+        if len(sup_lines) >= 2 and max(sup_lines) - min(sup_lines) > _prop_within_tol:
+            continue
         results.append(
             {
                 "day_key": group["day_key"],
@@ -1921,12 +1939,23 @@ def build_supports_from_group(group: Dict[str, Any]) -> List[Dict[str, Any]]:
     sample_urls = group.get("sample_urls") or []
     atomic_stat = group.get("atomic_stat")
     existing = group.get("supports") or []
+    _seen_support_keys: set = set()
     for sup in existing:
         evidence_type = None
         sup_stat_key = sup.get("stat_key")
         sup_atomic = sup.get("atomic_stat") or atomic_stat
         if sup_atomic and sup_stat_key:
             evidence_type = "atomic" if normalize_stat_key(str(sup_stat_key)) == normalize_stat_key(str(sup_atomic)) else "combo"
+        _expert_name = sup.get("expert_name")
+        _expert_slug = _expert_name.lower().replace(" ", "_").replace(".", "") if _expert_name else None
+        _sup_key = (
+            sup.get("source_id") or group.get("source_id"),
+            _expert_slug,
+            sup.get("line"),
+        )
+        if _sup_key in _seen_support_keys:
+            continue
+        _seen_support_keys.add(_sup_key)
         supports.append(
             {
                 "source_id": sup.get("source_id") or group.get("source_id"),
@@ -2022,8 +2051,9 @@ def derive_experts(group: Dict[str, Any]) -> List[str]:
             raw.add(str(ident))
     if raw:
         return sorted(raw)
-    sources = group.get("sources") or ([group.get("source_id")] if group.get("source_id") else [])
-    return sorted({str(src) for src in sources if src})
+    # Do NOT fall back to source_ids as expert names — source_ids like
+    # "juicereel_nukethebooks" are not expert names and pollute the expert table.
+    return []
 
 
 def build_solo_signals(
@@ -2550,7 +2580,10 @@ def detect_conflicts(
         bucket_std.setdefault(conflict_key, {}).setdefault(norm_sel, set()).update(g.get("sources") or [])
         meta_std.setdefault(conflict_key, []).append(g)
 
+    CONFLICT_MARGIN = 3  # majority must beat minority by this many sources to override
+
     for key, sel_sources in bucket_std.items():
+        matchup_key, mkt = key
         unique_dirs = list(sel_sources.keys())
         sources_union = set()
         for srcs in sel_sources.values():
@@ -2561,19 +2594,48 @@ def detect_conflicts(
             # Agreement across >=2 sources -> not a conflict
             continue
         groups = meta_std.get(key, [])
+
+        # ── Margin check: if majority leads by >= CONFLICT_MARGIN, let it win ──
+        # Mirrors the logic in build_standard_directional_consensus.
+        # e.g. 4 sources on HOU vs 1 on LAL → margin=3 → not a conflict.
+        ranked = sorted(sel_sources.items(), key=lambda x: len(x[1]), reverse=True)
+        best_dir, best_srcs = ranked[0]
+        other_count = sum(len(srcs) for _, srcs in ranked[1:])
+        margin = len(best_srcs) - other_count
+        if margin >= CONFLICT_MARGIN:
+            print(f"[DEBUG] {mkt} group => MARGIN WIN (not conflict) matchup={matchup_key} {best_dir}={len(best_srcs)} vs other={other_count}")
+            continue
+
+        # ── Cross-market corroboration: for moneyline thin conflicts, check spread ──
+        # If a moneyline is contested (margin < CONFLICT_MARGIN) but the majority
+        # direction is corroborated by 2+ spread sources on the same game, treat
+        # that as directional consensus and skip the conflict signal.
+        # Rationale: a spread pick is a directional bet on who wins — same information.
+        if mkt == "moneyline":
+            spread_key = (matchup_key, "spread")
+            spread_sel_sources = bucket_std.get(spread_key, {})
+            spread_for_majority = spread_sel_sources.get(best_dir, set())
+            if len(spread_for_majority) >= 2:
+                print(
+                    f"[DEBUG] moneyline group => CROSS-MARKET OVERRIDE matchup={matchup_key} "
+                    f"ML {best_dir}={len(best_srcs)} vs other={other_count} + "
+                    f"spread corroboration={sorted(spread_for_majority)}"
+                )
+                continue
+
         conflicts.append(
             {
                 "signal_type": "avoid_conflict",
-                "event_key": key[0],
-                "matchup_key": key[0],
-                "market_type": key[1],
-                "selection": f"{key[1]}_conflict",
+                "event_key": matchup_key,
+                "matchup_key": matchup_key,
+                "market_type": mkt,
+                "selection": f"{mkt}_conflict",
                 "selections": unique_dirs,
                 "sources": sorted(sources_union),
                 "count_total": sum(g.get("count_total", 0) for g in groups),
             }
         )
-        print(f"[DEBUG] {key[1]} group => AVOID (conflict) matchup_key={key[0]} selections={unique_dirs} sources={sorted(sources_union)}")
+        print(f"[DEBUG] {mkt} group => AVOID (conflict) matchup_key={matchup_key} selections={unique_dirs} sources={sorted(sources_union)}")
 
     # player props handled in build_unified (with supports), so skip here to avoid duplicates
     return conflicts
@@ -2583,6 +2645,9 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
     """Cross-source directional consensus for standard markets ignoring lines."""
     allowed_markets = {"spread", "total", "moneyline"}
     votes: Dict[Tuple[str, str], Dict[str, Set[str]]] = {}
+    # expert_votes: (group_key, mkt) -> {selection -> set of "source:expert_name" strings}
+    # Each individual expert counts as 1 vote regardless of source.
+    expert_votes: Dict[Tuple[str, str], Dict[str, Set[str]]] = {}
     lines_by_key_sel: Dict[Tuple[str, str, str], List[float]] = {}
     experts_by_key_sel: Dict[Tuple[str, str, str], Set[str]] = {}
     meta: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -2618,12 +2683,23 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
             line_val = None
 
         key = (group_key, mkt)
-        votes.setdefault(key, {}).setdefault(src, set()).add(selection_norm)
+        # For spreads, encode line sign into vote key so DET -1.5 and DET +1.5
+        # are treated as different directional votes and don't collapse into the
+        # same bucket.  The suffix is stripped before writing to output fields.
+        if mkt == "spread" and line_val is not None:
+            vote_sel = selection_norm + ("_neg" if line_val < 0 else "_pos")
+        else:
+            vote_sel = selection_norm
+        votes.setdefault(key, {}).setdefault(src, set()).add(vote_sel)
         if line_val is not None:
-            lines_by_key_sel.setdefault((group_key, mkt, selection_norm), []).append(line_val)
+            lines_by_key_sel.setdefault((group_key, mkt, vote_sel), []).append(line_val)
         expert = prov.get("expert_name") or prov.get("expert_handle") or prov.get("expert_slug")
         if expert:
-            experts_by_key_sel.setdefault((group_key, mkt, selection_norm), set()).add(str(expert))
+            experts_by_key_sel.setdefault((group_key, mkt, vote_sel), set()).add(str(expert))
+            # Track individual expert votes: "source:expert" so same expert at two sources
+            # counts twice (rare), but same expert at same source is deduplicated.
+            expert_vote_id = f"{src}:{expert}"
+            expert_votes.setdefault(key, {}).setdefault(vote_sel, set()).add(expert_vote_id)
         if key not in meta:
             meta[key] = {
                 "day_key": day_key(event_key),
@@ -2699,14 +2775,45 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                 # Only include sources that voted for the winning side
                 winning_sources = sorted(best_srcs)
 
+            # ── Expert vote tiebreaker ─────────────────────────────────────────
+            # When source-level margin is insufficient, count individual expert
+            # votes. Each expert (identified by "source:name") is 1 vote.
+            # Threshold: majority expert must have >= 3 expert votes AND lead
+            # by more than 2:1 ratio over the minority.
+            # This handles cases like "4 Action experts say HOU, 1 VegasInsider
+            # expert says LAL" — expert count = 4v1, clearly directional.
+            if winning_sel is None:
+                ev_map = expert_votes.get(key, {})
+                if ev_map:
+                    ev_ranked = sorted(ev_map.items(), key=lambda x: len(x[1]), reverse=True)
+                    ev_best_sel, ev_best_votes = ev_ranked[0]
+                    ev_other = sum(len(v) for _, v in ev_ranked[1:])
+                    ev_n_best = len(ev_best_votes)
+                    # Require: majority has >= 3 expert votes AND > 2:1 ratio
+                    if ev_n_best >= 3 and (ev_other == 0 or ev_n_best / ev_other > 2.0):
+                        winning_sel = ev_best_sel
+                        winning_sources = sorted(sel_source_counts.get(ev_best_sel, set()))
+                        print(
+                            f"[DEBUG] {mkt} group => EXPERT VOTE CONSENSUS "
+                            f"matchup={group_key} {ev_best_sel}={ev_n_best} experts "
+                            f"vs other={ev_other} (sources: {winning_sources})"
+                        )
+
         if winning_sel is not None:
             lines = lines_by_key_sel.get((group_key, mkt, winning_sel), [])
             if lines:
                 line_min = min(lines)
                 line_max = max(lines)
+            # Strip the _neg/_pos suffix added for spread sign disambiguation
+            # before writing to any output field.
+            output_sel = (
+                winning_sel[:-4]
+                if winning_sel.endswith(("_neg", "_pos"))
+                else winning_sel
+            )
             hard_results.append(
                 {
-                    "canonical_key": ("STD_DIR", group_key, mkt, winning_sel),
+                    "canonical_key": ("STD_DIR", group_key, mkt, output_sel),
                     "day_key": meta_row.get("day_key"),
                     "event_key": meta_row.get("event_key") or group_key,
                     "matchup": meta_row.get("matchup") or group_key,
@@ -2714,9 +2821,9 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                     "home_team": meta_row.get("home_team"),
                     "away_team": meta_row.get("away_team"),
                     "market_type": mkt,
-                    "selection": winning_sel,
-                    "side": winning_sel,
-                    "canonical_selection": winning_sel,
+                    "selection": output_sel,
+                    "side": output_sel,
+                    "canonical_selection": output_sel,
                     "line_bucket": None,
                     "lines": [],
                     "line_median": None,
@@ -2726,11 +2833,19 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                     "sources": winning_sources,
                     "count_total": count_total,
                     "source_strength": len(winning_sources),
-                    "expert_strength": 0,
+                    "expert_strength": len(expert_votes.get(key, {}).get(winning_sel, set())),
+                    # expert_names feeds derive_experts() so the final signal's experts
+                    # field has real names (e.g. "Scott Rickenbach") for pattern matching.
+                    "expert_names": sorted({
+                        v.split(":", 1)[1] for v in expert_votes.get(key, {}).get(winning_sel, set())
+                        if ":" in v
+                    }),
                     "sample_urls": list(sample_urls.get(key, []))[:3],
                 }
             )
         else:
+            def _strip_sign_suffix(s: str) -> str:
+                return s[:-4] if s.endswith(("_neg", "_pos")) else s
             avoid_results.append(
                 {
                     "signal_type": "avoid_conflict",
@@ -2738,14 +2853,14 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
                     "matchup_key": meta_row.get("matchup") or group_key,
                     "market_type": mkt,
                     "selection": f"{mkt}_conflict",
-                    "selections": sorted(unique_sels),
+                    "selections": sorted(_strip_sign_suffix(s) for s in unique_sels),
                     "sources": sorted(sources_with_votes),
                     "count_total": count_total,
                     "experts_by_selection": {
-                        sel: sorted(experts_by_key_sel.get((group_key, mkt, sel), set())) for sel in unique_sels
+                        _strip_sign_suffix(sel): sorted(experts_by_key_sel.get((group_key, mkt, sel), set())) for sel in unique_sels
                     },
                     "lines_by_selection": {
-                        sel: sorted(set(lines_by_key_sel.get((group_key, mkt, sel), []))) for sel in unique_sels
+                        _strip_sign_suffix(sel): sorted(set(lines_by_key_sel.get((group_key, mkt, sel), []))) for sel in unique_sels
                     },
                 }
             )

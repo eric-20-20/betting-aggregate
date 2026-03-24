@@ -890,6 +890,26 @@ def by_expert_record(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"meta": {"min_sample_size": MIN_SAMPLE_SIZE_EXPERT}, "rows": grouped, "rows_filtered": filtered}
 
 
+def by_expert_record_market(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Per-expert × market_type win rate breakdown for composite scoring."""
+    MIN_SAMPLE = 5
+    graded = graded_occurrence_rows(rows)
+    grouped, samples = accumulate_records_with_samples(
+        graded,
+        key_fn=lambda r: (extract_expert_key(r), r.get("market_type") or "unknown"),
+    )
+    annotate_anomalies(grouped, samples)
+    for g in grouped:
+        key = g.pop("key", None)
+        if isinstance(key, tuple) and len(key) == 2:
+            g["expert"], g["market_type"] = key
+        else:
+            g["expert"] = str(key)
+            g["market_type"] = "unknown"
+    grouped.sort(key=lambda r: (-r.get("n", 0), r.get("expert", ""), r.get("market_type", "")))
+    return [g for g in grouped if g.get("n", 0) >= MIN_SAMPLE]
+
+
 def by_source_participation_record(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     graded = graded_occurrence_rows(rows)
     exploded: List[Dict[str, Any]] = []
@@ -937,6 +957,183 @@ def by_sources_combo_record(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             g["anomaly_samples"] = (g.get("anomaly_samples") or []) + missing_samples[:3]
     grouped.sort(key=lambda r: (-r.get("n", 0), r.get("sources_combo", "")))
     return {"rows": grouped}
+
+
+def by_expert_supports(
+    ledger_signals_path: Path,
+    ledger_grades_path: Path,
+    min_sample: int = MIN_SAMPLE_SIZE_EXPERT,
+) -> Dict[str, Any]:
+    """Per-expert win/loss report built from signal supports in the ledger.
+
+    Captures experts embedded in supports (e.g. Action Network's 78 experts)
+    that are collapsed away in the analysis export. Each support row represents
+    one expert's pick on one signal; we join to grades for result.
+
+    Output shape per expert row:
+        expert_name, source_id, n, wins, losses, pushes, win_pct, wilson_lower,
+        net_units, by_market: {market_type: {n, wins, losses, win_pct, wilson_lower}}
+    """
+    # Load grades keyed by signal_id
+    grades: Dict[str, Dict] = {}
+    if ledger_grades_path.exists():
+        with open(ledger_grades_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                g = json.loads(line)
+                sid = g.get("signal_id")
+                if sid:
+                    grades[sid] = g
+
+    if not ledger_signals_path.exists():
+        return {"meta": {"error": "ledger not found"}, "rows": [], "rows_filtered": []}
+
+    # Surface prefix → canonical source_id family.
+    # Supports whose surface belongs to a different source than their support's
+    # source_id got there via cross-source signal merging. We skip them so that
+    # e.g. an Action Network expert on a merged BetQL signal isn't double-counted.
+    _SURFACE_SOURCE: Dict[str, str] = {
+        "betql": "betql",
+        "nba_game_expert_picks": "action",
+        "ncaab_game_expert_picks": "action",
+        "action": "action",
+        "juicereel": "juicereel",
+        "oddstrader_ai": "oddstrader",
+        "dimers_best": "dimers",
+        "dimers_schedule": "dimers",
+        "nba_matchup_picks": "covers",
+        "ncaab_matchup_picks": "covers",
+        "covers": "covers",
+        "sportsline": "sportsline",
+        "vegasinsider": "vegasinsider",
+        "bettingpros_user": "bettingpros_experts",
+        "bettingpros_model": "bettingpros",
+    }
+
+    def _surface_owner(surface: str) -> Optional[str]:
+        for prefix, owner in _SURFACE_SOURCE.items():
+            if surface.startswith(prefix):
+                return owner
+        return None
+
+    def _same_family(source_id: str, owner: str) -> bool:
+        if source_id == owner:
+            return True
+        # JuiceReel source_ids are juicereel_sxebets / juicereel_nukethebooks /
+        # juicereel_unitvacuum but surface_owner maps to "juicereel"
+        if owner == "juicereel" and source_id.startswith("juicereel"):
+            return True
+        return False
+
+    # Accumulate per (expert_name, source_id) and per (expert_name, source_id, market_type)
+    agg: Dict[tuple, Dict] = {}
+    mkt_agg: Dict[tuple, Dict] = {}
+
+    def _ensure(d, key):
+        if key not in d:
+            d[key] = init_metrics()
+        return d[key]
+
+    def _record(m, result, units):
+        m["n"] += 1
+        if result == "WIN":
+            m["wins"] += 1
+        elif result == "LOSS":
+            m["losses"] += 1
+        elif result == "PUSH":
+            m["pushes"] += 1
+        if units is not None:
+            try:
+                m["net_units"] += float(units)
+                m["bets_with_units"] += 1
+                m["total_stake"] += 1.0
+            except Exception:
+                m["units_missing_count"] += 1
+        else:
+            m["units_missing_count"] += 1
+
+    with open(ledger_signals_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            sig = json.loads(line)
+            sid = sig.get("signal_id")
+            grade = grades.get(sid)
+            if not grade:
+                continue
+            result = grade.get("result")
+            if result not in ("WIN", "LOSS", "PUSH"):
+                continue
+            units = grade.get("units")
+            market_type = sig.get("market_type") or "unknown"
+
+            supports = sig.get("supports") or []
+            seen_experts: set = set()
+            for sup in supports:
+                expert_name = sup.get("expert_name")
+                # Fallback: infer from canonical_url for JuiceReel backfill records
+                # e.g. https://app.juicereel.com/users/sXeBets -> "sXeBets"
+                if not expert_name:
+                    _canon = sup.get("canonical_url") or ""
+                    if "/users/" in _canon:
+                        expert_name = _canon.split("/users/")[-1].split("/")[0].split("?")[0]
+                if not expert_name:
+                    continue
+                # Use the support's own source_id so cross-merged supports stay
+                # attributed to their real source, not the signal's source_id.
+                source_id = sup.get("source_id") or sig.get("source_id") or "unknown"
+
+                # Skip supports whose surface belongs to a different source family —
+                # these arrived via cross-source signal merging and would double-count
+                # the expert under the wrong source.
+                surface = sup.get("source_surface") or ""
+                surface_owner = _surface_owner(surface)
+                if surface_owner and not _same_family(source_id, surface_owner):
+                    continue
+
+                # Deduplicate: same expert+source shouldn't count twice for one signal
+                dedup_key = (expert_name, source_id)
+                if dedup_key in seen_experts:
+                    continue
+                seen_experts.add(dedup_key)
+
+                _record(_ensure(agg, dedup_key), result, units)
+                _record(_ensure(mkt_agg, (expert_name, source_id, market_type)), result, units)
+
+    # Build rows
+    rows_out = []
+    for (expert_name, source_id), m in agg.items():
+        finalized = finalize_metrics(m)
+        finalized["expert_name"] = expert_name
+        finalized["source_id"] = source_id
+
+        # Attach market breakdown
+        by_market = {}
+        for mk in ("spread", "total", "moneyline", "player_prop"):
+            mk_key = (expert_name, source_id, mk)
+            if mk_key in mkt_agg:
+                mf = finalize_metrics(dict(mkt_agg[mk_key]))
+                by_market[mk] = {
+                    "n": mf["n"],
+                    "wins": mf["wins"],
+                    "losses": mf["losses"],
+                    "win_pct": mf.get("win_pct"),
+                    "wilson_lower": mf.get("wilson_lower"),
+                    "net_units": round(mf.get("net_units", 0.0), 3),
+                }
+        finalized["by_market"] = by_market
+        rows_out.append(finalized)
+
+    rows_out.sort(key=lambda r: (-r.get("n", 0), r.get("expert_name", "")))
+    filtered = [r for r in rows_out if r.get("n", 0) >= min_sample]
+    return {
+        "meta": {"min_sample_size": min_sample, "total_experts": len(rows_out)},
+        "rows": rows_out,
+        "rows_filtered": filtered,
+    }
 
 
 def by_stat_type(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1204,6 +1401,7 @@ def main() -> None:
     by_source_record_path = report_dir / "by_source_record.json"
     by_source_record_market_path = report_dir / "by_source_record_market.json"
     by_expert_record_path = report_dir / "by_expert_record.json"
+    by_expert_record_market_path = report_dir / "by_expert_record_market.json"
     by_source_participation_record_path = report_dir / "by_source_participation_record.json"
     by_sources_combo_record_path = report_dir / "by_sources_combo_record.json"
     spread_mismatch_samples_path = report_dir / "spread_mismatch_samples.json"
@@ -1211,6 +1409,7 @@ def main() -> None:
     by_stat_type_source_path = report_dir / "by_stat_type_source.json"
     by_line_bucket_path = report_dir / "by_line_bucket.json"
     cross_tab_path = report_dir / "cross_tabulation.json"
+    by_expert_supports_path = report_dir / "by_expert_supports.json"
 
     print(f"Processing {sport} reports...")
     rows = read_jsonl(dataset_path)
@@ -1257,6 +1456,7 @@ def main() -> None:
             "rows_filtered": expert_record_data.get("rows_filtered", []),
         },
     )
+    write_json(by_expert_record_market_path, {"meta": meta_occ, "rows": by_expert_record_market(rows_occ)})
     source_participation_record = by_source_participation_record(rows_occ)
     write_json(
         by_source_participation_record_path,
@@ -1276,6 +1476,18 @@ def main() -> None:
     cross_tab_data = cross_tabulation(rows_occ)
     write_json(cross_tab_path, {"meta": meta_occ, **cross_tab_data})
 
+    ledger_signals_path = Path("data/ledger/signals_latest.jsonl")
+    ledger_grades_path = Path("data/ledger/grades_latest.jsonl")
+    expert_supports_data = by_expert_supports(ledger_signals_path, ledger_grades_path)
+    write_json(
+        by_expert_supports_path,
+        {
+            "meta": expert_supports_data.get("meta", {}),
+            "rows": expert_supports_data.get("rows", []),
+            "rows_filtered": expert_supports_data.get("rows_filtered", []),
+        },
+    )
+
     print(f"Reports written to {report_dir}:")
     for path in [
         coverage_path,
@@ -1290,6 +1502,7 @@ def main() -> None:
         by_source_record_path,
         by_source_record_market_path,
         by_expert_record_path,
+        by_expert_record_market_path,
         by_source_participation_record_path,
         by_sources_combo_record_path,
         spread_mismatch_samples_path,
@@ -1297,6 +1510,7 @@ def main() -> None:
         by_stat_type_source_path,
         by_line_bucket_path,
         cross_tab_path,
+        by_expert_supports_path,
     ]:
         print(f"  - {path}")
 

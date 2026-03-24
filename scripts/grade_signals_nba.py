@@ -324,7 +324,7 @@ def derive_date_str(signal: Dict[str, Any]) -> Optional[str]:
     return event_key_to_date_str(cek)
 
 
-def check_eligibility(signal: Dict[str, Any], date_str: Optional[str]) -> Tuple[bool, str, List[str]]:
+def check_eligibility(signal: Dict[str, Any], date_str: Optional[str], sport: str = "NBA") -> Tuple[bool, str, List[str]]:
     """Return (eligible?, reason, missing_fields) before hitting providers."""
 
     # Skip conflict signals - they are intentionally ungradeable by design
@@ -386,6 +386,9 @@ def check_eligibility(signal: Dict[str, Any], date_str: Optional[str]) -> Tuple[
     elif market == "total":
         if line is None:
             return False, "missing_line", ["line"]
+        min_total = 100 if sport == "NCAAB" else 150
+        if line < min_total:
+            return False, "implausible_total_line", ["line"]
         if not direction:
             return False, "missing_direction", ["direction"]
     elif market == "player_prop":
@@ -1121,6 +1124,58 @@ def grade_signal(
     return attach_event_keys(row)
 
 
+def grade_signal_sources(signal: Dict[str, Any], stat_value: Optional[float]) -> List[Dict[str, Any]]:
+    """
+    Grade each support (source/expert row) within a signal using its specific line.
+
+    Returns a list of dicts with keys:
+      source_id, expert_slug, expert_name, expert_graded_line, expert_result
+
+    Only player_prop supports are graded here (other markets grade at signal level).
+    For non-player_prop signals the function returns an empty list.
+
+    Called after grade_signal() produces a WIN/LOSS/PUSH result. Only meaningful
+    when stat_value is not None (i.e., the grader successfully fetched the stat).
+    """
+    market = signal.get("market_type")
+    if market != "player_prop" or stat_value is None:
+        return []
+
+    direction = parse_direction(signal)
+    if direction not in {"OVER", "UNDER"}:
+        return []
+
+    signal_line = signal.get("line")
+
+    results: List[Dict[str, Any]] = []
+    for sup in signal.get("supports") or []:
+        sup_line = sup.get("line")
+        graded_line = sup_line if isinstance(sup_line, (int, float)) else (
+            signal_line if isinstance(signal_line, (int, float)) else None
+        )
+        if graded_line is None:
+            expert_result = None
+        elif direction == "OVER":
+            expert_result = "WIN" if stat_value > graded_line else "PUSH" if stat_value == graded_line else "LOSS"
+        else:  # UNDER
+            expert_result = "WIN" if stat_value < graded_line else "PUSH" if stat_value == graded_line else "LOSS"
+
+        expert_name = sup.get("expert_name")
+        expert_slug = None
+        if expert_name:
+            expert_slug = expert_name.lower().replace(" ", "_").replace(".", "")
+
+        results.append({
+            "source_id":         sup.get("source_id"),
+            "expert_slug":       expert_slug,
+            "expert_name":       expert_name,
+            "expert_graded_line": graded_line,
+            "expert_result":     expert_result,
+        })
+
+    return results
+
+
 def parse_day_key_to_date(day_key: Optional[str]) -> Optional[date]:
     if not isinstance(day_key, str):
         return None
@@ -1198,6 +1253,8 @@ def _stable_grade_fingerprint(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def materially_equal(prev: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> bool:
     if not isinstance(prev, dict) or not isinstance(new, dict):
+        return False
+    if bool(prev.get("source_grades")) != bool(new.get("source_grades")):
         return False
     return _stable_grade_fingerprint(prev) == _stable_grade_fingerprint(new)
 
@@ -1525,7 +1582,7 @@ def main() -> None:
                 counters["pregraded"] += 1
                 counters[f"pregraded_{pregraded_result}"] += 1
             else:
-                eligible, reason, missing_fields = check_eligibility(merged, date_str)
+                eligible, reason, missing_fields = check_eligibility(merged, date_str, sport=sport)
                 if not eligible:
                     grade_row = {
                         "signal_id": sid,
@@ -1566,11 +1623,20 @@ def main() -> None:
         if grade_row.get("status") == "PENDING":
             counters[f"pending_{grade_row.get('notes')}"] += 1
 
+        # Per-source grading: attach source_grades before materially_equal check so
+        # already-graded signals still get source_grades populated on regrade runs.
+        if args.mode == "grade" and grade_row.get("status") in {"WIN", "LOSS", "PUSH", "GRADED"}:
+            stat_val = grade_row.get("stat_value") or grade_row.get("actual_stat_value")
+            source_grades = grade_signal_sources(merged, stat_val)
+            if source_grades:
+                grade_row["source_grades"] = source_grades
+
         if prev and materially_equal(prev, grade_row):
             counters["unchanged"] += 1
             continue
 
         compact_games_info(grade_row, keep_full=args.debug or grade_row.get("status") == "ERROR")
+
         new_rows.append(grade_row)
         latest_by_signal[sid] = grade_row
         counters["added"] += 1

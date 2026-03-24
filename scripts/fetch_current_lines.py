@@ -74,14 +74,14 @@ def to_abbr(name: str) -> Optional[str]:
 
 
 def fetch_odds() -> List[Dict[str, Any]]:
-    """Fetch current NBA spreads and totals from The Odds API."""
+    """Fetch current NBA spreads, totals, and moneylines from The Odds API."""
     if not ODDS_API_KEY:
         raise SystemExit("ODDS_API_KEY not set in environment")
 
     params = {
         "apiKey": ODDS_API_KEY,
         "regions": "us",
-        "markets": "spreads,totals",
+        "markets": "h2h,spreads,totals",
         "oddsFormat": "american",
     }
     url = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds/?" + urllib.parse.urlencode(params)
@@ -143,6 +143,32 @@ def extract_consensus_line(bookmakers: List[Dict], market_key: str) -> Optional[
     return (points[n // 2 - 1] + points[n // 2]) / 2
 
 
+def extract_best_odds(
+    bookmakers: List[Dict], market_key: str, side_name: str
+) -> Optional[int]:
+    """Get the best (highest) American odds for a given side across all bookmakers.
+
+    side_name for h2h/spreads: full team name as returned by the API (e.g. "Detroit Pistons").
+    side_name for totals: "Over" or "Under" (Odds API uses these exact strings).
+    Returns the highest American odds seen (best for bettor), or None if not found.
+    """
+    best: Optional[int] = None
+    for bk in bookmakers:
+        for mkt in bk.get("markets", []):
+            if mkt.get("key") != market_key:
+                continue
+            for outcome in mkt.get("outcomes", []):
+                if outcome.get("name", "") != side_name:
+                    continue
+                price = outcome.get("price")
+                if price is None:
+                    continue
+                odds_int = int(price)
+                if best is None or odds_int > best:
+                    best = odds_int
+    return best
+
+
 def extract_team_spreads(bookmakers: List[Dict]) -> Dict[str, List[float]]:
     """Get spread points by team name across all bookmakers."""
     team_points: Dict[str, List[float]] = {}
@@ -169,6 +195,17 @@ def process_events(events: List[Dict], debug: bool = False) -> Dict[str, Any]:
                 "spreads": {"CLE": 4.5, "MIL": -4.5},
                 "total": 220.0,
                 "commence_time": "2026-02-27T00:10:00Z",
+                "odds": {
+                    "spread": {
+                        "CLE": {"line": 4.5, "odds": -110},
+                        "MIL": {"line": -4.5, "odds": -110}
+                    },
+                    "total": {
+                        "OVER": {"line": 220.0, "odds": -112},
+                        "UNDER": {"line": 220.0, "odds": -108}
+                    },
+                    "moneyline": {"CLE": 165, "MIL": -200}
+                },
             },
             ...
         }
@@ -206,19 +243,45 @@ def process_events(events: List[Dict], debug: bool = False) -> Dict[str, Any]:
         # Total
         total = extract_consensus_line(bookmakers, "totals")
 
+        # Odds block: best available odds per side across all bookmakers
+        odds_spread: Dict[str, Any] = {}
+        for team_name, pts in team_spreads.items():
+            abbr = to_abbr(team_name)
+            if abbr and abbr in spreads:
+                o = extract_best_odds(bookmakers, "spreads", team_name)
+                odds_spread[abbr] = {"line": spreads[abbr], "odds": o}
+
+        over_odds = extract_best_odds(bookmakers, "totals", "Over")
+        under_odds = extract_best_odds(bookmakers, "totals", "Under")
+        odds_total: Dict[str, Any] = {}
+        if total is not None:
+            odds_total["OVER"] = {"line": total, "odds": over_odds}
+            odds_total["UNDER"] = {"line": total, "odds": under_odds}
+
+        odds_ml: Dict[str, Optional[int]] = {}
+        for team_name, abbr_candidate in [(away_name, away_abbr), (home_name, home_abbr)]:
+            o = extract_best_odds(bookmakers, "h2h", team_name)
+            odds_ml[abbr_candidate] = o
+
         entry = {
             "away_team": away_abbr,
             "home_team": home_abbr,
             "spreads": spreads,
             "total": total,
             "commence_time": commence,
+            "odds": {
+                "spread": odds_spread,
+                "total": odds_total,
+                "moneyline": odds_ml,
+            },
         }
         lines[event_key] = entry
 
         if debug:
             spread_str = ", ".join(f"{k} {v:+.1f}" for k, v in spreads.items())
             total_str = f"{total}" if total else "n/a"
-            print(f"  {event_key}: spread=[{spread_str}]  total={total_str}")
+            ml_str = ", ".join(f"{k} {v}" for k, v in odds_ml.items())
+            print(f"  {event_key}: spread=[{spread_str}]  total={total_str}  ml=[{ml_str}]")
 
     return lines
 

@@ -254,6 +254,52 @@ def grade_moneyline(row: Dict[str, Any], result: Dict[str, Any]) -> Tuple[str, i
     return ("WIN", 1) if selected == winner else ("LOSS", -1)
 
 
+def grade_signal_sources(signal: Dict[str, Any], stat_value: Optional[float]) -> List[Dict[str, Any]]:
+    """
+    Grade each support within a signal using its specific line.
+    Only meaningful for player_prop signals; returns [] for spread/total/moneyline.
+    Mirrors the same function in grade_signals_nba.py.
+    """
+    market = signal.get("market_type")
+    if market != "player_prop" or stat_value is None:
+        return []
+
+    direction = (signal.get("direction") or "").upper()
+    if "OVER" in direction:
+        direction = "OVER"
+    elif "UNDER" in direction:
+        direction = "UNDER"
+    else:
+        return []
+
+    signal_line = signal.get("line")
+    results: List[Dict[str, Any]] = []
+    for sup in signal.get("supports") or []:
+        sup_line = sup.get("line")
+        graded_line = sup_line if isinstance(sup_line, (int, float)) else (
+            signal_line if isinstance(signal_line, (int, float)) else None
+        )
+        if graded_line is None:
+            expert_result = None
+        elif direction == "OVER":
+            expert_result = "WIN" if stat_value > graded_line else "PUSH" if stat_value == graded_line else "LOSS"
+        else:
+            expert_result = "WIN" if stat_value < graded_line else "PUSH" if stat_value == graded_line else "LOSS"
+
+        expert_name = sup.get("expert_name")
+        expert_slug = None
+        if expert_name:
+            expert_slug = expert_name.lower().replace(" ", "_").replace(".", "")
+        results.append({
+            "source_id":          sup.get("source_id"),
+            "expert_slug":        expert_slug,
+            "expert_name":        expert_name,
+            "expert_graded_line": graded_line,
+            "expert_result":      expert_result,
+        })
+    return results
+
+
 def build_signal_index(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     deduped: Dict[str, Dict[str, Any]] = {}
     fallback_dedup: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
@@ -396,6 +442,13 @@ def main() -> None:
             "result": outcome,
             "units": units,
         }
+        if grade_row.get("status") in {"WIN", "LOSS", "PUSH"}:
+            source_grades = grade_signal_sources(row, grade_row.get("stat_value"))
+        else:
+            source_grades = []
+        if source_grades:
+            grade_row["source_grades"] = source_grades
+
         new_grades.append(grade_row)
         counters["graded"] += 1
         already_ids.add(sid)

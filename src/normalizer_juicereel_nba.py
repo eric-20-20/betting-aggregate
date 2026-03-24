@@ -244,6 +244,55 @@ def _parse_matchup(matchup_hint: Optional[str], store=None, sport: str = "NBA") 
     return None, None
 
 
+def _validate_matchup_order(
+    away_team: Optional[str],
+    home_team: Optional[str],
+    day_key: str,
+    sport: str = "NBA",
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Validate that (away_team, home_team) matches the canonical schedule order.
+    Uses NBA API scoreboard for NBA; ESPN provider for NCAAB.
+    Returns (away_team, home_team) — possibly swapped — after comparing to schedule.
+    Logs a warning on swap or on lookup failure.
+    """
+    if not away_team or not home_team:
+        return away_team, home_team
+    try:
+        if sport == "NBA":
+            from src.results.nba_provider_nba_api import get_games_for_date
+            games, _ = get_games_for_date(day_key)
+        else:
+            # NCAAB: no canonical schedule check available; trust parsed order
+            return away_team, home_team
+        team_set = {away_team.upper(), home_team.upper()}
+        for g in games:
+            sched_away = (g.get("away_team_abbrev") or "").upper()
+            sched_home = (g.get("home_team_abbrev") or "").upper()
+            if {sched_away, sched_home} == team_set:
+                if sched_away == away_team.upper() and sched_home == home_team.upper():
+                    # Order matches — nothing to do
+                    return away_team, home_team
+                else:
+                    # Order is reversed — swap
+                    print(
+                        f"⚠️  JuiceReel matchup order corrected: "
+                        f"{away_team}@{home_team} → {sched_away}@{sched_home}"
+                    )
+                    return sched_away, sched_home
+        # Game not found in schedule
+        print(
+            f"⚠️  JuiceReel matchup not found in schedule for {day_key}: "
+            f"{away_team}@{home_team} — keeping parsed order"
+        )
+    except Exception as exc:
+        print(
+            f"⚠️  JuiceReel schedule lookup failed for {day_key} "
+            f"{away_team}@{home_team}: {exc} — keeping parsed order"
+        )
+    return away_team, home_team
+
+
 def normalize_juicereel_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict[str, Any]:
     """
     Normalize a single JuiceReel pick record.
@@ -259,6 +308,16 @@ def normalize_juicereel_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict[
 
     if not (away_team and home_team) and raw.get("matchup_hint"):
         away_team, home_team = _parse_matchup(raw["matchup_hint"], store=store, sport=sport)
+
+    # Validate canonical team order against schedule
+    if away_team and home_team:
+        _day_key_for_validation = (
+            event_dt or observed_dt
+        ).strftime("%Y-%m-%d") if (event_dt or observed_dt) else None
+        if _day_key_for_validation:
+            away_team, home_team = _validate_matchup_order(
+                away_team, home_team, _day_key_for_validation, sport=sport
+            )
 
     event_key, day_key, matchup_key = _build_event_keys(
         observed_dt, event_dt, away_team, home_team, sport=sport
@@ -288,9 +347,12 @@ def normalize_juicereel_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict[
             eligible = False
             inelig_reason = "missing_line"
         else:
-            # Spread selection is a team abbreviation (e.g. "DEN", "IND")
+            # Spread selection may be "CLE CAVALIERS" — try full string first, then first token
             sel_norm = selection.upper() if isinstance(selection, str) else None
             mapped = _map_team(sel_norm, store=store, sport=sport) if sel_norm else None
+            if not mapped and sel_norm:
+                first_token = sel_norm.split()[0]
+                mapped = _map_team(first_token, store=store, sport=sport)
             selection = mapped or sel_norm
             side = selection
             if not selection:
@@ -300,6 +362,11 @@ def normalize_juicereel_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict[
         if not selection or selection.upper() not in {"OVER", "UNDER"}:
             eligible = False
             inelig_reason = "missing_direction"
+        elif line is not None and line < (100 if sport == "NCAAB" else 150):
+            # NBA full-game totals are always 200+; NCAAB totals run 120-165
+            # Lines under threshold are 1st-half or quarter totals
+            eligible = False
+            inelig_reason = "half_game_total"
         else:
             selection = selection.upper()
             side = selection
@@ -308,8 +375,31 @@ def normalize_juicereel_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict[
             eligible = False
             inelig_reason = "missing_selection"
         else:
-            selection = _map_team(selection, store=store, sport=sport) or selection
-            side = selection
+            # Detect unsigned spread disguised as moneyline: "St Louis 2.5", "TCU 3", "Siena 28"
+            # Pattern: selection ends with a numeric value (the spread line)
+            _spread_suffix = re.match(r"^(.+?)\s+([+-]?[\d.]+)\s*$", selection)
+            _reclassified = False
+            if _spread_suffix:
+                _team_part = _spread_suffix.group(1).strip()
+                _line_val = float(_spread_suffix.group(2))
+                _mapped = _map_team(_team_part, store=store, sport=sport)
+                if not _mapped:
+                    _mapped = _map_team(_team_part.upper().split()[0], store=store, sport=sport)
+                if _mapped:
+                    # Re-classify as spread with the numeric suffix as line
+                    market_type = "spread"
+                    selection = _mapped
+                    line = _snap_spread(_line_val)
+                    side = selection
+                    _reclassified = True
+            if not _reclassified:
+                # Standard moneyline: "MIN TIMBERWOLVES" — try full string, then first token
+                mapped = _map_team(selection, store=store, sport=sport)
+                if not mapped:
+                    first_token = selection.upper().split()[0]
+                    mapped = _map_team(first_token, store=store, sport=sport)
+                selection = mapped or selection
+                side = selection
     elif market_type == "player_prop":
         player_name = raw.get("player_name")
         stat_key = raw.get("stat_key")
@@ -344,6 +434,13 @@ def normalize_juicereel_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict[
 
     # Build provenance
     source_id = raw.get("source_id") or "juicereel"
+    # Infer expert_name from canonical_url if not explicitly set
+    # e.g. https://app.juicereel.com/users/sXeBets -> "sXeBets"
+    _expert_name = raw.get("expert_name")
+    if not _expert_name:
+        _canon = raw.get("canonical_url") or ""
+        if "/users/" in _canon:
+            _expert_name = _canon.split("/users/")[-1].split("/")[0].split("?")[0]
     provenance = {
         "source_id": source_id,
         "source_surface": raw.get("source_surface") or f"juicereel_{sport.lower()}_picks",
@@ -354,7 +451,7 @@ def normalize_juicereel_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict[
         "raw_pick_text": raw.get("raw_pick_text"),
         "raw_block": raw.get("raw_block"),
         "matchup_hint": raw.get("matchup_hint"),
-        "expert_name": raw.get("expert_name"),
+        "expert_name": _expert_name,
         "expert_profile": raw.get("expert_profile"),
         "expert_slug": raw.get("expert_slug"),
         "expert_handle": raw.get("expert_handle"),

@@ -22,6 +22,47 @@ from utils import normalize_text
 
 ALLOWED_MARKETS = {"spread", "total", "moneyline", "player_prop", "1st_half_spread", "team_total"}
 
+_PROFIT_RE = re.compile(r'^[+\-]?\d[\d,]*(\.\d+)?$')
+
+# Canonical name for experts whose display name varies across page surfaces.
+# Format: lowercased variant → canonical display name.
+# "Prop Bet Guy" is canonical (72/76 historical records use it); map spaceless variant to match.
+_EXPERT_NAME_ALIASES: Dict[str, str] = {
+    "prop betguy": "Prop Bet Guy",
+}
+
+
+def _clean_expert_name(name: Optional[str], canonical_url: Optional[str]) -> Optional[str]:
+    """Normalize expert_name: fix profit figures and merge known aliases.
+
+    SportsLine expert pages sometimes render the running profit figure before the expert
+    name in the DOM, causing the scraper to capture '+654' instead of 'Micah Roberts'.
+    The canonical_url always contains the real slug: /experts/7950/micah-roberts/
+
+    Also canonicalizes known variant spellings (e.g. 'Prop Betguy' -> 'Prop Bet Guy').
+    """
+    if not name:
+        return name
+    # Strip trailing record stats that sometimes appear after a newline
+    # e.g. "Bruce Marshall\n102-88 Last 14 Days" → "Bruce Marshall"
+    name = name.split("\n")[0].strip()
+    if not name:
+        return None
+    # Resolve profit figure via canonical_url
+    if _PROFIT_RE.match(name.strip()):
+        if not canonical_url:
+            return name
+        m = re.search(r'/experts/\d+/([^/?]+)', canonical_url)
+        if not m:
+            return name
+        slug = m.group(1)  # e.g. "micah-roberts"
+        name = " ".join(w.capitalize() for w in slug.split("-"))
+    # Apply alias normalization
+    alias = _EXPERT_NAME_ALIASES.get(name.lower())
+    if alias:
+        return alias
+    return name
+
 
 def _parse_dt(val: Any) -> Optional[datetime]:
     """Parse datetime from string or datetime object."""
@@ -151,6 +192,57 @@ def normalize_sportsline_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict
             away_team = away_team or _map_team(parts[0], store=store, sport=sport)
             home_team = home_team or _map_team(parts[1], store=store, sport=sport)
 
+    # For NCAAB expert-page picks, try to extract nicknames from raw_block
+    # Format: "{Date}\n{AwayNickname}\n{Score?}\n@ {HomeNickname}\n{Score?}|..."
+    if sport == "NCAAB" and not (away_team and home_team):
+        raw_block = raw.get("raw_block") or ""
+        matchup_section = raw_block.split("|")[0] if "|" in raw_block else raw_block
+        lines = [l.strip() for l in matchup_section.split("\n") if l.strip()]
+        # Lines after date: away_nickname, (score?), @ home_nickname, (score?)
+        # Format: [Date, AwayNick, AwayScore?, @ HomeNick, HomeScore?, ...]
+        # Scores appear as digit-only lines — skip them when searching backwards.
+        nick_away = None
+        nick_home = None
+        for i, line in enumerate(lines[1:], 1):  # skip date line
+            if line.startswith("@"):
+                nick_home = line.lstrip("@ ").strip()
+                # Walk backwards from the @ line to find the away nickname, skipping scores
+                j = i - 1
+                while j >= 1 and re.match(r"^\d+$", lines[j]):
+                    j -= 1
+                if j >= 1:
+                    nick_away = lines[j]
+                break
+        if nick_away and not away_team:
+            away_team = _map_team(nick_away, store=store, sport=sport)
+        if nick_home and not home_team:
+            home_team = _map_team(nick_home, store=store, sport=sport)
+        # Fallback: use the selection team name (from raw_pick_text, already resolved) to fill
+        # the correct slot.  For spread/moneyline/1st_half_spread the selection IS one of the
+        # two teams.  Try two steps:
+        #   1. If the selection code is in the ambiguous nick's candidate set, slot it there.
+        #   2. If one slot is still unknown, fill it with sel_code if it doesn't conflict with
+        #      the already-known slot — enough for derive_spread_fields to pass.
+        if (not away_team or not home_team) and raw.get("selection"):
+            sel_code = _map_team(raw["selection"], store=store, sport=sport)
+            if sel_code:
+                from utils import normalize_text as _nt
+                if not away_team and nick_away:
+                    candidates = store.lookup_team_code(_nt(nick_away))
+                    if sel_code in candidates:
+                        away_team = sel_code
+                if not home_team and nick_home:
+                    candidates = store.lookup_team_code(_nt(nick_home))
+                    if sel_code in candidates:
+                        home_team = sel_code
+                # If still one slot unknown: slot sel_code there (opponent stays unknown/None).
+                # The event_key won't have a full matchup but spread eligibility will pass
+                # since selection == one of the two team slots.
+                if not away_team and away_team != sel_code and home_team != sel_code:
+                    away_team = sel_code
+                elif not home_team and home_team != sel_code and away_team != sel_code:
+                    home_team = sel_code
+
     # Build event keys
     event_key, day_key, matchup_key = _build_event_keys(
         observed_dt, event_dt, away_team, home_team, sport=sport
@@ -171,16 +263,40 @@ def normalize_sportsline_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict
         eligible = False
         inelig_reason = "unsupported_market"
     elif not away_team or not home_team:
-        eligible = False
-        inelig_reason = "unparsed_team"
-    elif market_type in ("spread", "1st_half_spread"):
-        if not selection:
+        if sport == "NBA":
             eligible = False
-            inelig_reason = "missing_selection"
-        else:
+            inelig_reason = "unparsed_team"
+        # NCAAB: allow partial team resolution — eligibility checked per-market below
+    if eligible and market_type in ("spread", "1st_half_spread"):
+        if not selection:
+            # Try to parse team from raw_pick_text
+            # Format: "1st Half Spread\n1st Half {TeamName} {line} ..."
+            pick_text = raw.get("raw_pick_text") or ""
+            hs_match = re.match(r"1st Half Spread\n1st Half ([A-Za-z][A-Za-z\s\.\'-]+?)\s+[+-]?\d", pick_text)
+            if hs_match:
+                team_name = hs_match.group(1).strip()
+                team_code = _map_team(team_name, store=store, sport=sport)
+                if team_code:
+                    selection = team_code
+                else:
+                    eligible = False
+                    inelig_reason = "unparsed_team"
+            else:
+                eligible = False
+                inelig_reason = "missing_selection"
+        if eligible and selection:
             selection = _map_team(selection, store=store, sport=sport) or selection
             side = selection
-    elif market_type == "total":
+            # NCAAB: if we couldn't resolve either team AND the selection itself
+            # doesn't resolve, we can't identify the game — mark ineligible.
+            # But if we parsed the team from raw_pick_text (team_code already set),
+            # we trust that resolution and skip this guard.
+            if sport == "NCAAB" and not away_team and not home_team:
+                resolved = _map_team(selection, store=store, sport=sport)
+                if not resolved:
+                    eligible = False
+                    inelig_reason = "unparsed_team"
+    elif eligible and market_type == "total":
         if not selection:
             eligible = False
             inelig_reason = "missing_direction"
@@ -190,21 +306,45 @@ def normalize_sportsline_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict
             if selection not in {"OVER", "UNDER"}:
                 eligible = False
                 inelig_reason = "invalid_direction"
-    elif market_type == "team_total":
+    elif eligible and market_type == "team_total":
+        side = raw.get("side") or (selection.split("_")[-1] if selection else None)
         if not selection:
-            eligible = False
-            inelig_reason = "missing_selection"
+            # Try to parse team name from raw_pick_text
+            # Format: "Home/Away Team Total\n{TeamName} Over/Under {line}..."
+            pick_text = raw.get("raw_pick_text") or ""
+            # Extract team name from second line of raw_pick_text
+            tt_match = re.match(r"(?:Home|Away) Team Total\n([A-Za-z][A-Za-z\s\.\'\-\(\)]+?)\s+(?:Over|Under)\s", pick_text)
+            if tt_match:
+                team_name = tt_match.group(1).strip()
+                team_code = _map_team(team_name, store=store, sport=sport)
+                if team_code:
+                    # Infer direction from text
+                    dir_match = re.search(r"\b(Over|Under)\b", pick_text, re.IGNORECASE)
+                    direction = dir_match.group(1).upper() if dir_match else (side or "")
+                    selection = f"{team_code}_{direction}"
+                    side = direction
+                else:
+                    eligible = False
+                    inelig_reason = "unparsed_team"
+            else:
+                eligible = False
+                inelig_reason = "missing_selection"
         else:
             side = raw.get("side")
             # selection comes pre-built as "TEAM_OVER" or "TEAM_UNDER"
-    elif market_type == "moneyline":
+    elif eligible and market_type == "moneyline":
         if not selection:
             eligible = False
             inelig_reason = "missing_selection"
         else:
             selection = _map_team(selection, store=store, sport=sport) or selection
             side = selection
-    elif market_type == "player_prop":
+            # NCAAB: moneyline selection must resolve to a known team code
+            if sport == "NCAAB" and not away_team and not home_team:
+                if not _map_team(raw.get("side") or "", store=store, sport=sport):
+                    eligible = False
+                    inelig_reason = "unparsed_team"
+    elif eligible and market_type == "player_prop":
         player_name = raw.get("player_name")
         stat_key = raw.get("stat_key")
         side = raw.get("side")
@@ -236,10 +376,12 @@ def normalize_sportsline_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict
         "raw_pick_text": raw.get("raw_pick_text"),
         "raw_block": raw.get("raw_block"),
         "matchup_hint": raw.get("matchup_hint"),
-        "expert_name": raw.get("expert_name"),
+        "expert_name": _clean_expert_name(raw.get("expert_name"), raw.get("canonical_url")),
         "expert_profile": raw.get("expert_profile"),
         "expert_slug": raw.get("expert_slug"),
         "expert_handle": raw.get("expert_handle"),
+        "pregraded_result": raw.get("pregraded_result"),
+        "pregraded_by": raw.get("pregraded_by") or ("sportsline" if raw.get("pregraded_result") else None),
     }
 
     # Build event
@@ -281,7 +423,17 @@ def normalize_sportsline_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict
         "ineligibility_reason": inelig_reason,
     }
 
-    return {
+    # Build result block if pre-graded (matches JuiceReel format for ledger builder)
+    pregraded = raw.get("pregraded_result")
+    result_block = None
+    if pregraded in {"WIN", "LOSS", "PUSH"}:
+        result_block = {
+            "status": pregraded,
+            "graded_by": raw.get("pregraded_by") or "sportsline",
+            "graded_at_utc": raw.get("observed_at_utc"),
+        }
+
+    out = {
         "provenance": provenance,
         "event": event,
         "market": market,
@@ -289,6 +441,9 @@ def normalize_sportsline_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict
         "ineligibility_reason": inelig_reason,
         "eligibility": eligibility,
     }
+    if result_block:
+        out["result"] = result_block
+    return out
 
 
 def normalize_sportsline_records(
@@ -322,14 +477,17 @@ def normalize_sportsline_records(
             reason = rec.get("ineligibility_reason") or "unknown"
             inelig_reasons[reason] = inelig_reasons.get(reason, 0) + 1
 
-    # Deduplicate by (event_key, market_type, selection, line)
+    # Deduplicate by (expert_name, event_key, market_type, selection, line)
+    # Include expert_name so different experts' picks on the same game are preserved.
     deduped: Dict[Tuple, Dict[str, Any]] = {}
     removed = 0
 
     for rec in normalized:
         ev = rec.get("event") or {}
         mk = rec.get("market") or {}
+        prov = rec.get("provenance") or {}
         key = (
+            prov.get("expert_name") or prov.get("expert_slug") or "",
             ev.get("event_key"),
             mk.get("market_type"),
             mk.get("selection"),

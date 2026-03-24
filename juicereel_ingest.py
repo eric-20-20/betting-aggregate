@@ -1,9 +1,10 @@
 """
-JuiceReel NBA expert picks ingestion script (daily open bets).
+JuiceReel NBA + NCAAB expert picks ingestion script (daily open bets).
 
-Fetches current open bets from two JuiceReel experts:
+Fetches current open bets from JuiceReel experts:
   - sXeBets: https://app.juicereel.com/users/sXeBets
   - nukethebooks: https://app.juicereel.com/users/nukethebooks
+  - UnitVacuum: https://app.juicereel.com/users/UnitVacuum
 
 Requires authenticated session state at data/juicereel_storage_state.json.
 Run scripts/create_juicereel_storage.py first to create it.
@@ -12,8 +13,9 @@ Usage:
     python3 juicereel_ingest.py [--debug] [--storage PATH]
 
 Output:
-    - out/raw_juicereel_nba.json
-    - out/normalized_juicereel_nba.json
+    - out/raw_juicereel_nba.json        (all raw records, sport tagged)
+    - out/normalized_juicereel_nba.json  (NBA-only normalized)
+    - out/normalized_juicereel_ncaab.json (NCAAB-only normalized)
 """
 
 from __future__ import annotations
@@ -245,7 +247,7 @@ def _infer_market_from_pick(pick_text: str) -> Tuple[str, Optional[str], Optiona
                     break
         return "player_prop", None, None, direction, player_name, prop_line, stat_key
 
-    # Spread: "TEAM ±line" — requires sign or decimal
+    # Spread: "TEAM ±line" — signed (e.g. "Utah Jazz -3.5", "NDAKST +16.5")
     spread_m = re.match(
         r"^(.+?)\s+([+-][\d.]+)\s*$",
         text,
@@ -254,6 +256,19 @@ def _infer_market_from_pick(pick_text: str) -> Tuple[str, Optional[str], Optiona
         team_raw = spread_m.group(1).strip()
         try:
             line = float(spread_m.group(2))
+        except ValueError:
+            line = None
+        return "spread", team_raw, line, team_raw, None, None, None
+
+    # Spread: "TEAM <decimal>" — unsigned (e.g. "St Louis 2.5" means +2.5 underdog)
+    spread_unsigned_m = re.match(
+        r"^(.+?)\s+(\d+\.\d+)\s*$",
+        text,
+    )
+    if spread_unsigned_m:
+        team_raw = spread_unsigned_m.group(1).strip()
+        try:
+            line = float(spread_unsigned_m.group(2))
         except ValueError:
             line = None
         return "spread", team_raw, line, team_raw, None, None, None
@@ -426,6 +441,69 @@ def _build_pick_text(pick_lines: List[str]) -> str:
     return " ".join(pick_lines)
 
 
+def _detect_sport_from_matchup(matchup_hint: Optional[str]) -> str:
+    """
+    Detect whether a pick is NBA or NCAAB by trying to resolve the matchup teams.
+
+    Strategy:
+    - Split matchup_hint on '@' or 'vs' to get team names
+    - Try to resolve both teams against NBA store → if both resolve → NBA
+    - Try to resolve both teams against NCAAB store → if both resolve → NCAAB
+    - If NCAAB resolves and NBA doesn't → NCAAB
+    - Default: NBA
+    """
+    if not matchup_hint:
+        return "NBA"
+
+    # Parse teams from matchup
+    if "@" in matchup_hint:
+        parts = matchup_hint.split("@", 1)
+    else:
+        import re as _re
+        parts = _re.split(r"\s+vs\.?\s+", matchup_hint, flags=_re.IGNORECASE)
+
+    if len(parts) != 2:
+        return "NBA"
+
+    t1_raw = parts[0].strip()
+    t2_raw = parts[1].strip()
+
+    from store import get_data_store
+    from utils import normalize_text
+
+    def _try_resolve(team_raw: str, store) -> bool:
+        norm = normalize_text(team_raw)
+        codes = store.lookup_team_code(norm)
+        if len(codes) == 1:
+            return True
+        # Try short abbrev
+        upper = team_raw.upper()
+        if upper in store.teams:
+            return True
+        return False
+
+    nba_store = get_data_store("NBA")
+    ncaab_store = get_data_store("NCAAB")
+
+    nba_t1 = _try_resolve(t1_raw, nba_store)
+    nba_t2 = _try_resolve(t2_raw, nba_store)
+    ncaab_t1 = _try_resolve(t1_raw, ncaab_store)
+    ncaab_t2 = _try_resolve(t2_raw, ncaab_store)
+
+    if ncaab_t1 and ncaab_t2 and not (nba_t1 and nba_t2):
+        return "NCAAB"
+    if nba_t1 and nba_t2:
+        return "NBA"
+    if ncaab_t1 and ncaab_t2:
+        return "NCAAB"
+    # If NCAAB resolves at least one team that NBA doesn't → lean NCAAB
+    ncaab_score = int(ncaab_t1) + int(ncaab_t2)
+    nba_score = int(nba_t1) + int(nba_t2)
+    if ncaab_score > nba_score:
+        return "NCAAB"
+    return "NBA"
+
+
 def extract_open_bets(
     page: "Page",
     expert: Dict[str, Any],
@@ -465,6 +543,10 @@ def extract_open_bets(
             if not lines:
                 continue
 
+            # Skip parlay cards — can't grade individual legs
+            if lines[0].upper() == "PARLAY":
+                continue
+
             parsed = _parse_card_lines(lines)
             risk_val = parsed["risk_val"]
             odds_val = parsed["odds_val"]
@@ -501,10 +583,13 @@ def extract_open_bets(
             fp_input = f"{source_id}|{url}|{pick_text}|{matchup_hint or ''}|{observed_at.date()}"
             fingerprint = sha256_digest(fp_input)
 
+            # Detect sport from matchup teams (try NCAAB store first)
+            detected_sport = _detect_sport_from_matchup(matchup_hint)
+
             record = RawPickRecord(
                 source_id=source_id,
                 source_surface="juicereel_picks",
-                sport="NBA",
+                sport=detected_sport,
                 market_family="player_prop" if market_type == "player_prop" else "standard",
                 observed_at_utc=observed_at.isoformat(),
                 canonical_url=url,
@@ -647,15 +732,29 @@ def main() -> None:
     write_records(raw_path, records)
     print(f"[juicereel] Wrote raw → {raw_path}")
 
-    # Normalize
-    from src.normalizer_juicereel_nba import normalize_juicereel_records
-    raw_dicts = [asdict(r) for r in records]
-    normalized = normalize_juicereel_records(raw_dicts, debug=args.debug, sport="NBA")
+    # Split by sport
+    from dataclasses import asdict as _asdict
+    nba_recs = [r for r in records if r.sport == "NBA"]
+    ncaab_recs = [r for r in records if r.sport == "NCAAB"]
+    other_recs = [r for r in records if r.sport not in ("NBA", "NCAAB")]
+    print(f"[juicereel] Sport split: NBA={len(nba_recs)}, NCAAB={len(ncaab_recs)}, other={len(other_recs)}")
 
-    norm_path = os.path.join(OUT_DIR, "normalized_juicereel_nba.json")
-    write_json(norm_path, normalized)
-    eligible = sum(1 for r in normalized if r.get("eligible_for_consensus"))
-    print(f"[juicereel] Wrote normalized → {norm_path} ({eligible}/{len(normalized)} eligible)")
+    # Normalize NBA
+    from src.normalizer_juicereel_nba import normalize_juicereel_records
+    nba_dicts = [asdict(r) for r in nba_recs]
+    normalized_nba = normalize_juicereel_records(nba_dicts, debug=args.debug, sport="NBA")
+    norm_nba_path = os.path.join(OUT_DIR, "normalized_juicereel_nba.json")
+    write_json(norm_nba_path, normalized_nba)
+    eligible_nba = sum(1 for r in normalized_nba if r.get("eligible_for_consensus"))
+    print(f"[juicereel] Wrote NBA normalized → {norm_nba_path} ({eligible_nba}/{len(normalized_nba)} eligible)")
+
+    # Normalize NCAAB
+    ncaab_dicts = [asdict(r) for r in ncaab_recs]
+    normalized_ncaab = normalize_juicereel_records(ncaab_dicts, debug=args.debug, sport="NCAAB")
+    norm_ncaab_path = os.path.join(OUT_DIR, "normalized_juicereel_ncaab.json")
+    write_json(norm_ncaab_path, normalized_ncaab)
+    eligible_ncaab = sum(1 for r in normalized_ncaab if r.get("eligible_for_consensus"))
+    print(f"[juicereel] Wrote NCAAB normalized → {norm_ncaab_path} ({eligible_ncaab}/{len(normalized_ncaab)} eligible)")
 
 
 if __name__ == "__main__":

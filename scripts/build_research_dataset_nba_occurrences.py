@@ -16,10 +16,110 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+_PROFIT_RE = re.compile(r'^[+\-]?\d[\d,]*(\.\d+)?$')
+
+# Canonical expert name aliases — maps any variant spelling (lowercase) to the
+# canonical display name. Applied after all other name resolution so it catches
+# records that entered the ledger before the normalizer had the alias.
+_EXPERT_NAME_ALIASES: Dict[str, str] = {
+    "prop betguy": "Prop Bet Guy",
+    "betql pro betting": "BetQL Pro Betting",
+}
+
+# Experts who genuinely publish on multiple sources — their name is suffixed
+# with the source so they appear as separate experts in reports.
+# Primary source (no suffix) is listed first; secondary sources get a suffix.
+_MULTI_SOURCE_EXPERTS: Dict[str, str] = {
+    # expert_name -> primary source (no suffix applied for this source)
+    "Bruce Marshall":   "sportsline",
+    "Zack Cimini":      "sportsline",
+    "Micah Roberts":    "sportsline",
+    "The Degenerates":  "action",
+    "Bet Labs":         "action",
+}
+
+
+def _clean_name(name: Optional[str]) -> Optional[str]:
+    """Strip embedded performance badges from expert names.
+
+    VegasInsider and some other scrapers embed record badges inside the expert
+    name element (e.g. "Bruce Marshall\n102-88 Last 14 Days"). Take only the
+    first line and strip whitespace.
+    """
+    if not name:
+        return name
+    return name.split("\n")[0].strip() or None
+
+
+def _slug_to_name(canonical_url: Optional[str]) -> Optional[str]:
+    """Extract a display name from a SportsLine expert slug URL.
+
+    e.g. '.../experts/50774572/matt-severance/...' -> 'Matt Severance'
+    """
+    if not canonical_url:
+        return None
+    m = re.search(r'/experts/\d+/([^/?]+)', canonical_url)
+    if not m:
+        return None
+    slug = m.group(1)
+    return " ".join(w.capitalize() for w in slug.split("-"))
+
+
+def _resolve_expert_name(occ: Dict[str, Any]) -> Optional[str]:
+    """Return the best expert_name for a signal occurrence.
+
+    - Strips performance badges (vegasinsider newline suffixes).
+    - If the name is a profit figure ('+654'), resolve via the support's
+      canonical_url slug (SportsLine expert pages always include the slug).
+    - Only looks at supports whose source_id matches this occurrence's source
+      to avoid borrowing an expert name from a different source.
+    - For experts who genuinely publish on multiple sources, appends the source
+      as a suffix on the non-primary source so they are tracked separately.
+    """
+    name = _clean_name(occ.get("expert_name"))
+    occ_source = occ.get("source_id") or occ.get("occ_source_id") or ""
+
+    if name and not _PROFIT_RE.match(name.strip()):
+        resolved = name
+    else:
+        # Try same-source supports for a real name or slug fallback
+        resolved = None
+        for sup in occ.get("supports") or []:
+            if occ_source and sup.get("source_id") != occ_source:
+                continue
+            sup_name = _clean_name(sup.get("expert_name"))
+            if sup_name and not _PROFIT_RE.match(sup_name.strip()):
+                resolved = sup_name
+                break
+            # Profit figure or missing name — try slug from canonical_url
+            if not resolved:
+                slug_name = _slug_to_name(sup.get("canonical_url"))
+                if slug_name:
+                    resolved = slug_name
+        if not resolved:
+            resolved = name  # keep profit figure as last resort
+
+    if not resolved:
+        return resolved
+
+    # Apply canonical alias (catches variant spellings that entered the ledger
+    # before the source normalizer had the alias, e.g. "Prop Betguy")
+    canonical = _EXPERT_NAME_ALIASES.get(resolved.lower())
+    if canonical:
+        resolved = canonical
+
+    # For multi-source experts, append source suffix on non-primary source
+    primary = _MULTI_SOURCE_EXPERTS.get(resolved)
+    if primary and occ_source and occ_source != primary:
+        return f"{resolved} ({occ_source})"
+
+    return resolved
 
 
 DEFAULT_SIGNALS_PATH = Path("data/ledger/signals_occurrences.jsonl")
@@ -178,6 +278,17 @@ def normalize_occ_source_id(raw: Any) -> str:
     return val
 
 
+def _player_key_from_selection(selection: Optional[str]) -> Optional[str]:
+    """Extract player_key from a selection string like 'NBA:john_doe::points::OVER'."""
+    if not selection or "::" not in selection:
+        return None
+    part = selection.split("::")[0]
+    # Must look like a sport-prefixed key (e.g. 'NBA:john_doe'), not a team code
+    if ":" in part and len(part) > 5:
+        return part
+    return None
+
+
 def _safe_float(x: Any) -> Optional[float]:
     try:
         return float(x)
@@ -275,7 +386,7 @@ def derive_spread_fields(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
+def build_rows(signals_path: Path, grades_path: Path, ledger_path: Optional[Path] = None) -> List[Dict[str, Any]]:
     signals = read_jsonl(signals_path)
     grades = read_jsonl(grades_path)
 
@@ -314,8 +425,9 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
     # Old runs may have produced signals (e.g., from combo stat decomposition bug)
     # that were later removed. Exclude those orphans from reporting.
     current_ids: set = set()
-    if SIGNALS_LATEST_PATH.exists():
-        with SIGNALS_LATEST_PATH.open() as f:
+    effective_ledger = ledger_path if ledger_path is not None else SIGNALS_LATEST_PATH
+    if effective_ledger.exists():
+        with effective_ledger.open() as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -329,6 +441,59 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
         pruned = before - len(latest_by_signal)
         if pruned:
             print(f"[occ] Pruned {pruned} orphaned signals not in current ledger")
+
+    # Second-pass semantic dedup: eliminate picks where the same expert made the
+    # same bet (same game/player/stat/direction/market) but at a slightly different
+    # line (due to line movement between scrapes). These produce different signal_ids
+    # but are the same real-world pick. Keep the one with highest occurrence_count
+    # (most-seen), breaking ties by latest observed_at_utc.
+    semantic_best: Dict[tuple, str] = {}  # semantic_key -> signal_id to keep
+    for sid, occ in latest_by_signal.items():
+        expert_name = (occ.get("expert_name") or occ.get("expert") or "")
+        if not expert_name:
+            continue  # don't dedup anonymous/model signals — they don't have line-movement dupes
+        sel = occ.get("selection") or ""
+        # Use selection (not player_key) as it captures player identity for all sources
+        # Strip the line suffix from selection if present to normalize across line movements
+        sel_base = sel.split("|")[0] if "|" in sel else sel
+        key = (
+            expert_name,
+            occ.get("event_key") or "",
+            sel_base,
+            occ.get("market_type") or "",
+            occ.get("direction") or "",
+            occ.get("atomic_stat") or "",
+        )
+        existing_sid = semantic_best.get(key)
+        if existing_sid is None:
+            semantic_best[key] = sid
+        else:
+            existing_occ = latest_by_signal[existing_sid]
+            # Prefer higher occurrence_count (more times this signal was seen = more reliable)
+            existing_count = occurrence_counts.get(existing_sid, 1)
+            new_count = occurrence_counts.get(sid, 1)
+            if new_count > existing_count:
+                semantic_best[key] = sid
+            elif new_count == existing_count:
+                # Break tie by latest observed_at_utc
+                existing_ts = parse_iso(existing_occ.get("observed_at_utc"))
+                new_ts = parse_iso(occ.get("observed_at_utc"))
+                if new_ts and existing_ts and new_ts > existing_ts:
+                    semantic_best[key] = sid
+
+    # Build set of signal_ids to keep (all anonymous + semantic winners)
+    semantic_keep: set = set()
+    for sid, occ in latest_by_signal.items():
+        expert_name = (occ.get("expert_name") or occ.get("expert") or "")
+        if not expert_name:
+            semantic_keep.add(sid)  # always keep anonymous/model signals
+    semantic_keep.update(semantic_best.values())
+
+    before_sem = len(latest_by_signal)
+    latest_by_signal = {k: v for k, v in latest_by_signal.items() if k in semantic_keep}
+    sem_pruned = before_sem - len(latest_by_signal)
+    if sem_pruned:
+        print(f"[occ] Semantic dedup: removed {sem_pruned} line-movement duplicates ({before_sem} -> {len(latest_by_signal)})")
 
     out_rows: List[Dict[str, Any]] = []
 
@@ -359,8 +524,8 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
             "source_id": occ_source_id,
             "source_surface": occ.get("source_surface"),
             "experts": occ.get("experts") or [],
-            "expert": occ.get("expert") or occ.get("expert_name"),
-            "expert_name": occ.get("expert_name"),
+            "expert": occ.get("expert") or _resolve_expert_name(occ),
+            "expert_name": _resolve_expert_name(occ),
             "expert_id": occ.get("expert_id"),
             "occ_source_id": occ_source_id,
             "occ_sources_present": occ_sources_present,
@@ -377,7 +542,7 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
             "direction": occ.get("direction"),
             "away_team": occ.get("away_team") or grade.get("away_team"),
             "home_team": occ.get("home_team") or grade.get("home_team"),
-            "player_key": occ.get("player_key"),
+            "player_key": occ.get("player_key") or _player_key_from_selection(occ.get("selection")),
             "player_id": occ.get("player_id"),
             "atomic_stat": occ.get("atomic_stat"),
             "day_key": occ.get("day_key") or grade.get("day_key"),
@@ -449,11 +614,20 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
         row.update(spread_fields)
 
         if (row.get("market_type") or "").strip().lower() == "spread" and not row.get("spread_is_valid"):
-            row["grade_status"] = "INELIGIBLE"
-            row["result"] = None
-            row["status"] = "INELIGIBLE"
-            row["notes"] = row.get("spread_invalid_reason") or row.get("notes")
-            row["roi_eligible"] = False
+            # Exception: pre-graded picks (SportsLine provides WIN/LOSS directly) don't need
+            # score-based spread validation — the result is already known.
+            pregraded = row.get("pregraded_result") or (grade or {}).get("pregraded_result")
+            if pregraded in ("WIN", "LOSS", "PUSH"):
+                row["spread_is_valid"] = True
+                row["result"] = pregraded
+                row["status"] = "GRADED"
+                row["grade_status"] = "GRADED"
+            else:
+                row["grade_status"] = "INELIGIBLE"
+                row["result"] = None
+                row["status"] = "INELIGIBLE"
+                row["notes"] = row.get("spread_invalid_reason") or row.get("notes")
+                row["roi_eligible"] = False
 
         # Normalize final scores and compute audit fields
         home_score_raw = row.get("final_home_score")
@@ -529,6 +703,51 @@ def build_rows(signals_path: Path, grades_path: Path) -> List[Dict[str, Any]]:
 
         out_rows.append(row)
 
+    # Final semantic dedup on resolved rows: catches cases where expert_name was
+    # null in signals_occurrences.jsonl but gets resolved via _resolve_expert_name().
+    # Groups: (expert_name, event_key, selection, market_type, direction, atomic_stat)
+    # Keep row with highest occurrence_count, then latest observed_at_utc.
+    sem2_best: Dict[tuple, int] = {}  # key -> index in out_rows
+    for i, row in enumerate(out_rows):
+        expert_name = row.get("expert_name") or ""
+        if not expert_name:
+            continue
+        sel = (row.get("selection") or "").split("|")[0]
+        key = (
+            expert_name,
+            row.get("event_key") or "",
+            sel,
+            row.get("market_type") or "",
+            row.get("direction") or "",
+            row.get("atomic_stat") or "",
+        )
+        existing_idx = sem2_best.get(key)
+        if existing_idx is None:
+            sem2_best[key] = i
+        else:
+            existing = out_rows[existing_idx]
+            ec = existing.get("occurrence_count") or 1
+            nc = row.get("occurrence_count") or 1
+            if nc > ec:
+                sem2_best[key] = i
+            elif nc == ec:
+                existing_ts = parse_iso(existing.get("observed_at_utc"))
+                new_ts = parse_iso(row.get("observed_at_utc"))
+                if new_ts and existing_ts and new_ts > existing_ts:
+                    sem2_best[key] = i
+
+    keep_indices: set = set()
+    for i, row in enumerate(out_rows):
+        expert_name = row.get("expert_name") or ""
+        if not expert_name:
+            keep_indices.add(i)  # always keep anonymous rows
+    keep_indices.update(sem2_best.values())
+
+    if len(keep_indices) < len(out_rows):
+        removed = len(out_rows) - len(keep_indices)
+        out_rows = [row for i, row in enumerate(out_rows) if i in keep_indices]
+        print(f"[occ] Final semantic dedup: removed {removed} additional line-movement duplicates -> {len(out_rows)} rows")
+
     return out_rows
 
 
@@ -552,17 +771,24 @@ def main() -> None:
         default=str(DEFAULT_OUTPUT_PATH),
         help="Output JSONL path (default: data/analysis/graded_occurrences_latest.jsonl).",
     )
+    ap.add_argument(
+        "--ledger",
+        type=str,
+        default=str(SIGNALS_LATEST_PATH),
+        help="Current signals_latest.jsonl used for orphan pruning (default: NBA path).",
+    )
     args = ap.parse_args()
 
     signals_path = Path(args.signals)
     grades_path = Path(args.grades)
     output_path = Path(args.out)
+    ledger_path = Path(args.ledger)
 
     print(f"[occ] Signals: {signals_path}")
     print(f"[occ] Grades: {grades_path}")
     print(f"[occ] Output: {output_path}")
 
-    rows = build_rows(signals_path, grades_path)
+    rows = build_rows(signals_path, grades_path, ledger_path=ledger_path)
     write_jsonl(output_path, rows)
     total = len(rows)
     graded = sum(1 for r in rows if r.get("grade_status") == "GRADED")

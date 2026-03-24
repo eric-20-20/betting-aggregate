@@ -24,7 +24,7 @@ export interface Signal {
   score: number;
   direction: string;
   atomic_stat: string | null;
-  best_odds: number | null;
+  expert_odds: number | null;
   away_team: string;
   home_team: string;
   event_key: string;
@@ -114,6 +114,7 @@ export interface Play {
   expert_detail?: ExpertDetail;
   recent_trend?: RecentTrend;
   matched_pattern?: MatchedPattern;
+  confidence_score?: number;
   // Backward compat
   composite_score?: number;
   positive_dimensions?: number;
@@ -139,6 +140,7 @@ export interface LockedPick {
   market_type: string;
   matchup: string;
   confidence?: "high" | "medium" | "low";
+  confidence_score?: number;
   positive_dimensions?: number;
 }
 

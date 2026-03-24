@@ -1,15 +1,16 @@
-"""VegasInsider NBA picks scraper.
+"""VegasInsider NBA + NCAAB picks scraper.
 
-Scrapes VegasInsider's free and premium NBA picks from expert analysts.
-Extracts spread, total, moneyline, and milestone player prop picks from
-game-based carousels, normalizes them, and writes raw + normalized JSON.
+Scrapes VegasInsider's free and premium picks from expert analysts.
+The page at https://www.vegasinsider.com/picks/ contains both NBA and NCAAB
+sections; use --sport to select which sport to ingest.
 
 Usage:
-    python3 vegasinsider_ingest.py                     # default (uses storage state if available)
-    python3 vegasinsider_ingest.py --debug              # verbose output
-    python3 vegasinsider_ingest.py --snapshot           # save page HTML for selector dev
-    python3 vegasinsider_ingest.py --featured-only      # skip premium section
-    python3 vegasinsider_ingest.py --create-storage     # open browser to log in
+    python3 vegasinsider_ingest.py                       # NBA (default)
+    python3 vegasinsider_ingest.py --sport NCAAB         # NCAAB picks
+    python3 vegasinsider_ingest.py --debug               # verbose output
+    python3 vegasinsider_ingest.py --snapshot            # save page HTML for selector dev
+    python3 vegasinsider_ingest.py --featured-only       # skip premium section
+    python3 vegasinsider_ingest.py --create-storage      # open browser to log in
 """
 
 from __future__ import annotations
@@ -27,13 +28,13 @@ from zoneinfo import ZoneInfo
 from playwright.sync_api import Page, sync_playwright
 
 from action_ingest import dedupe_normalized_bets, json_default, sha256_digest
-from store import data_store, write_json, NBA_SPORT
+from store import get_data_store, write_json, NBA_SPORT, NCAAB_SPORT
 from utils import normalize_text
 
 OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
 
 SOURCE_ID = "vegasinsider"
-PICKS_URL = "https://www.vegasinsider.com/nba/picks/free-pick/"
+PICKS_URL = "https://www.vegasinsider.com/picks/"
 DEFAULT_STORAGE_STATE = "data/vegasinsider_storage_state.json"
 
 # Market tag text → canonical market_type
@@ -58,8 +59,8 @@ MILESTONE_STAT_MAP = {
     "three pointers": "threes",
 }
 
-# Team nickname fallback (same as sportsline_ingest.py)
-TEAM_FALLBACK = {
+# Team nickname fallback — NBA
+TEAM_FALLBACK_NBA = {
     "bucks": "MIL", "76ers": "PHI", "sixers": "PHI", "knicks": "NYK",
     "nets": "BKN", "trail blazers": "POR", "blazers": "POR", "suns": "PHX",
     "spurs": "SAS", "warriors": "GSW", "pelicans": "NOP", "lakers": "LAL",
@@ -70,6 +71,66 @@ TEAM_FALLBACK = {
     "kings": "SAC", "hawks": "ATL", "hornets": "CHA", "grizzlies": "MEM",
     "nuggets": "DEN", "pacers": "IND", "wizards": "WAS",
 }
+
+# Team nickname fallback — NCAAB (common nicknames that may not be in data store)
+TEAM_FALLBACK_NCAAB = {
+    "tar heels": "UNC", "heels": "UNC",
+    "blue devils": "DUKE", "devils": "DUKE",
+    "wildcats": "UK",  # Kentucky is most common; overridden by data store when unambiguous
+    "hoosiers": "IND",
+    "wolverines": "MICH",
+    "buckeyes": "OSU",
+    "longhorns": "TEX",
+    "jayhawks": "KAN",
+    "zags": "GONZ", "bulldogs": "GONZ",
+    "orangemen": "SYR", "orange": "SYR",
+    "seminoles": "FSU",
+    "gators": "FLA",
+    "volunteers": "TENN", "vols": "TENN",
+    "aggies": "TXAM",
+    "sooners": "OKLA",
+    "cowboys": "OKST",
+    "mountaineers": "WVU",
+    "hokies": "VT",
+    "cavaliers": "UVA",
+    "demon deacons": "WAKE",
+    "cardinals": "LOU",
+    "golden eagles": "MU",
+    "golden flashes": "KENT",
+    "panthers": "PITT",
+    "tigers": "CLEM",
+    "razorbacks": "ARK",
+    "huskers": "NEB",
+    "hawkeyes": "IOWA",
+    "badgers": "WISC",
+    "spartans": "MICH-ST",
+    "illini": "ILL",
+    "boilermakers": "PUR",
+    "nittany lions": "PSU",
+    "terrapins": "MD",
+    "hurricanes": "MIA-FL",
+    "eagles": "BC",
+    "scarlet knights": "RUT",
+    "yellow jackets": "GT",
+    "crimson tide": "ALA",
+    "auburn tigers": "AUB",
+    "rebels": "MISS",
+    "bulldogs": "MS-ST",
+    "golden bears": "CAL",
+    "trojans": "USC",
+    "bruins": "UCLA",
+    "ducks": "ORE",
+    "beavers": "ORE-ST",
+    "huskies": "WASH",
+    "cougars": "WASH-ST",
+    "utes": "UTAH",
+    "lobos": "NM",
+    "wolf pack": "NEV",
+    "mountain hawks": "LEHIGH",
+}
+
+# Active fallback — set per-invocation based on sport
+TEAM_FALLBACK: Dict[str, str] = TEAM_FALLBACK_NBA
 
 
 @dataclass
@@ -106,18 +167,20 @@ class RawPickRecord:
 # ── Team mapping ──────────────────────────────────────────────────────────
 
 
-def _map_team(alias: Optional[str]) -> Optional[str]:
+def _map_team(alias: Optional[str], store=None) -> Optional[str]:
     """Map team name or abbreviation to standard team code."""
     if not alias:
         return None
-    codes = data_store.lookup_team_code(alias)
+    if store is None:
+        store = get_data_store(NBA_SPORT)
+    codes = store.lookup_team_code(alias)
     if len(codes) == 1:
         return next(iter(codes))
     norm = normalize_text(alias)
     if norm in TEAM_FALLBACK:
         return TEAM_FALLBACK[norm]
-    # Try 3-letter abbreviations
-    if alias and len(alias) <= 3:
+    # Try short abbreviations
+    if alias and len(alias) <= 5:
         return alias.upper()
     return None
 
@@ -289,11 +352,18 @@ def _parse_headline(headline: str, market_type: Optional[str]) -> Dict[str, Any]
 #   .pick-pill-odds      — odds from badge
 #   .pick-header-matchup — game matchup header (in parent container)
 #   .pick-analysis-text  — analysis text
-EXTRACT_PICKS_JS = """() => {
+def _make_extract_picks_js(sport: str) -> str:
+    """Build the JS extraction script filtered to the given sport (NBA or NCAAB)."""
+    sport_tag = sport.upper()  # 'NBA' or 'NCAAB'
+    return f"""() => {{
     const picks = [];
+    const sportTag = '{sport_tag}';
+    // All sport tags that are NOT the target sport — any card tagged with one of these is skipped.
+    const NON_TARGET_SPORTS = ['NHL','NFL','MLB','NCAAB','NCAAF','CFB','CBB','Soccer','MLS','NBA','NCAAB'].filter(s => s !== sportTag);
+    const ALL_SPORT_TAGS = new Set(['NHL','NFL','MLB','NCAAB','NCAAF','CFB','CBB','Soccer','MLS','NBA','NCAAB']);
     const cards = document.querySelectorAll('.module.pick');
 
-    cards.forEach(card => {
+    cards.forEach(card => {{
         // 1. Headline
         const titleEl = card.querySelector('.pick-info-title');
         const headline = titleEl ? titleEl.innerText.trim() : '';
@@ -301,13 +371,24 @@ EXTRACT_PICKS_JS = """() => {
         // Skip locked/placeholder picks
         if (headline.includes('My Pick Title')) return;
 
-        // 2. Market tags
+        // 2. Market tags — check sport label first
         const tagEls = card.querySelectorAll('.pick-tags-type');
-        const tags = [];
-        tagEls.forEach(t => {
+        const allTags = [];
+        tagEls.forEach(t => {{
             const text = t.innerText.trim();
-            if (text && text !== 'NBA') tags.push(text);
-        });
+            if (text) allTags.push(text);
+        }});
+
+        // Determine which sport this card belongs to.
+        // Skip if tagged with ANY known sport that isn't the target sport.
+        // A card with no sport tag at all is assumed to belong to the target sport
+        // (featured free picks sometimes lack explicit sport tags).
+        const hasTargetTag = allTags.some(t => t === sportTag);
+        const hasNonTargetSportTag = allTags.some(t => ALL_SPORT_TAGS.has(t) && t !== sportTag);
+        if (hasNonTargetSportTag && !hasTargetTag) return;
+
+        // Strip all sport tags from the list passed downstream
+        const tags = allTags.filter(t => !ALL_SPORT_TAGS.has(t));
 
         // 3. Expert name (may have record appended like "Stephen Nover11-10-1 NBA Last 14 Days")
         const expertEl = card.querySelector('.pick-expert-name');
@@ -326,20 +407,20 @@ EXTRACT_PICKS_JS = """() => {
         // 6. Find matchup header by walking up to parent pick-row / container
         let matchupText = '';
         let parent = card;
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 10; i++) {{
             parent = parent.parentElement;
             if (!parent) break;
             const header = parent.querySelector('.pick-header-matchup');
-            if (header) {
+            if (header) {{
                 matchupText = header.innerText.trim();
                 break;
-            }
-        }
+            }}
+        }}
 
         // 7. Check if this is a "Free Pick" or premium
         const isFree = tags.some(t => t.toLowerCase().includes('free'));
 
-        picks.push({
+        picks.push({{
             headline,
             tags,
             expertRaw,
@@ -349,11 +430,11 @@ EXTRACT_PICKS_JS = """() => {
             matchupText,
             isFree,
             fullText: card.innerText.trim().substring(0, 800),
-        });
-    });
+        }});
+    }});
 
     return picks;
-}""".strip()
+}}"""
 
 # JS to click all carousel right arrows to reveal hidden picks
 CLICK_CAROUSELS_JS = """() => {
@@ -385,6 +466,9 @@ def _parse_expert_raw(expert_raw: str) -> Tuple[Optional[str], Optional[str]]:
     if not expert_raw:
         return None, None
 
+    # If innerText has newline between name and record ("Brian Edwards\n50-47 Last 30 Days")
+    expert_raw = expert_raw.split("\n")[0].strip()
+
     # Strip record suffix: digits-digits(-digits)? followed by NBA/...
     name = re.sub(r"\d+-\d+(?:-\d+)?\s+(?:NBA|NCAAB|NFL|MLB).*$", "", expert_raw).strip()
     if not name:
@@ -408,7 +492,10 @@ def _market_type_from_tags(tags: List[str]) -> Optional[str]:
     return None
 
 
-def _parse_matchup_header(text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+_TIME_ONLY_RE = re.compile(r"^\d{3,4}$")  # bare time like "2330" or "0300"
+
+
+def _parse_matchup_header(text: str, store=None) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Parse matchup header like 'Jazz @ Grizzlies 02/20 7:00 PM ET'.
 
     Returns (away_code, home_code, event_time_utc).
@@ -426,14 +513,19 @@ def _parse_matchup_header(text: str) -> Tuple[Optional[str], Optional[str], Opti
     time_str = m.group(4)
     ampm = m.group(5)
 
-    away_code = _map_team(away_raw)
-    home_code = _map_team(home_raw)
+    # If either team token is purely numeric (e.g. "2330", "0300") the regex matched a
+    # time string rather than a team name — treat the whole parse as failed.
+    if _TIME_ONLY_RE.match(away_raw) or _TIME_ONLY_RE.match(home_raw):
+        return None, None, None
+
+    away_code = _map_team(away_raw, store)
+    home_code = _map_team(home_raw, store)
     event_time_utc = _parse_game_time(date_str, time_str, ampm)
 
     return away_code, home_code, event_time_utc
 
 
-def _extract_matchup_from_headline(headline: str) -> Tuple[Optional[str], Optional[str]]:
+def _extract_matchup_from_headline(headline: str, store=None) -> Tuple[Optional[str], Optional[str]]:
     """Try to extract away@home teams from card headline text."""
     m = re.search(
         r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*@\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)",
@@ -443,8 +535,8 @@ def _extract_matchup_from_headline(headline: str) -> Tuple[Optional[str], Option
         away_raw = m.group(1).strip()
         home_raw = m.group(2).strip()
         # Extract last word as team nickname for mapping
-        away_code = _map_team(away_raw.split()[-1]) or _map_team(away_raw)
-        home_code = _map_team(home_raw.split()[-1]) or _map_team(home_raw)
+        away_code = _map_team(away_raw.split()[-1], store) or _map_team(away_raw, store)
+        home_code = _map_team(home_raw.split()[-1], store) or _map_team(home_raw, store)
         return away_code, home_code
     return None, None
 
@@ -454,13 +546,14 @@ def scrape_vegasinsider(
     debug: bool = False,
     snapshot: bool = False,
     featured_only: bool = False,
+    sport: str = NBA_SPORT,
 ) -> Tuple[List[RawPickRecord], Dict[str, Any]]:
-    """Scrape VegasInsider NBA picks page.
+    """Scrape VegasInsider picks page for the given sport (NBA or NCAAB).
 
     Returns (raw_records, debug_info).
     """
     observed_at = datetime.now(timezone.utc)
-    dbg: Dict[str, Any] = {"observed_at": observed_at.isoformat()}
+    dbg: Dict[str, Any] = {"observed_at": observed_at.isoformat(), "sport": sport}
 
     use_storage = os.path.exists(storage_state) and not featured_only
     if not use_storage and not featured_only:
@@ -507,11 +600,17 @@ def scrape_vegasinsider(
                 print(f"[SNAPSHOT] Saved page HTML to {snap_path}")
 
             # Extract structured pick data via JS using actual DOM classes
-            pick_cards = page.evaluate(EXTRACT_PICKS_JS)
+            extract_js = _make_extract_picks_js(sport)
+            pick_cards = page.evaluate(extract_js)
             dbg["pick_cards_extracted"] = len(pick_cards)
 
             if debug:
                 print(f"[DEBUG] Extracted {len(pick_cards)} pick cards (locked picks excluded)")
+
+            # Set up sport-specific lookups
+            sport_lower = sport.lower()
+            source_surface = f"vegasinsider_{sport_lower}_picks"
+            store = get_data_store(sport)
 
             # Parse pick cards into raw records
             records: List[RawPickRecord] = []
@@ -537,11 +636,11 @@ def scrape_vegasinsider(
                 market_type = _market_type_from_tags(tags)
 
                 # Parse matchup header for teams + time
-                away_code, home_code, event_time_utc = _parse_matchup_header(matchup_text)
+                away_code, home_code, event_time_utc = _parse_matchup_header(matchup_text, store)
 
                 # Also try to extract teams from headline (total headlines have "Away @ Home")
                 if not away_code or not home_code:
-                    h_away, h_home = _extract_matchup_from_headline(headline)
+                    h_away, h_home = _extract_matchup_from_headline(headline, store)
                     away_code = away_code or h_away
                     home_code = home_code or h_home
 
@@ -560,10 +659,10 @@ def scrape_vegasinsider(
                 # Resolve teams from parsed data if still missing
                 if not away_code and parsed.get("away_team_raw"):
                     last_word = parsed["away_team_raw"].split()[-1]
-                    away_code = _map_team(last_word) or _map_team(parsed["away_team_raw"])
+                    away_code = _map_team(last_word, store) or _map_team(parsed["away_team_raw"], store)
                 if not home_code and parsed.get("home_team_raw"):
                     last_word = parsed["home_team_raw"].split()[-1]
-                    home_code = _map_team(last_word) or _map_team(parsed["home_team_raw"])
+                    home_code = _map_team(last_word, store) or _map_team(parsed["home_team_raw"], store)
 
                 # Extract fields from parsed headline
                 side = parsed.get("side")
@@ -595,7 +694,7 @@ def scrape_vegasinsider(
                 if market_type in ("spread", "moneyline") and parsed.get("team_raw"):
                     team_raw = parsed["team_raw"]
                     last_word = team_raw.split()[-1]
-                    selection = _map_team(last_word) or _map_team(team_raw)
+                    selection = _map_team(last_word, store) or _map_team(team_raw, store)
                 elif market_type == "total":
                     selection = "game_total"
                 elif market_type == "player_prop":
@@ -604,7 +703,7 @@ def scrape_vegasinsider(
                 market_family = "player_prop" if market_type == "player_prop" else "standard"
 
                 # Build fingerprint for dedup
-                fp_source = f"{SOURCE_ID}|{headline}|{expert_name or ''}"
+                fp_source = f"{SOURCE_ID}|{sport}|{headline}|{expert_name or ''}"
                 fp = sha256_digest(fp_source)
                 if fp in seen_fps:
                     continue
@@ -614,8 +713,8 @@ def scrape_vegasinsider(
 
                 record = RawPickRecord(
                     source_id=SOURCE_ID,
-                    source_surface="vegasinsider_nba_picks",
-                    sport="NBA",
+                    source_surface=source_surface,
+                    sport=sport,
                     market_family=market_family,
                     observed_at_utc=observed_at.isoformat(),
                     canonical_url=PICKS_URL,
@@ -660,7 +759,7 @@ def scrape_vegasinsider(
 
 def normalize_pick(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Normalize a raw VegasInsider pick to the standard schema."""
-    sport = "NBA"
+    sport = raw.get("sport") or "NBA"
     home_code = raw.get("home_team") or ""
     away_code = raw.get("away_team") or ""
     market_type = raw.get("market_type")
@@ -671,6 +770,9 @@ def normalize_pick(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     player_name = raw.get("player_name")
     stat_key = raw.get("stat_key")
     expert_name = raw.get("expert_name")
+    # Strip any embedded performance badge (e.g. "Bruce Marshall\n102-88 Last 14 Days")
+    if expert_name:
+        expert_name = expert_name.split("\n")[0].strip()
     expert_slug = raw.get("expert_slug")
 
     # Build event keys using Eastern time for day assignment
@@ -699,7 +801,7 @@ def normalize_pick(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     player_key = None
     if market_type == "player_prop" and player_name:
         player_slug = re.sub(r"[^a-z0-9]+", "_", player_name.lower()).strip("_")
-        player_key = f"nba:{player_slug}"
+        player_key = f"{sport.lower()}:{player_slug}"
         # Build selection in standard format
         if stat_key and side:
             selection = f"{player_key}::{stat_key}::{side}"
@@ -838,7 +940,13 @@ def _create_storage(storage_path: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Ingest VegasInsider NBA picks.")
+    parser = argparse.ArgumentParser(description="Ingest VegasInsider NBA or NCAAB picks.")
+    parser.add_argument(
+        "--sport",
+        default="NBA",
+        choices=["NBA", "NCAAB"],
+        help="Sport to ingest picks for (default: NBA)",
+    )
     parser.add_argument(
         "--storage",
         default=DEFAULT_STORAGE_STATE,
@@ -866,22 +974,31 @@ def main():
         _create_storage(args.storage)
         return 0
 
+    sport = args.sport
+
+    # Set sport-specific team fallback
+    global TEAM_FALLBACK
+    TEAM_FALLBACK = TEAM_FALLBACK_NCAAB if sport == NCAAB_SPORT else TEAM_FALLBACK_NBA
+
     # 1. Scrape
     raw_records, dbg = scrape_vegasinsider(
         storage_state=args.storage,
         debug=args.debug,
         snapshot=args.snapshot,
         featured_only=args.featured_only,
+        sport=sport,
     )
-    print(f"[INGEST] Extracted {len(raw_records)} raw picks")
+    print(f"[INGEST] Extracted {len(raw_records)} raw {sport} picks")
 
     if not raw_records:
         print("[INGEST] No picks found. Try --snapshot --debug to inspect page HTML.")
         return 1
 
+    sport_lower = sport.lower()
+
     # 2. Write raw output
     ensure_out_dir()
-    raw_path = os.path.join(OUT_DIR, "raw_vegasinsider_nba.json")
+    raw_path = os.path.join(OUT_DIR, f"raw_vegasinsider_{sport_lower}.json")
     write_json_file(raw_path, [asdict(r) for r in raw_records])
     print(f"[INGEST] Wrote {len(raw_records)} raw records to {raw_path}")
 
@@ -896,7 +1013,7 @@ def main():
     normalized = dedupe_normalized_bets(normalized)
 
     # 5. Write normalized output
-    norm_path = os.path.join(OUT_DIR, "normalized_vegasinsider_nba.json")
+    norm_path = os.path.join(OUT_DIR, f"normalized_vegasinsider_{sport_lower}.json")
     write_json_file(norm_path, normalized)
 
     eligible = sum(1 for r in normalized if r.get("eligible_for_consensus"))

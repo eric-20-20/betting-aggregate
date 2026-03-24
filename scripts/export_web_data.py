@@ -225,8 +225,8 @@ def export_picks(date: str) -> None:
         -(p.get("wilson_score", p.get("composite_score", 0))),
     ))
 
-    # Sanitize quality-gated plays only (A and B tiers)
-    sanitized_plays = [sanitize_play(p) for p in plays if p["tier"] in ("A", "B")]
+    # Sanitize all exported plays (A, B, and C tiers)
+    sanitized_plays = [sanitize_play(p) for p in plays if p["tier"] in ("A", "B", "C")]
 
     # Teaser picks: top N A-tier picks with full details
     teaser_picks = []
@@ -249,6 +249,7 @@ def export_picks(date: str) -> None:
             "market_type": sig["market_type"],
             "matchup": matchup,
             "confidence": p.get("confidence", "low"),
+            "confidence_score": p.get("confidence_score", 0),
             "positive_dimensions": p.get("positive_dimensions", 0),
         })
 

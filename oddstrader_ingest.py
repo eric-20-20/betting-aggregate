@@ -648,6 +648,12 @@ def normalize_pick(
     side = raw.get("side")
     selection = raw.get("selection")
 
+    # For totals: side is "over"/"under"; normalize both to uppercase and use as selection.
+    # "game_total" is not a valid selection in the rest of the pipeline.
+    if market_type == "total" and side:
+        side = side.upper()
+        selection = side  # "OVER" or "UNDER"
+
     fingerprint = sha256_digest(
         f"oddstrader:{raw.get('event_id')}:{market_type}:{side}:{selection}:{raw.get('player_key', '')}"
     )

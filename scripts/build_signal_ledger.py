@@ -70,11 +70,21 @@ def read_jsonl(path: Path) -> List[Dict[str, Any]]:
     if not path.exists():
         return out
     with path.open() as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            out.append(json.loads(line))
+        content = f.read().strip()
+    if not content:
+        return out
+    # Support both JSONL (one object per line) and JSON array
+    if content.startswith("["):
+        try:
+            data = json.loads(content)
+            return [r for r in data if isinstance(r, dict)]
+        except json.JSONDecodeError:
+            pass
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        out.append(json.loads(line))
     return out
 
 
@@ -925,6 +935,7 @@ def collect_occurrences(
                         "atomic_stat": sup.get("atomic_stat"),
                         "display_player_id": sup.get("display_player_id"),
                         "expert_name": expert_name,
+                        "rating_stars": sup.get("rating_stars"),
                     }
                 )
             signal["supports"] = normalized_supports
@@ -992,19 +1003,19 @@ def collect_occurrences(
                 if len(sup_ids) == 1:
                     signal["source_id"] = next(iter(sup_ids))
                 else:
-                    signal["source_id"] = "multi"
+                    signal["source_id"] = "|".join(sorted(sup_ids))
             if not signal.get("source_id"):
                 if len(sup_ids) == 1:
                     signal["source_id"] = next(iter(sup_ids))
                 elif len(sup_ids) > 1:
-                    signal["source_id"] = "multi"
+                    signal["source_id"] = "|".join(sorted(sup_ids))
                 else:
                     # Fallback: derive source_id from signal's sources field
                     sig_sources_list = [s for s in (signal.get("sources") or []) if s]
                     if len(sig_sources_list) == 1:
                         signal["source_id"] = sig_sources_list[0]
                     elif len(sig_sources_list) > 1:
-                        signal["source_id"] = "multi"
+                        signal["source_id"] = "|".join(sorted(sig_sources_list))
                     else:
                         signal["source_id"] = "unknown"
 
@@ -1274,11 +1285,21 @@ def _history_row_to_occurrence(row: Dict[str, Any], source_tag: str = "betql_his
                 "raw_pick_text": prov.get("raw_pick_text"),
                 "raw_block": prov.get("raw_block"),
                 "canonical_url": prov.get("canonical_url"),
+                "expert_name": prov.get("expert_name"),
+                "expert_id": prov.get("expert_id"),
+                "rating_stars": prov.get("rating_stars"),
             }
         ],
     }
     signal["canonical_game_key"] = cgk
-    # Normalize player slug in selection via alias map
+    # Normalize player slug in selection via alias map.
+    # History selections may lack the "NBA:" prefix (e.g. "d_mitchell::pts_reb::UNDER").
+    # Prepend the sport prefix so normalize_selection_player can resolve the alias and
+    # the resulting signal_key matches what live pipeline runs produce for the same pick.
+    sel = signal.get("selection") or ""
+    if sel and "::" in sel and not sel.startswith("NBA:") and not sel.startswith("NCAAB:"):
+        prefix = f"{sport}:"
+        signal["selection"] = f"{prefix}{sel}"
     normed_sel = normalize_selection_player(signal.get("selection"))
     if normed_sel and normed_sel != signal.get("selection"):
         signal["selection"] = normed_sel
@@ -1586,7 +1607,7 @@ def main() -> None:
             from src.normalizer_bettingpros_experts_nba import normalize_bettingpros_experts_records
             with open(path) as f:
                 bpe_raw = json.load(f)
-            bpe_normalized = normalize_bettingpros_experts_records(bpe_raw)
+            bpe_normalized = normalize_bettingpros_experts_records(bpe_raw, include_parlays=True)
             loaded = 0
             for row in bpe_normalized:
                 try:

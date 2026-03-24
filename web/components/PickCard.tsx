@@ -210,7 +210,7 @@ export default function PickCard({ play, result }: { play: Play; result?: string
   const pr = play.primary_record || historical_record;
   const { main, detail } = formatPickSelection(signal);
   const matchup = parseMatchup(signal);
-  const odds = formatOdds(signal.best_odds);
+  const odds = formatOdds((signal.expert_odds ?? (signal as any).best_odds) as number | null);
   const hasRecord = pr && pr.n > 0;
   const isATier = play.tier === "A";
 
@@ -223,7 +223,7 @@ export default function PickCard({ play, result }: { play: Play; result?: string
       {/* Top: tier + result badge + matchup + game time */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <TierBadge tier={play.tier} />
+          <TierBadge tier={play.tier} confidenceScore={play.confidence_score} />
           {result && <ResultBadge result={result} />}
         </div>
         <div className="flex items-center gap-1.5">

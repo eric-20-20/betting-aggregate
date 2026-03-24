@@ -16,25 +16,28 @@ from src.betql_extractors import extract_sharp_spreads_totals
 from store import write_json
 
 
+URL_SPREADS = "https://betql.co/nba/sharp-picks"
+URL_TOTALS  = "https://betql.co/nba/sharp-picks/totals-spread"
+
+
 def main(out_path: str, storage_state: str, debug: bool = False) -> None:
-    url = "https://betql.co/nba/sharp-picks"
     logger = logging.getLogger("betql.probe.sharps")
     records = []
     with BetQLSession(storage_state_path=storage_state, headless=True) as sess:
-        page = sess.open(url)
-        wait_for_ready(page, surface="sharps")
-        recs, dbg = extract_sharp_spreads_totals(page, canonical_url=url, debug=debug)
-        records.extend(recs)
-        if debug:
-            logger.debug("sharp rows=%s extracted=%s", dbg.get('rows'), len(recs))
-            kinds = {}
-            for r in recs:
-                kinds.setdefault(r.get('market_family'), 0)
-                kinds[r.get('market_family')] += 1
-            logger.debug("market split %s", kinds)
-        page.close()
+        for url in (URL_SPREADS, URL_TOTALS):
+            page = sess.open(url)
+            wait_for_ready(page, surface="sharps")
+            recs, dbg = extract_sharp_spreads_totals(page, canonical_url=url, debug=debug)
+            records.extend(recs)
+            if debug:
+                logger.debug("url=%s rows=%s extracted=%s", url, dbg.get('rows'), len(recs))
+            page.close()
+    kinds: dict = {}
+    for r in records:
+        kinds.setdefault(r.get('market_family'), 0)
+        kinds[r.get('market_family')] += 1
     write_json(out_path, records)
-    logger.info("wrote %s records to %s", len(records), out_path)
+    logger.info("wrote %s records (%s) to %s", len(records), kinds, out_path)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,10 @@ except ImportError as exc:
 
 from action_ingest import (
     OUT_DIR,
+    ACTION_LISTING_URLS,
+    ACTION_GAME_PATTERNS,
+    NBA_SPORT,
+    NCAAB_SPORT,
     RawPickRecord,
     dedupe_normalized_bets,
     extract_picks_from_html,
@@ -39,13 +43,13 @@ from action_ingest import (
 )
 
 
-LISTING_URL = "https://www.actionnetwork.com/nba/picks/game"
 LEFT_ARROW_PATH_D = "M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"
 DEFAULT_MAX_DAYS = 7
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backfill Action NBA picks by walking the By Game listing backwards.")
+    parser = argparse.ArgumentParser(description="Backfill Action picks (NBA or NCAAB) by walking the By Game listing backwards.")
+    parser.add_argument("--sport", type=str, default="NBA", choices=["NBA", "NCAAB"], help="Sport to backfill (default: NBA).")
     parser.add_argument("--max-days", type=int, default=DEFAULT_MAX_DAYS, help="Number of day steps to traverse backward (default: 7).")
     parser.add_argument("--stop-date", type=str, default=None, help="Stop once listing day is older than this date (YYYY-MM-DD).")
     parser.add_argument("--max-games-per-day", type=int, default=None, help="Optional cap on games processed per day.")
@@ -158,13 +162,13 @@ def maybe_dismiss_popups(page) -> None:
             continue
 
 
-def collect_visible_game_hrefs(page) -> Tuple[List[str], List[str]]:
-    preferred = page.locator("a.game-picks-header[href*=\"/nba-game/\"]")
+def collect_visible_game_hrefs(page, game_slug: str = "nba-game") -> Tuple[List[str], List[str]]:
+    preferred = page.locator(f"a.game-picks-header[href*=\"/{game_slug}/\"]")
     locator = preferred
     try:
         preferred.first.wait_for(state="attached", timeout=10000)
     except PlaywrightTimeoutError:
-        locator = page.locator("a[href*=\"/nba-game/\"]")
+        locator = page.locator(f"a[href*=\"/{game_slug}/\"]")
         try:
             locator.first.wait_for(state="attached", timeout=10000)
         except PlaywrightTimeoutError:
@@ -188,14 +192,14 @@ def collect_visible_game_hrefs(page) -> Tuple[List[str], List[str]]:
     return visible_hrefs, all_hrefs
 
 
-def scrape_game_urls_for_current_day(page, debug: bool = False, day_label: Optional[str] = None) -> List[str]:
-    visible_hrefs, all_hrefs = collect_visible_game_hrefs(page)
+def scrape_game_urls_for_current_day(page, debug: bool = False, day_label: Optional[str] = None, game_pattern=None, game_slug: str = "nba-game") -> List[str]:
+    visible_hrefs, all_hrefs = collect_visible_game_hrefs(page, game_slug=game_slug)
 
     urls: List[str] = []
     for href in visible_hrefs:
         if not href:
             continue
-        if not re.search(r"/nba-game/[^/]+/\d+", href):
+        if not (game_pattern.search(href) if game_pattern else re.search(r"/nba-game/[^/]+/\d+", href)):
             continue
         full = href
         if href.startswith("/"):
@@ -216,7 +220,7 @@ def scrape_game_urls_for_current_day(page, debug: bool = False, day_label: Optio
 
 def find_previous_day_button_by_svg_path(page):
     try:
-        page.wait_for_selector("span.day-nav__display", state="visible", timeout=10000)
+        page.wait_for_selector("span.day-nav__display", state="visible", timeout=30000)
     except Exception:
         return None
 
@@ -292,6 +296,7 @@ def wait_for_listing_update(
     target_label: Optional[str],
     timeout_ms: int = 15000,
     debug: bool = False,
+    game_slug: str = "nba-game",
 ) -> Tuple[bool, List[str]]:
     target_md = parse_label_month_day(target_label)
     end_time = time.time() + timeout_ms / 1000.0
@@ -303,9 +308,9 @@ def wait_for_listing_update(
             if dt:
                 return (dt.month, dt.day)
         return None
-        
+
     while time.time() < end_time:
-        visible_hrefs, _ = collect_visible_game_hrefs(page)
+        visible_hrefs, _ = collect_visible_game_hrefs(page, game_slug=game_slug)
         last_visible = visible_hrefs
         new_fp = href_fingerprint(visible_hrefs)
         first_href = visible_hrefs[0] if visible_hrefs else None
@@ -337,9 +342,9 @@ def wait_for_listing_update(
     return False, last_visible
 
 
-def go_to_previous_day(page, current_label: Optional[str], debug: bool = False) -> bool:
+def go_to_previous_day(page, current_label: Optional[str], listing_url: str, debug: bool = False, game_slug: str = "nba-game") -> bool:
     prev_label = current_label or read_day_label(page)
-    prev_visible, _ = collect_visible_game_hrefs(page)
+    prev_visible, _ = collect_visible_game_hrefs(page, game_slug=game_slug)
     prev_fp = href_fingerprint(prev_visible)
     prev_first_href = prev_visible[0] if prev_visible else None
 
@@ -351,10 +356,10 @@ def go_to_previous_day(page, current_label: Optional[str], debug: bool = False) 
 
     def reload_listing():
         try:
-            page.goto(LISTING_URL, wait_until="domcontentloaded", timeout=30000)
+            page.goto(listing_url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(500)
         except Exception:
-            page.goto(LISTING_URL, wait_until="load", timeout=30000)
+            page.goto(listing_url, wait_until="load", timeout=30000)
             page.wait_for_timeout(800)
         maybe_dismiss_popups(page)
 
@@ -403,6 +408,7 @@ def go_to_previous_day(page, current_label: Optional[str], debug: bool = False) 
             target_label=new_label,
             timeout_ms=15000,
             debug=debug,
+            game_slug=game_slug,
         )
         return updated
 
@@ -454,6 +460,7 @@ def ingest_game(
     url: str,
     observed_at: datetime,
     stats: Dict[str, int],
+    sport: str = "NBA",
     debug: bool = False,
 ) -> Tuple[List[RawPickRecord], List[dict]]:
     last_html: Optional[str] = None
@@ -477,9 +484,9 @@ def ingest_game(
         raise RuntimeError(f"Failed to fetch game page after retries: {last_exc}")
 
     soup = BeautifulSoup(html, "html.parser")
-    away_team, home_team = parse_teams_from_page(soup)
+    away_team, home_team = parse_teams_from_page(soup, sport=sport)
     if not (away_team and home_team):
-        slug_away, slug_home = parse_teams_from_slug(url)
+        slug_away, slug_home = parse_teams_from_slug(url, sport=sport)
         away_team = away_team or slug_away
         home_team = home_team or slug_home
     if not (away_team and home_team):
@@ -501,7 +508,7 @@ def ingest_game(
     normalized: List[dict] = []
     for record in raw_records:
         record.event_start_time_utc = event_start_time_utc
-        norm = normalize_pick(record, home_team=home_team, away_team=away_team, stats=stats)
+        norm = normalize_pick(record, home_team=home_team, away_team=away_team, stats=stats, sport=sport)
         normalized.append(norm)
     if debug:
         preview = [r.raw_pick_text for r in raw_records[:3]]
@@ -511,6 +518,13 @@ def ingest_game(
 
 def main() -> None:
     args = parse_args()
+    sport = args.sport.upper()
+    sport_key = NBA_SPORT if sport == "NBA" else NCAAB_SPORT
+    listing_url = ACTION_LISTING_URLS[sport_key]
+    game_pattern = ACTION_GAME_PATTERNS[sport_key]
+    # Derive slug from pattern (e.g. "nba-game" or "ncaab-game")
+    game_slug = "ncaab-game" if sport == "NCAAB" else "nba-game"
+
     out_dir = Path(OUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -518,15 +532,17 @@ def main() -> None:
     if args.stop_date:
         stop_date = datetime.strptime(args.stop_date, "%Y-%m-%d").date()
 
-    state_path = out_dir / "action_backfill_state.json"
+    sport_lower = sport.lower()
+    state_path = out_dir / f"action_backfill_state_{sport_lower}.json"
     state = load_state(state_path)
 
-    raw_jsonl_path = out_dir / "raw_action_nba_backfill.jsonl"
-    normalized_jsonl_path = out_dir / "normalized_action_nba_backfill.jsonl"
-    summary_path = out_dir / "action_backfill_run_summary.json"
+    raw_jsonl_path = out_dir / f"raw_action_{sport_lower}_backfill.jsonl"
+    normalized_jsonl_path = out_dir / f"normalized_action_{sport_lower}_backfill.jsonl"
+    summary_path = out_dir / f"action_backfill_run_summary_{sport_lower}.json"
 
     observed_at = datetime.now(timezone.utc)
     summary = {
+        "sport": sport,
         "days_processed": 0,
         "games_discovered": 0,
         "games_ingested": 0,
@@ -552,12 +568,12 @@ def main() -> None:
         page = context.new_page()
         try:
             try:
-                page.goto(LISTING_URL, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(500)
+                page.goto(listing_url, wait_until="networkidle", timeout=45000)
+                page.wait_for_timeout(2000)
             except PlaywrightTimeoutError:
-                page.goto(LISTING_URL, wait_until="load", timeout=30000)
-                page.wait_for_timeout(1000)
-            page.wait_for_selector("span.day-nav__display", timeout=10000)
+                page.goto(listing_url, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(3000)
+            page.wait_for_selector("span.day-nav__display", timeout=30000)
             maybe_dismiss_popups(page)
         except Exception as exc:
             print(f"[ERROR] Could not load listing page: {exc}")
@@ -597,7 +613,7 @@ def main() -> None:
                     break
                 seen_day_labels.add(current_label)
                 try:
-                    day_game_urls = scrape_game_urls_for_current_day(page, debug=args.debug, day_label=current_label)
+                    day_game_urls = scrape_game_urls_for_current_day(page, debug=args.debug, day_label=current_label, game_pattern=game_pattern, game_slug=game_slug)
                 except PlaywrightTimeoutError:
                     day_game_urls = []
                 if args.max_games_per_day:
@@ -638,6 +654,7 @@ def main() -> None:
                             url=url,
                             observed_at=observed_at,
                             stats=stats,
+                            sport=sport,
                             debug=args.debug,
                         )
                         day_raw.extend(raw_records)
@@ -676,7 +693,7 @@ def main() -> None:
 
                 if day_idx + 1 >= args.max_days:
                     break
-                if not go_to_previous_day(page, current_label=current_label, debug=args.debug):
+                if not go_to_previous_day(page, current_label=current_label, listing_url=listing_url, debug=args.debug, game_slug=game_slug):
                     break
         except KeyboardInterrupt:
             print("[WARN] Interrupted by user; saving state and exiting.")

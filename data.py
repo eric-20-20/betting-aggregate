@@ -89,10 +89,12 @@ PROP_STAT_ALIASES_SEED: Dict[str, List[str]] = {
     "pts_reb_ast": [
         "pra",
         "pts reb ast",
+        "pts rebs ast",
         "pts rebs asts",
         "points rebounds assists",
         "points+rebounds+assists",
         "pts+rebs+asts",
+        "pts+rebs+ast",
     ],
     "pts_reb": [
         "pr",

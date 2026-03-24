@@ -13,7 +13,7 @@ export default function PickCardLocked({ pick }: { pick: LockedPick }) {
         : "bg-gray-800/40 border-gray-700/30"
     } border rounded-xl p-4 relative overflow-hidden`}>
       <div className="flex items-start gap-3">
-        <TierBadge tier={pick.tier} />
+        <TierBadge tier={pick.tier} confidenceScore={pick.confidence_score} />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline justify-between gap-2">

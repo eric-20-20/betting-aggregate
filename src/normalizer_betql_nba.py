@@ -525,7 +525,7 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
             side = selection
         if surface in {"betql_probet_spread", "betql_probet_total", "betql_sharp_spread", "betql_sharp_total"}:
             pct = raw.get("pro_pct") or 0
-            if pct < 5:
+            if pct < 10:
                 eligible, inelig_reason = False, "sharp_pct_below_threshold"
         if surface in {"betql_model_spread", "betql_model_total"}:
             rating = raw.get("rating_stars")

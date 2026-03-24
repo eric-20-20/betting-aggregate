@@ -1,151 +1,990 @@
 {
   "meta": {
-    "generated_at_utc": "2026-03-04T21:03:44.095490+00:00",
+    "generated_at_utc": "2026-03-18T20:11:18.722287+00:00",
     "date": "2025-11-17",
     "day_of_week": "Monday",
-    "total_signals": 132,
-    "scorable_signals": 34,
-    "excluded_count": 13,
-    "filtered_count": 11,
-    "exported_count": 10,
+    "total_signals": 189,
+    "scorable_signals": 56,
+    "excluded_count": 30,
+    "filtered_count": 9,
+    "exported_count": 16,
     "tier_counts": {
       "A": 0,
-      "B": 10,
-      "C": 1,
-      "D": 10
+      "B": 7,
+      "C": 9,
+      "D": 9
     }
   },
   "plays": [
     {
       "rank": 1,
       "tier": "B",
-      "wilson_score": 0.625,
-      "composite_score": 0.625,
+      "wilson_score": 0.6524,
+      "composite_score": 0.6524,
       "confidence": "medium",
+      "confidence_score": 100,
       "a_tier_eligible": false,
       "positive_dimensions": 2,
       "negative_dimensions": 0,
       "total_dimensions": 2,
       "signal": {
-        "signal_id": "1700c22fd4278957489f26f9f3a1dbd75080bebe417289e056c8a628bfb5012c",
-        "selection": "MIL",
-        "market_type": "spread",
-        "sources_combo": "action|dimers",
+        "signal_id": "ceee5829f1e4e5bc7d6b9c60a619a7c2efd6bedbd12be3b54c8627ffb708fa23",
+        "selection": "NYK",
+        "market_type": "moneyline",
+        "sources_combo": "oddstrader",
         "sources_present": [
-          "action",
-          "dimers"
+          "oddstrader"
         ],
-        "line": 7.0,
-        "score": 50,
-        "direction": null,
+        "line": 105.0,
+        "score": null,
+        "direction": "NYK",
         "atomic_stat": null,
-        "experts": [
-          "Buckets Podcast",
-          "Matt Moore",
-          "Scott Rickenbach"
-        ],
+        "experts": [],
         "best_odds": null,
-        "away_team": "MIL",
-        "home_team": "CLE",
-        "event_key": "NBA:2025:11:17:MIL@CLE",
+        "away_team": "MIA",
+        "home_team": "NYK",
+        "event_key": "NBA:2025:11:17:MIA@NYK",
         "day_key": "NBA:2025:11:17",
-        "line_min": 6.5,
-        "line_max": 7.5
+        "line_min": null,
+        "line_max": null,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.6,
-        "win_pct": 0.7647,
-        "n": 34,
-        "wins": 26,
-        "losses": 8,
-        "lookup_level": "combo_market",
-        "label": "action|dimers / spread"
+        "wilson_lower": 0.6124,
+        "win_pct": 0.7812,
+        "n": 32,
+        "wins": 25,
+        "losses": 7,
+        "lookup_level": "combo_market_direction",
+        "label": "oddstrader / moneyline / NYK"
       },
       "historical_record": {
-        "wins": 26,
-        "losses": 8,
-        "n": 34,
-        "win_pct": 0.7647,
-        "source": "combo_market",
-        "label": "action|dimers / spread"
+        "wins": 25,
+        "losses": 7,
+        "n": 32,
+        "win_pct": 0.7812,
+        "source": "combo_market_direction",
+        "label": "oddstrader / moneyline / NYK"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / moneyline",
+          "win_pct": 0.5106,
+          "n": 1512,
+          "wilson_lower": 0.4854
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "moneyline / other",
+          "win_pct": 0.542,
+          "n": 814,
+          "wilson_lower": 0.5075
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / moneyline",
+          "win_pct": 0.5106,
+          "n": 1512,
+          "wilson_lower": 0.4854
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "moneyline / other",
+          "win_pct": 0.542,
+          "n": 814,
+          "wilson_lower": 0.5075
+        }
+      ],
+      "summary": "78.1% win rate in 32 similar NYK moneyline picks (Wilson: 61.2%) [hot: +3% | line: +1.0%]",
+      "small_sample": false,
+      "recency_adjustment": 0.03,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.01,
+      "total_adjustment": 0.04,
+      "matched_pattern": {
+        "id": "oddstrader_ml_nyk",
+        "label": "oddstrader moneyline NYK",
+        "tier_eligible": "B",
+        "hist": {
+          "record": "22-5",
+          "win_pct": 0.815,
+          "n": 27
+        }
+      },
+      "recent_trend": {
+        "wins": 11,
+        "losses": 7,
+        "n": 18,
+        "win_pct": 0.6111,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "oddstrader / moneyline / all"
+      }
+    },
+    {
+      "rank": 2,
+      "tier": "B",
+      "wilson_score": 0.5197,
+      "composite_score": 0.5197,
+      "confidence": "high",
+      "confidence_score": 31,
+      "a_tier_eligible": false,
+      "positive_dimensions": 2,
+      "negative_dimensions": 0,
+      "total_dimensions": 2,
+      "signal": {
+        "signal_id": "7452627362c6b6a8d6f633ad1281f83e658c1ba1f520d96d59c4e6b1a94323c9",
+        "selection": "NYK",
+        "market_type": "spread",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 1.5,
+        "score": 10,
+        "direction": "team",
+        "atomic_stat": null,
+        "experts": [],
+        "best_odds": "-105",
+        "away_team": "NYK",
+        "home_team": "MIA",
+        "event_key": "NBA:2025:11:17:NYK@MIA",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 1.5,
+        "line_max": 1.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.5097,
+        "win_pct": 0.5461,
+        "n": 729,
+        "wins": 397,
+        "losses": 332,
+        "lookup_level": "combo_market_direction",
+        "label": "action / spread / TEAM"
+      },
+      "historical_record": {
+        "wins": 397,
+        "losses": 332,
+        "n": 729,
+        "win_pct": 0.5461,
+        "source": "combo_market_direction",
+        "label": "action / spread / TEAM"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "spread / 0-2.5",
+          "win_pct": 0.5116,
+          "n": 1037,
+          "wilson_lower": 0.4811
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "spread / 0-2.5",
+          "win_pct": 0.5116,
+          "n": 1037,
+          "wilson_lower": 0.4811
+        }
+      ],
+      "summary": "54.6% win rate in 729 similar TEAM spread picks (Wilson: 51.0%) [line: +1.0%]",
+      "small_sample": false,
+      "recency_adjustment": 0.0,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.01,
+      "total_adjustment": 0.01,
+      "matched_pattern": {
+        "id": "action_solo_spread",
+        "label": "action spread",
+        "tier_eligible": "B",
+        "hist": {
+          "record": "258-205",
+          "win_pct": 0.557,
+          "n": 465
+        }
+      },
+      "recent_trend": {
+        "wins": 6,
+        "losses": 6,
+        "n": 12,
+        "win_pct": 0.5,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / spread / all"
+      }
+    },
+    {
+      "rank": 3,
+      "tier": "B",
+      "wilson_score": 0.5197,
+      "composite_score": 0.5197,
+      "confidence": "high",
+      "confidence_score": 31,
+      "a_tier_eligible": false,
+      "positive_dimensions": 2,
+      "negative_dimensions": 0,
+      "total_dimensions": 2,
+      "signal": {
+        "signal_id": "a33303f85192203bdb5790448d358acd405b751708501121cd6d8fdfc9182235",
+        "selection": "DET",
+        "market_type": "spread",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": -8.5,
+        "score": 10,
+        "direction": "team",
+        "atomic_stat": null,
+        "experts": [
+          "Buckets Podcast"
+        ],
+        "best_odds": "-115",
+        "away_team": "IND",
+        "home_team": "DET",
+        "event_key": "NBA:2025:11:17:IND@DET",
+        "day_key": "NBA:2025:11:17",
+        "line_min": -8.5,
+        "line_max": -8.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.5097,
+        "win_pct": 0.5461,
+        "n": 729,
+        "wins": 397,
+        "losses": 332,
+        "lookup_level": "combo_market_direction",
+        "label": "action / spread / TEAM"
+      },
+      "historical_record": {
+        "wins": 397,
+        "losses": 332,
+        "n": 729,
+        "win_pct": 0.5461,
+        "source": "combo_market_direction",
+        "label": "action / spread / TEAM"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "spread / 6-9.5",
+          "win_pct": 0.5309,
+          "n": 1577,
+          "wilson_lower": 0.506
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "spread / 6-9.5",
+          "win_pct": 0.5309,
+          "n": 1577,
+          "wilson_lower": 0.506
+        }
+      ],
+      "summary": "54.6% win rate in 729 similar TEAM spread picks (Wilson: 51.0%) [line: +1.0%]",
+      "small_sample": false,
+      "recency_adjustment": 0.0,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.01,
+      "total_adjustment": 0.01,
+      "matched_pattern": {
+        "id": "action_solo_spread",
+        "label": "action spread",
+        "tier_eligible": "B",
+        "hist": {
+          "record": "258-205",
+          "win_pct": 0.557,
+          "n": 465
+        }
+      },
+      "recent_trend": {
+        "wins": 6,
+        "losses": 6,
+        "n": 12,
+        "win_pct": 0.5,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / spread / all"
+      }
+    },
+    {
+      "rank": 4,
+      "tier": "B",
+      "wilson_score": 0.5128,
+      "composite_score": 0.5128,
+      "confidence": "high",
+      "confidence_score": 28,
+      "a_tier_eligible": false,
+      "positive_dimensions": 0,
+      "negative_dimensions": 2,
+      "total_dimensions": 3,
+      "signal": {
+        "signal_id": "48eacab13798d9534801bf296469f8d579ae082904210f52ec01bf156cff24fe",
+        "selection": "NBA:ryan_kalkbrenner::assists::UNDER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 1.5,
+        "score": 10,
+        "direction": "UNDER",
+        "atomic_stat": "assists",
+        "experts": [
+          "Allan Lem"
+        ],
+        "best_odds": null,
+        "away_team": "CHA",
+        "home_team": "TOR",
+        "event_key": "NBA:2025:11:17:CHA@TOR",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 1.5,
+        "line_max": 1.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4828,
+        "win_pct": 0.5418,
+        "n": 276,
+        "wins": 149,
+        "losses": 127,
+        "lookup_level": "combo_market_stat",
+        "label": "action / player_prop / assists"
+      },
+      "historical_record": {
+        "wins": 149,
+        "losses": 127,
+        "n": 276,
+        "win_pct": 0.5418,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / assists"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "assists",
+          "win_pct": 0.5014,
+          "n": 2182,
+          "wilson_lower": 0.4804
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4839,
+          "n": 10527,
+          "wilson_lower": 0.4743
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "assists",
+          "win_pct": 0.5014,
+          "n": 2182,
+          "wilson_lower": 0.4804
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4839,
+          "n": 10527,
+          "wilson_lower": 0.4743
+        }
+      ],
+      "summary": "54.2% win rate in 276 similar assists player_prop picks (Wilson: 48.3%) [hot: +3%]",
+      "small_sample": false,
+      "recency_adjustment": 0.03,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.03,
+      "matched_pattern": {
+        "id": "action_props_assists_under",
+        "label": "action assists prop UNDER",
+        "tier_eligible": "B",
+        "hist": {
+          "record": "46-28",
+          "win_pct": 0.622,
+          "n": 74
+        }
+      },
+      "recent_trend": {
+        "wins": 4,
+        "losses": 2,
+        "n": 6,
+        "win_pct": 0.6667,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / assists"
+      }
+    },
+    {
+      "rank": 5,
+      "tier": "B",
+      "wilson_score": 0.5128,
+      "composite_score": 0.5128,
+      "confidence": "high",
+      "confidence_score": 28,
+      "a_tier_eligible": false,
+      "positive_dimensions": 0,
+      "negative_dimensions": 2,
+      "total_dimensions": 3,
+      "signal": {
+        "signal_id": "db3bf3dcabc12d3a8393bfa5dc6a984d767fe91f5612ac444b5f6d4d1de361da",
+        "selection": "NBA:r_holland::assists::UNDER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 2.5,
+        "score": 10,
+        "direction": "UNDER",
+        "atomic_stat": "assists",
+        "experts": [
+          "Allan Lem"
+        ],
+        "best_odds": null,
+        "away_team": "IND",
+        "home_team": "DET",
+        "event_key": "NBA:2025:11:17:IND@DET",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 2.5,
+        "line_max": 2.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4828,
+        "win_pct": 0.5418,
+        "n": 276,
+        "wins": 149,
+        "losses": 127,
+        "lookup_level": "combo_market_stat",
+        "label": "action / player_prop / assists"
+      },
+      "historical_record": {
+        "wins": 149,
+        "losses": 127,
+        "n": 276,
+        "win_pct": 0.5418,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / assists"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "assists",
+          "win_pct": 0.5014,
+          "n": 2182,
+          "wilson_lower": 0.4804
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4839,
+          "n": 10527,
+          "wilson_lower": 0.4743
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "assists",
+          "win_pct": 0.5014,
+          "n": 2182,
+          "wilson_lower": 0.4804
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4839,
+          "n": 10527,
+          "wilson_lower": 0.4743
+        }
+      ],
+      "summary": "54.2% win rate in 276 similar assists player_prop picks (Wilson: 48.3%) [hot: +3%]",
+      "small_sample": false,
+      "recency_adjustment": 0.03,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.03,
+      "matched_pattern": {
+        "id": "action_props_assists_under",
+        "label": "action assists prop UNDER",
+        "tier_eligible": "B",
+        "hist": {
+          "record": "46-28",
+          "win_pct": 0.622,
+          "n": 74
+        }
+      },
+      "recent_trend": {
+        "wins": 4,
+        "losses": 2,
+        "n": 6,
+        "win_pct": 0.6667,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / assists"
+      }
+    },
+    {
+      "rank": 6,
+      "tier": "B",
+      "wilson_score": 0.4936,
+      "composite_score": 0.4936,
+      "confidence": "high",
+      "confidence_score": 18,
+      "a_tier_eligible": false,
+      "positive_dimensions": 1,
+      "negative_dimensions": 2,
+      "total_dimensions": 3,
+      "signal": {
+        "signal_id": "c7fd9170c1d8c4f99abfb3585c788d334b6c53ec85b1edef3890b671de36b8b4",
+        "selection": "NBA:josh_hart::rebounds::OVER",
+        "market_type": "player_prop",
+        "sources_combo": "action|betql",
+        "sources_present": [
+          "action",
+          "betql"
+        ],
+        "line": 8.5,
+        "score": 65,
+        "direction": "OVER",
+        "atomic_stat": "rebounds",
+        "experts": [
+          "BetQL Model",
+          "💰🦡 Jake"
+        ],
+        "best_odds": -116,
+        "away_team": "NYK",
+        "home_team": "MIA",
+        "event_key": "NBA:2025:11:17:NYK@MIA",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 8.5,
+        "line_max": 8.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4636,
+        "win_pct": 0.5436,
+        "n": 151,
+        "wins": 81,
+        "losses": 70,
+        "lookup_level": "combo_market_stat",
+        "label": "action|betql / player_prop / rebounds"
+      },
+      "historical_record": {
+        "wins": 81,
+        "losses": 70,
+        "n": 151,
+        "win_pct": 0.5436,
+        "source": "combo_market_stat",
+        "label": "action|betql / player_prop / rebounds"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "2_source / player_prop",
+          "win_pct": 0.5141,
+          "n": 1430,
+          "wilson_lower": 0.4881
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "rebounds",
+          "win_pct": 0.4832,
+          "n": 3253,
+          "wilson_lower": 0.4661
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4839,
+          "n": 10527,
+          "wilson_lower": 0.4743
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "2_source / player_prop",
+          "win_pct": 0.5141,
+          "n": 1430,
+          "wilson_lower": 0.4881
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "rebounds",
+          "win_pct": 0.4832,
+          "n": 3253,
+          "wilson_lower": 0.4661
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4839,
+          "n": 10527,
+          "wilson_lower": 0.4743
+        }
+      ],
+      "summary": "54.4% win rate in 151 similar rebounds player_prop picks (Wilson: 46.4%) [hot: +3%]",
+      "small_sample": false,
+      "recency_adjustment": 0.03,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.03,
+      "recent_trend": {
+        "wins": 3,
+        "losses": 2,
+        "n": 5,
+        "win_pct": 0.6,
+        "window": 30,
+        "source": "combo_market_stat",
+        "label": "action|betql / player_prop / rebounds"
+      }
+    },
+    {
+      "rank": 7,
+      "tier": "B",
+      "wilson_score": 0.4857,
+      "composite_score": 0.4857,
+      "confidence": "high",
+      "confidence_score": 14,
+      "a_tier_eligible": false,
+      "positive_dimensions": 1,
+      "negative_dimensions": 1,
+      "total_dimensions": 2,
+      "signal": {
+        "signal_id": "5069f5b6083c8ed1de74d5fec8de556feb67abefb877639b948c964562b0cd04",
+        "selection": "DEN",
+        "market_type": "spread",
+        "sources_combo": "action|betql",
+        "sources_present": [
+          "action",
+          "betql"
+        ],
+        "line": -14.0,
+        "score": 10,
+        "direction": "team",
+        "atomic_stat": null,
+        "experts": [],
+        "best_odds": "-110",
+        "away_team": "CHI",
+        "home_team": "DEN",
+        "event_key": "NBA:2025:11:17:CHI@DEN",
+        "day_key": "NBA:2025:11:17",
+        "line_min": -14.0,
+        "line_max": -14.0,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4657,
+        "win_pct": 0.5038,
+        "n": 667,
+        "wins": 332,
+        "losses": 335,
+        "lookup_level": "combo_market_direction",
+        "label": "action|betql / spread / TEAM"
+      },
+      "historical_record": {
+        "wins": 332,
+        "losses": 335,
+        "n": 667,
+        "win_pct": 0.5038,
+        "source": "combo_market_direction",
+        "label": "action|betql / spread / TEAM"
       },
       "factors": [
         {
           "dimension": "consensus_market",
           "lookup_key": "2_source / spread",
-          "win_pct": 0.5155,
-          "n": 1005,
-          "wilson_lower": 0.4845
+          "win_pct": 0.5097,
+          "n": 1253,
+          "wilson_lower": 0.4819
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "spread / 6-9.5",
-          "win_pct": 0.5213,
-          "n": 1234,
-          "wilson_lower": 0.4933
+          "lookup_key": "spread / 10+",
+          "win_pct": 0.4809,
+          "n": 1248,
+          "wilson_lower": 0.453
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
           "lookup_key": "2_source / spread",
-          "win_pct": 0.5155,
-          "n": 1005,
-          "wilson_lower": 0.4845
+          "win_pct": 0.5097,
+          "n": 1253,
+          "wilson_lower": 0.4819
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "spread / 6-9.5",
-          "win_pct": 0.5213,
-          "n": 1234,
-          "wilson_lower": 0.4933
+          "lookup_key": "spread / 10+",
+          "win_pct": 0.4809,
+          "n": 1248,
+          "wilson_lower": 0.453
         }
       ],
-      "summary": "76.5% win rate in 34 similar spread picks (Wilson: 60.0%) [hot: +3% | analyst: -1.5% | line: +1.0%]",
+      "summary": "50.4% win rate in 667 similar TEAM spread picks (Wilson: 46.6%) [hot: +2%]",
       "small_sample": false,
-      "recency_adjustment": 0.03,
-      "expert_adjustment": -0.015,
+      "recency_adjustment": 0.02,
+      "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.01,
-      "total_adjustment": 0.025,
-      "expert_detail": {
-        "expert": "Matt Moore",
-        "win_pct": 0.4331,
-        "n": 129,
-        "adjustment": -0.015,
-        "role": "penalty"
-      },
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.02,
       "recent_trend": {
-        "wins": 5,
-        "losses": 0,
-        "n": 5,
-        "win_pct": 1.0,
-        "window": 30,
+        "wins": 4,
+        "losses": 3,
+        "n": 7,
+        "win_pct": 0.5714,
+        "window": 14,
         "source": "combo_market_stat",
-        "label": "action|dimers / spread / all"
+        "label": "action|betql / spread / all"
       }
     },
     {
-      "rank": 2,
-      "tier": "A",
-      "wilson_score": 0.5183,
-      "composite_score": 0.5183,
+      "rank": 8,
+      "tier": "C",
+      "wilson_score": 0.5128,
+      "composite_score": 0.5128,
       "confidence": "high",
+      "confidence_score": 28,
       "a_tier_eligible": false,
-      "positive_dimensions": 2,
+      "positive_dimensions": 0,
+      "negative_dimensions": 2,
+      "total_dimensions": 3,
+      "signal": {
+        "signal_id": "6a59a897434274c79ec8bd5bf6c947a98cee0ffc085ee966b37892a99cef04b9",
+        "selection": "NBA:landry_shamet::assists::OVER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 1.5,
+        "score": 10,
+        "direction": "OVER",
+        "atomic_stat": "assists",
+        "experts": [
+          "Matt DiLeo"
+        ],
+        "best_odds": null,
+        "away_team": "NYK",
+        "home_team": "MIA",
+        "event_key": "NBA:2025:11:17:NYK@MIA",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 1.5,
+        "line_max": 1.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4828,
+        "win_pct": 0.5418,
+        "n": 276,
+        "wins": 149,
+        "losses": 127,
+        "lookup_level": "combo_market_stat",
+        "label": "action / player_prop / assists"
+      },
+      "historical_record": {
+        "wins": 149,
+        "losses": 127,
+        "n": 276,
+        "win_pct": 0.5418,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / assists"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "assists",
+          "win_pct": 0.5014,
+          "n": 2182,
+          "wilson_lower": 0.4804
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4839,
+          "n": 10527,
+          "wilson_lower": 0.4743
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "assists",
+          "win_pct": 0.5014,
+          "n": 2182,
+          "wilson_lower": 0.4804
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4839,
+          "n": 10527,
+          "wilson_lower": 0.4743
+        }
+      ],
+      "summary": "54.2% win rate in 276 similar assists player_prop picks (Wilson: 48.3%) [hot: +3%]",
+      "small_sample": false,
+      "recency_adjustment": 0.03,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.03,
+      "recent_trend": {
+        "wins": 4,
+        "losses": 2,
+        "n": 6,
+        "win_pct": 0.6667,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / assists"
+      }
+    },
+    {
+      "rank": 9,
+      "tier": "C",
+      "wilson_score": 0.4976,
+      "composite_score": 0.4976,
+      "confidence": "high",
+      "confidence_score": 20,
+      "a_tier_eligible": false,
+      "positive_dimensions": 1,
       "negative_dimensions": 0,
       "total_dimensions": 2,
       "signal": {
         "signal_id": "303245c6a64364c4c3aeeaa8f85c3181bc4c979ccaab5f309d6723dafef9210d",
         "selection": "game_total",
         "market_type": "total",
-        "sources_combo": "action|betql|dimers|oddstrader",
+        "sources_combo": "action",
         "sources_present": [
-          "action",
-          "betql",
-          "dimers",
-          "oddstrader"
+          "action"
         ],
         "line": 225.5,
         "score": 10,
@@ -158,110 +997,805 @@
         "event_key": "NBA:2025:11:17:OKC@NOP",
         "day_key": "NBA:2025:11:17",
         "line_min": 225.5,
-        "line_max": 225.5
+        "line_max": 225.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
+        "wilson_lower": 0.4976,
+        "win_pct": 0.5515,
+        "n": 332,
+        "wins": 182,
+        "losses": 150,
         "lookup_level": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
+        "label": "action / total / UNDER"
       },
       "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
+        "wins": 182,
+        "losses": 150,
+        "n": 332,
+        "win_pct": 0.5515,
         "source": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
+        "label": "action / total / UNDER"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
         },
         {
           "dimension": "line_bucket",
           "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
+          "win_pct": 0.5108,
+          "n": 2239,
+          "wilson_lower": 0.49
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
         },
         {
           "dimension": "line_bucket",
           "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
+          "win_pct": 0.5108,
+          "n": 2239,
+          "wilson_lower": 0.49
         }
       ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%) [line: +1.0%]",
+      "summary": "55.1% win rate in 332 similar UNDER total picks (Wilson: 49.8%) [cold: -1% | line: +1.0%]",
+      "small_sample": false,
+      "recency_adjustment": -0.01,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.01,
+      "total_adjustment": 0.0,
+      "recent_trend": {
+        "wins": 6,
+        "losses": 8,
+        "n": 14,
+        "win_pct": 0.4286,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / total / all"
+      }
+    },
+    {
+      "rank": 10,
+      "tier": "C",
+      "wilson_score": 0.4876,
+      "composite_score": 0.4876,
+      "confidence": "high",
+      "confidence_score": 15,
+      "a_tier_eligible": false,
+      "positive_dimensions": 0,
+      "negative_dimensions": 0,
+      "total_dimensions": 2,
+      "signal": {
+        "signal_id": "1df5075de0e6c05d025e97eb056b4ace512428e3fe301236c5fbaf912f60f105",
+        "selection": "UNDER",
+        "market_type": "total",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 220.5,
+        "score": 50,
+        "direction": "UNDER",
+        "atomic_stat": null,
+        "experts": [
+          "The Pick Don",
+          "Wags Wins"
+        ],
+        "best_odds": null,
+        "away_team": "LAC",
+        "home_team": "PHI",
+        "event_key": "NBA:2025:11:17:LAC@PHI",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 220.5,
+        "line_max": 220.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4976,
+        "win_pct": 0.5515,
+        "n": 332,
+        "wins": 182,
+        "losses": 150,
+        "lookup_level": "combo_market_direction",
+        "label": "action / total / UNDER"
+      },
+      "historical_record": {
+        "wins": 182,
+        "losses": 150,
+        "n": 332,
+        "win_pct": 0.5515,
+        "source": "combo_market_direction",
+        "label": "action / total / UNDER"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "total / 215-225",
+          "win_pct": 0.5023,
+          "n": 1111,
+          "wilson_lower": 0.4728
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "total / 215-225",
+          "win_pct": 0.5023,
+          "n": 1111,
+          "wilson_lower": 0.4728
+        }
+      ],
+      "summary": "55.1% win rate in 332 similar UNDER total picks (Wilson: 49.8%) [cold: -1%]",
+      "small_sample": false,
+      "recency_adjustment": -0.01,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": -0.01,
+      "recent_trend": {
+        "wins": 6,
+        "losses": 8,
+        "n": 14,
+        "win_pct": 0.4286,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / total / all"
+      }
+    },
+    {
+      "rank": 11,
+      "tier": "C",
+      "wilson_score": 0.4876,
+      "composite_score": 0.4876,
+      "confidence": "high",
+      "confidence_score": 15,
+      "a_tier_eligible": false,
+      "positive_dimensions": 0,
+      "negative_dimensions": 0,
+      "total_dimensions": 2,
+      "signal": {
+        "signal_id": "176a9dd8b15d6606529685223ebe3a7f0e0fdc1085b5ecd83d152143a02501b2",
+        "selection": "UNDER",
+        "market_type": "total",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 235.5,
+        "score": 10,
+        "direction": "under",
+        "atomic_stat": null,
+        "experts": [],
+        "best_odds": "-110",
+        "away_team": "MIL",
+        "home_team": "CLE",
+        "event_key": "NBA:2025:11:17:MIL@CLE",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 235.5,
+        "line_max": 235.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4976,
+        "win_pct": 0.5515,
+        "n": 332,
+        "wins": 182,
+        "losses": 150,
+        "lookup_level": "combo_market_direction",
+        "label": "action / total / UNDER"
+      },
+      "historical_record": {
+        "wins": 182,
+        "losses": 150,
+        "n": 332,
+        "win_pct": 0.5515,
+        "source": "combo_market_direction",
+        "label": "action / total / UNDER"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "total / 235+",
+          "win_pct": 0.5004,
+          "n": 1211,
+          "wilson_lower": 0.4723
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "total / 235+",
+          "win_pct": 0.5004,
+          "n": 1211,
+          "wilson_lower": 0.4723
+        }
+      ],
+      "summary": "55.1% win rate in 332 similar UNDER total picks (Wilson: 49.8%) [cold: -1%]",
+      "small_sample": false,
+      "recency_adjustment": -0.01,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": -0.01,
+      "recent_trend": {
+        "wins": 6,
+        "losses": 8,
+        "n": 14,
+        "win_pct": 0.4286,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / total / all"
+      }
+    },
+    {
+      "rank": 12,
+      "tier": "C",
+      "wilson_score": 0.4726,
+      "composite_score": 0.4726,
+      "confidence": "high",
+      "confidence_score": 7,
+      "a_tier_eligible": false,
+      "positive_dimensions": 2,
+      "negative_dimensions": 1,
+      "total_dimensions": 3,
+      "signal": {
+        "signal_id": "4f4e485be1aea630f42ac98b6c1b50c2b3449414ae0009a84132fa83602eb3a7",
+        "selection": "NBA:vj_edgecombe::points::OVER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 14.5,
+        "score": 10,
+        "direction": "OVER",
+        "atomic_stat": "points",
+        "experts": [
+          "Markus Markets"
+        ],
+        "best_odds": null,
+        "away_team": "LAC",
+        "home_team": "PHI",
+        "event_key": "NBA:2025:11:17:LAC@PHI",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 14.5,
+        "line_max": 14.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4576,
+        "win_pct": 0.4864,
+        "n": 1145,
+        "wins": 556,
+        "losses": 589,
+        "lookup_level": "combo_market_stat",
+        "label": "action / player_prop / points"
+      },
+      "historical_record": {
+        "wins": 556,
+        "losses": 589,
+        "n": 1145,
+        "win_pct": 0.4864,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / points"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "points",
+          "win_pct": 0.51,
+          "n": 7952,
+          "wilson_lower": 0.499
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 11-20.5",
+          "win_pct": 0.5081,
+          "n": 5390,
+          "wilson_lower": 0.4947
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "points",
+          "win_pct": 0.51,
+          "n": 7952,
+          "wilson_lower": 0.499
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 11-20.5",
+          "win_pct": 0.5081,
+          "n": 5390,
+          "wilson_lower": 0.4947
+        }
+      ],
+      "summary": "48.6% win rate in 1145 similar points player_prop picks (Wilson: 45.8%) [analyst: +1.5%]",
+      "small_sample": false,
+      "recency_adjustment": 0.0,
+      "expert_adjustment": 0.015,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.015,
+      "expert_detail": {
+        "expert": "Markus Markets",
+        "win_pct": 0.5569,
+        "n": 167,
+        "adjustment": 0.015,
+        "role": "boost"
+      },
+      "recent_trend": {
+        "wins": 23,
+        "losses": 20,
+        "n": 43,
+        "win_pct": 0.5349,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / points"
+      }
+    },
+    {
+      "rank": 13,
+      "tier": "C",
+      "wilson_score": 0.4649,
+      "composite_score": 0.4649,
+      "confidence": "high",
+      "confidence_score": 3,
+      "a_tier_eligible": false,
+      "positive_dimensions": 1,
+      "negative_dimensions": 0,
+      "total_dimensions": 2,
+      "signal": {
+        "signal_id": "114964b285e06dc8cebc188727f5cbda26adf3d22673885fd022d02c3706193a",
+        "selection": "OVER",
+        "market_type": "total",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 230.5,
+        "score": 10,
+        "direction": "over",
+        "atomic_stat": null,
+        "experts": [],
+        "best_odds": "-105",
+        "away_team": "DAL",
+        "home_team": "MIN",
+        "event_key": "NBA:2025:11:17:DAL@MIN",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 230.5,
+        "line_max": 230.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4649,
+        "win_pct": 0.5226,
+        "n": 289,
+        "wins": 150,
+        "losses": 139,
+        "lookup_level": "combo_market_direction",
+        "label": "action / total / OVER"
+      },
+      "historical_record": {
+        "wins": 150,
+        "losses": 139,
+        "n": 289,
+        "win_pct": 0.5226,
+        "source": "combo_market_direction",
+        "label": "action / total / OVER"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "total / 225-235",
+          "win_pct": 0.5108,
+          "n": 2239,
+          "wilson_lower": 0.49
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "total / 225-235",
+          "win_pct": 0.5108,
+          "n": 2239,
+          "wilson_lower": 0.49
+        }
+      ],
+      "summary": "52.3% win rate in 289 similar OVER total picks (Wilson: 46.5%) [cold: -1% | line: +1.0%]",
+      "small_sample": false,
+      "recency_adjustment": -0.01,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.01,
+      "total_adjustment": 0.0,
+      "recent_trend": {
+        "wins": 6,
+        "losses": 8,
+        "n": 14,
+        "win_pct": 0.4286,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / total / all"
+      }
+    },
+    {
+      "rank": 14,
+      "tier": "C",
+      "wilson_score": 0.4576,
+      "composite_score": 0.4576,
+      "confidence": "high",
+      "confidence_score": 0,
+      "a_tier_eligible": true,
+      "positive_dimensions": 2,
+      "negative_dimensions": 1,
+      "total_dimensions": 3,
+      "signal": {
+        "signal_id": "634f0c864940fcdd98ea5c0e314a39e683a306626ca08ace1049e740752e97ec",
+        "selection": "NBA:paul_george::points::UNDER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 12.5,
+        "score": 10,
+        "direction": "UNDER",
+        "atomic_stat": "points",
+        "experts": [
+          "Kyle Murray"
+        ],
+        "best_odds": null,
+        "away_team": "LAC",
+        "home_team": "PHI",
+        "event_key": "NBA:2025:11:17:LAC@PHI",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 12.5,
+        "line_max": 12.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4576,
+        "win_pct": 0.4864,
+        "n": 1145,
+        "wins": 556,
+        "losses": 589,
+        "lookup_level": "combo_market_stat",
+        "label": "action / player_prop / points"
+      },
+      "historical_record": {
+        "wins": 556,
+        "losses": 589,
+        "n": 1145,
+        "win_pct": 0.4864,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / points"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "points",
+          "win_pct": 0.51,
+          "n": 7952,
+          "wilson_lower": 0.499
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 11-20.5",
+          "win_pct": 0.5081,
+          "n": 5390,
+          "wilson_lower": 0.4947
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "points",
+          "win_pct": 0.51,
+          "n": 7952,
+          "wilson_lower": 0.499
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 11-20.5",
+          "win_pct": 0.5081,
+          "n": 5390,
+          "wilson_lower": 0.4947
+        }
+      ],
+      "summary": "48.6% win rate in 1145 similar points player_prop picks (Wilson: 45.8%)",
       "small_sample": false,
       "recency_adjustment": 0.0,
       "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.01,
-      "total_adjustment": 0.01,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "action|betql|dimers|oddstrader / total / all"
-      },
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.0,
       "matched_pattern": {
-        "id": "four_source_total_under_any",
-        "label": "UNDER total (4+ sources)",
+        "id": "action_solo_props_under",
+        "label": "action player prop UNDER",
         "tier_eligible": "A",
         "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
+          "record": "399-257",
+          "win_pct": 0.608,
+          "n": 656
         }
+      },
+      "recent_trend": {
+        "wins": 23,
+        "losses": 20,
+        "n": 43,
+        "win_pct": 0.5349,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / points"
       }
     },
     {
-      "rank": 3,
-      "tier": "A",
-      "wilson_score": 0.5183,
-      "composite_score": 0.5183,
+      "rank": 15,
+      "tier": "C",
+      "wilson_score": 0.4576,
+      "composite_score": 0.4576,
       "confidence": "high",
+      "confidence_score": 0,
+      "a_tier_eligible": true,
+      "positive_dimensions": 1,
+      "negative_dimensions": 2,
+      "total_dimensions": 3,
+      "signal": {
+        "signal_id": "8c936379da134e7571d19fbee23c677765736139682eb349524a013874ff2d5e",
+        "selection": "NBA:james_harden::points::UNDER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 26.5,
+        "score": 10,
+        "direction": "UNDER",
+        "atomic_stat": "points",
+        "experts": [
+          "Sandy Plashkes"
+        ],
+        "best_odds": null,
+        "away_team": "LAC",
+        "home_team": "PHI",
+        "event_key": "NBA:2025:11:17:LAC@PHI",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 26.5,
+        "line_max": 26.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4576,
+        "win_pct": 0.4864,
+        "n": 1145,
+        "wins": 556,
+        "losses": 589,
+        "lookup_level": "combo_market_stat",
+        "label": "action / player_prop / points"
+      },
+      "historical_record": {
+        "wins": 556,
+        "losses": 589,
+        "n": 1145,
+        "win_pct": 0.4864,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / points"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "points",
+          "win_pct": 0.51,
+          "n": 7952,
+          "wilson_lower": 0.499
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 21-30.5",
+          "win_pct": 0.4904,
+          "n": 3030,
+          "wilson_lower": 0.4726
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "points",
+          "win_pct": 0.51,
+          "n": 7952,
+          "wilson_lower": 0.499
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "player_prop / 21-30.5",
+          "win_pct": 0.4904,
+          "n": 3030,
+          "wilson_lower": 0.4726
+        }
+      ],
+      "summary": "48.6% win rate in 1145 similar points player_prop picks (Wilson: 45.8%)",
+      "small_sample": false,
+      "recency_adjustment": 0.0,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.0,
+      "matched_pattern": {
+        "id": "action_solo_props_under",
+        "label": "action player prop UNDER",
+        "tier_eligible": "A",
+        "hist": {
+          "record": "399-257",
+          "win_pct": 0.608,
+          "n": 656
+        }
+      },
+      "recent_trend": {
+        "wins": 23,
+        "losses": 20,
+        "n": 43,
+        "win_pct": 0.5349,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "action / player_prop / points"
+      }
+    },
+    {
+      "rank": 16,
+      "tier": "C",
+      "wilson_score": 0.4576,
+      "composite_score": 0.4576,
+      "confidence": "high",
+      "confidence_score": 0,
       "a_tier_eligible": false,
       "positive_dimensions": 2,
-      "negative_dimensions": 0,
-      "total_dimensions": 2,
+      "negative_dimensions": 1,
+      "total_dimensions": 3,
       "signal": {
-        "signal_id": "7c00a141817339430f9caa071e6f0e847e6616144c028a2c5b3c9ca4dd97055e",
-        "selection": "UNDER",
-        "market_type": "total",
-        "sources_combo": "action|betql|dimers|oddstrader",
+        "signal_id": "360cb442664ff07622cc0de3273af22ac8a29b2c76b0c76c5ffe58e0b1ef281a",
+        "selection": null,
+        "market_type": "player_prop",
+        "sources_combo": "action",
         "sources_present": [
-          "action",
-          "betql",
-          "dimers",
-          "oddstrader"
+          "action"
         ],
-        "line": 232.5,
+        "line": 15.0,
         "score": null,
-        "direction": "UNDER",
-        "atomic_stat": null,
+        "direction": null,
+        "atomic_stat": "points",
         "experts": [],
         "best_odds": null,
         "away_team": "DAL",
@@ -269,280 +1803,77 @@
         "event_key": "NBA:2025:11:17:DAL@MIN",
         "day_key": "NBA:2025:11:17",
         "line_min": null,
-        "line_max": null
+        "line_max": null,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
-        "lookup_level": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
+        "wilson_lower": 0.4576,
+        "win_pct": 0.4864,
+        "n": 1145,
+        "wins": 556,
+        "losses": 589,
+        "lookup_level": "combo_market_stat",
+        "label": "action / player_prop / points"
       },
       "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
-        "source": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
-        }
-      ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%) [line: +1.0%]",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.01,
-      "total_adjustment": 0.01,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
+        "wins": 556,
+        "losses": 589,
+        "n": 1145,
+        "win_pct": 0.4864,
         "source": "combo_market_stat",
-        "label": "action|betql|dimers|oddstrader / total / all"
-      },
-      "matched_pattern": {
-        "id": "four_source_total_under_any",
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      }
-    },
-    {
-      "rank": 4,
-      "tier": "A",
-      "wilson_score": 0.5183,
-      "composite_score": 0.5183,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 2,
-      "negative_dimensions": 0,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "539ed6868b460e35071f21514ce31f9921fc5bbda5214e481286db691cf88692",
-        "selection": "UNDER",
-        "market_type": "total",
-        "sources_combo": "action|betql|dimers|oddstrader",
-        "sources_present": [
-          "action",
-          "betql",
-          "dimers",
-          "oddstrader"
-        ],
-        "line": 230.5,
-        "score": null,
-        "direction": "UNDER",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "IND",
-        "home_team": "DET",
-        "event_key": "NBA:2025:11:17:IND@DET",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
-        "lookup_level": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
-        "source": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
+        "label": "action / player_prop / points"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "points",
+          "win_pct": 0.51,
+          "n": 7952,
+          "wilson_lower": 0.499
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
+          "lookup_key": "player_prop / 11-20.5",
+          "win_pct": 0.5081,
+          "n": 5390,
+          "wilson_lower": 0.4947
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.488,
+          "n": 18612,
+          "wilson_lower": 0.4809
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "points",
+          "win_pct": 0.51,
+          "n": 7952,
+          "wilson_lower": 0.499
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
+          "lookup_key": "player_prop / 11-20.5",
+          "win_pct": 0.5081,
+          "n": 5390,
+          "wilson_lower": 0.4947
         }
       ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%) [line: +1.0%]",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.01,
-      "total_adjustment": 0.01,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "action|betql|dimers|oddstrader / total / all"
-      },
-      "matched_pattern": {
-        "id": "four_source_total_under_any",
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      }
-    },
-    {
-      "rank": 5,
-      "tier": "A",
-      "wilson_score": 0.5083,
-      "composite_score": 0.5083,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 1,
-      "negative_dimensions": 1,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "3d44f2a12107cc9607118d1f7d0e5759db5c7850dcc2d3b9a4ce25723c83385a",
-        "selection": "UNDER",
-        "market_type": "total",
-        "sources_combo": "action|betql|dimers|oddstrader",
-        "sources_present": [
-          "action",
-          "betql",
-          "dimers",
-          "oddstrader"
-        ],
-        "line": 244.5,
-        "score": null,
-        "direction": "UNDER",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "NYK",
-        "home_team": "MIA",
-        "event_key": "NBA:2025:11:17:NYK@MIA",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
-        "lookup_level": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
-        "source": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%)",
+      "summary": "48.6% win rate in 1145 similar points player_prop picks (Wilson: 45.8%)",
       "small_sample": false,
       "recency_adjustment": 0.0,
       "expert_adjustment": 0.0,
@@ -551,609 +1882,125 @@
       "line_bucket_adjustment": 0.0,
       "total_adjustment": 0.0,
       "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
+        "wins": 23,
+        "losses": 20,
+        "n": 43,
+        "win_pct": 0.5349,
+        "window": 14,
         "source": "combo_market_stat",
-        "label": "action|betql|dimers|oddstrader / total / all"
-      },
-      "matched_pattern": {
-        "id": "four_source_total_under_any",
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      }
-    },
-    {
-      "rank": 6,
-      "tier": "A",
-      "wilson_score": 0.5083,
-      "composite_score": 0.5083,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 1,
-      "negative_dimensions": 1,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "d8e5f736517eea6c3e141d0efd871a817d709f8e57fe85655b022c43dff71a3a",
-        "selection": "UNDER",
-        "market_type": "total",
-        "sources_combo": "action|betql|dimers|oddstrader",
-        "sources_present": [
-          "action",
-          "betql",
-          "dimers",
-          "oddstrader"
-        ],
-        "line": 240.0,
-        "score": null,
-        "direction": "UNDER",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "CHA",
-        "home_team": "TOR",
-        "event_key": "NBA:2025:11:17:CHA@TOR",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
-        "lookup_level": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
-        "source": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%)",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.0,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "action|betql|dimers|oddstrader / total / all"
-      },
-      "matched_pattern": {
-        "id": "four_source_total_under_any",
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      }
-    },
-    {
-      "rank": 7,
-      "tier": "A",
-      "wilson_score": 0.5083,
-      "composite_score": 0.5083,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 1,
-      "negative_dimensions": 1,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "c9c65b65db5b616171a4d5b5b7475b8591efe57b5a7915fe0b6e7bddfd7900db",
-        "selection": "game_total",
-        "market_type": "total",
-        "sources_combo": "action|betql|dimers|oddstrader",
-        "sources_present": [
-          "action",
-          "betql",
-          "dimers",
-          "oddstrader"
-        ],
-        "line": 241.5,
-        "score": null,
-        "direction": "under",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "DEN",
-        "home_team": "CHI",
-        "event_key": "NBA:2025:11:17:DEN@CHI",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
-        "lookup_level": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
-        "source": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%)",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.0,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "action|betql|dimers|oddstrader / total / all"
-      },
-      "matched_pattern": {
-        "id": "four_source_total_under_any",
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      }
-    },
-    {
-      "rank": 8,
-      "tier": "A",
-      "wilson_score": 0.5083,
-      "composite_score": 0.5083,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 1,
-      "negative_dimensions": 1,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "d700858d418652c0552f3168c186a502a0c117862ba216e7d75af54bddbc4aac",
-        "selection": "game_total",
-        "market_type": "total",
-        "sources_combo": "action|betql|dimers|oddstrader",
-        "sources_present": [
-          "action",
-          "betql",
-          "dimers",
-          "oddstrader"
-        ],
-        "line": 235.5,
-        "score": null,
-        "direction": "under",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "MIL",
-        "home_team": "CLE",
-        "event_key": "NBA:2025:11:17:MIL@CLE",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
-        "lookup_level": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
-        "source": "combo_market_direction",
-        "label": "action|betql|dimers|oddstrader / total / UNDER"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%)",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.0,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "action|betql|dimers|oddstrader / total / all"
-      },
-      "matched_pattern": {
-        "id": "four_source_total_under_any",
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      }
-    },
-    {
-      "rank": 9,
-      "tier": "B",
-      "wilson_score": 0.5041,
-      "composite_score": 0.5041,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 2,
-      "negative_dimensions": 0,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "07d19c851bbba32658569a38b766da6ede81087db84b9e68ea26eb27b5721681",
-        "selection": "DET",
-        "market_type": "spread",
-        "sources_combo": "action|oddstrader",
-        "sources_present": [
-          "action",
-          "oddstrader"
-        ],
-        "line": -8.0,
-        "score": null,
-        "direction": "DET",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "DET",
-        "home_team": "IND",
-        "event_key": "NBA:2025:11:17:DET@IND",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "primary_record": {
-        "wilson_lower": 0.5141,
-        "win_pct": 0.5946,
-        "n": 149,
-        "wins": 88,
-        "losses": 61,
-        "lookup_level": "combo_market",
-        "label": "action|oddstrader / spread"
-      },
-      "historical_record": {
-        "wins": 88,
-        "losses": 61,
-        "n": 149,
-        "win_pct": 0.5946,
-        "source": "combo_market",
-        "label": "action|oddstrader / spread"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "2_source / spread",
-          "win_pct": 0.5155,
-          "n": 1005,
-          "wilson_lower": 0.4845
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "spread / 6-9.5",
-          "win_pct": 0.5213,
-          "n": 1234,
-          "wilson_lower": 0.4933
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "2_source / spread",
-          "win_pct": 0.5155,
-          "n": 1005,
-          "wilson_lower": 0.4845
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "spread / 6-9.5",
-          "win_pct": 0.5213,
-          "n": 1234,
-          "wilson_lower": 0.4933
-        }
-      ],
-      "summary": "59.5% win rate in 149 similar spread picks (Wilson: 51.4%) [cold: -2% | line: +1.0%]",
-      "small_sample": false,
-      "recency_adjustment": -0.02,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.01,
-      "total_adjustment": -0.01,
-      "recent_trend": {
-        "wins": 3,
-        "losses": 8,
-        "n": 11,
-        "win_pct": 0.2727,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "action|oddstrader / spread / all"
-      },
-      "matched_pattern": {
-        "id": "action_oddstrader_spread",
-        "label": "action + oddstrader spread",
-        "tier_eligible": "B",
-        "hist": {
-          "record": "125-87",
-          "win_pct": 0.59,
-          "n": 212
-        }
-      }
-    },
-    {
-      "rank": 10,
-      "tier": "B",
-      "wilson_score": 0.4941,
-      "composite_score": 0.4941,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 2,
-      "negative_dimensions": 0,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "dc2530b17645a2ecc2cfeb818bb612c882e44c295ac20140e0d635de29fd8c65",
-        "selection": "NYK",
-        "market_type": "spread",
-        "sources_combo": "action|oddstrader",
-        "sources_present": [
-          "action",
-          "oddstrader"
-        ],
-        "line": 2.0,
-        "score": null,
-        "direction": "NYK",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "MIA",
-        "home_team": "NYK",
-        "event_key": "NBA:2025:11:17:MIA@NYK",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "primary_record": {
-        "wilson_lower": 0.5141,
-        "win_pct": 0.5946,
-        "n": 149,
-        "wins": 88,
-        "losses": 61,
-        "lookup_level": "combo_market",
-        "label": "action|oddstrader / spread"
-      },
-      "historical_record": {
-        "wins": 88,
-        "losses": 61,
-        "n": 149,
-        "win_pct": 0.5946,
-        "source": "combo_market",
-        "label": "action|oddstrader / spread"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "2_source / spread",
-          "win_pct": 0.5155,
-          "n": 1005,
-          "wilson_lower": 0.4845
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "spread / 0-2.5",
-          "win_pct": 0.5096,
-          "n": 790,
-          "wilson_lower": 0.4746
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "2_source / spread",
-          "win_pct": 0.5155,
-          "n": 1005,
-          "wilson_lower": 0.4845
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "spread / 0-2.5",
-          "win_pct": 0.5096,
-          "n": 790,
-          "wilson_lower": 0.4746
-        }
-      ],
-      "summary": "59.5% win rate in 149 similar spread picks (Wilson: 51.4%) [cold: -2%]",
-      "small_sample": false,
-      "recency_adjustment": -0.02,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.0,
-      "total_adjustment": -0.02,
-      "recent_trend": {
-        "wins": 3,
-        "losses": 8,
-        "n": 11,
-        "win_pct": 0.2727,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "action|oddstrader / spread / all"
-      },
-      "matched_pattern": {
-        "id": "action_oddstrader_spread",
-        "label": "action + oddstrader spread",
-        "tier_eligible": "B",
-        "hist": {
-          "record": "125-87",
-          "win_pct": 0.59,
-          "n": 212
-        }
+        "label": "action / player_prop / points"
       }
     }
   ],
   "filtered": [
     {
       "signal": {
-        "signal_id": "0bd12fad1315c978589084068bcd6c2362eea24cb3e79aca5b474b8bfcf6184b",
-        "selection": "MIA",
-        "market_type": "moneyline",
-        "sources_combo": "action|dimers",
+        "signal_id": "202e618a782a3434f3697f238866c12773e4836eb44f0f8821f7426f07ee97b5",
+        "selection": "NBA:ryan_kalkbrenner::points::OVER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
         "sources_present": [
-          "action",
-          "dimers"
+          "action"
         ],
-        "line": null,
-        "score": 35,
-        "direction": null,
-        "atomic_stat": null,
+        "line": 8.0,
+        "score": 38,
+        "direction": "OVER",
+        "atomic_stat": "points",
         "experts": [
-          "Bryan Fonseca",
+          "Cam Is Money",
+          "Joe Dellera",
           "Ryan Minion"
         ],
         "best_odds": null,
-        "away_team": "NYK",
-        "home_team": "MIA",
-        "event_key": "NBA:2025:11:17:NYK@MIA",
+        "away_team": "CHA",
+        "home_team": "TOR",
+        "event_key": "NBA:2025:11:17:CHA@TOR",
         "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
+        "line_min": 7.5,
+        "line_max": 15.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
       },
-      "wilson_score": 0.418,
-      "composite_score": 0.418,
+      "wilson_score": 0.4426,
+      "composite_score": 0.4426,
       "tier": "D",
-      "gate_reason": "low_wilson:0.418",
-      "summary": "64.7% win rate in 17 similar moneyline picks (Wilson: 41.3%) [hot: +3% | analyst: -1.5% | line: -1.0%]"
+      "gate_reason": "low_wilson:0.443",
+      "summary": "48.6% win rate in 1145 similar points player_prop picks (Wilson: 45.8%) [analyst: -1.5%]"
+    },
+    {
+      "signal": {
+        "signal_id": "2f7d6387f19bacdbdc5576658a7221b9b6ff84a47ae792570df28938861c1c79",
+        "selection": "NBA:josh_giddey::points::UNDER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 20.5,
+        "score": 22,
+        "direction": "UNDER",
+        "atomic_stat": "points",
+        "experts": [
+          "Matt DiLeo",
+          "Prop Bomb 🏝"
+        ],
+        "best_odds": null,
+        "away_team": "CHI",
+        "home_team": "DEN",
+        "event_key": "NBA:2025:11:17:CHI@DEN",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 20.5,
+        "line_max": 39.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "wilson_score": 0.4426,
+      "composite_score": 0.4426,
+      "tier": "D",
+      "gate_reason": "low_wilson:0.443",
+      "summary": "48.6% win rate in 1145 similar points player_prop picks (Wilson: 45.8%) [analyst: -1.5%]"
+    },
+    {
+      "signal": {
+        "signal_id": "d868176603b6c4ce064253b9c46ac9aeaacc63f93075f7ce4e0a53dc36fd7dbe",
+        "selection": "NBA:isaiah_stewart::reb_ast::OVER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 13.0,
+        "score": 19,
+        "direction": "OVER",
+        "atomic_stat": "rebounds",
+        "experts": [
+          "Kyle Murray",
+          "The Propfessor"
+        ],
+        "best_odds": null,
+        "away_team": "IND",
+        "home_team": "DET",
+        "event_key": "NBA:2025:11:17:IND@DET",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 8.5,
+        "line_max": 17.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "wilson_score": 0.4236,
+      "composite_score": 0.4236,
+      "tier": "D",
+      "gate_reason": "low_wilson:0.424",
+      "summary": "45.5% win rate in 244 similar rebounds player_prop picks (Wilson: 39.4%) [hot: +3%]"
     },
     {
       "signal": {
@@ -1179,166 +2026,126 @@
         "event_key": "NBA:2025:11:17:IND@DET",
         "day_key": "NBA:2025:11:17",
         "line_min": 24.5,
-        "line_max": 43.5
+        "line_max": 43.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
       },
-      "wilson_score": 0.4083,
-      "composite_score": 0.4083,
+      "wilson_score": 0.3912,
+      "composite_score": 0.3912,
       "tier": "D",
-      "gate_reason": "low_wilson:0.408",
-      "summary": "48.1% win rate in 107 similar points player_prop picks (Wilson: 38.8%) [hot: +3% | line: -1.0%]"
+      "gate_reason": "low_wilson:0.391",
+      "summary": "47.0% win rate in 502 similar points player_prop picks (Wilson: 42.6%) [cold: -2% | analyst: -1.5%]"
     },
     {
       "signal": {
-        "signal_id": "6cca28d5f728b74a46778e3e8157d3983ff0e85b3cc44ce67b53280ad1461d2a",
-        "selection": "NBA:julius_randle::rebounds::OVER",
+        "signal_id": "a5962eeaf66d28993e099d27e4eee68dd07d464cf929af6cc071f3324070c79b",
+        "selection": "NBA:derik_queen::points::UNDER",
+        "market_type": "player_prop",
+        "sources_combo": "action|betql",
+        "sources_present": [
+          "action",
+          "betql"
+        ],
+        "line": 13.5,
+        "score": 65,
+        "direction": "UNDER",
+        "atomic_stat": "points",
+        "experts": [
+          "BetQL Model",
+          "Cam Is Money"
+        ],
+        "best_odds": -109,
+        "away_team": "OKC",
+        "home_team": "NOP",
+        "event_key": "NBA:2025:11:17:OKC@NOP",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 13.5,
+        "line_max": 14.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "wilson_score": 0.4062,
+      "composite_score": 0.4062,
+      "tier": "D",
+      "gate_reason": "low_wilson:0.406",
+      "summary": "47.0% win rate in 502 similar points player_prop picks (Wilson: 42.6%) [cold: -2%]"
+    },
+    {
+      "signal": {
+        "signal_id": "209c1cec0d5a97306a3c66dc72e38da19877b1e7fdf80cc0d1b5812d55315c27",
+        "selection": "NBA:mitchell_robinson::rebounds::OVER",
+        "market_type": "player_prop",
+        "sources_combo": "action",
+        "sources_present": [
+          "action"
+        ],
+        "line": 8.5,
+        "score": 10,
+        "direction": "OVER",
+        "atomic_stat": "rebounds",
+        "experts": [
+          "Buckets Podcast"
+        ],
+        "best_odds": null,
+        "away_team": "NYK",
+        "home_team": "MIA",
+        "event_key": "NBA:2025:11:17:NYK@MIA",
+        "day_key": "NBA:2025:11:17",
+        "line_min": 8.5,
+        "line_max": 8.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
+      },
+      "wilson_score": 0.4236,
+      "composite_score": 0.4236,
+      "tier": "D",
+      "gate_reason": "low_wilson:0.424",
+      "summary": "45.5% win rate in 244 similar rebounds player_prop picks (Wilson: 39.4%) [hot: +3%]"
+    },
+    {
+      "signal": {
+        "signal_id": "62c135cb1394bf0d76f13a797cf9139b0ebdefeb7f75e59f6205247bbda41db4",
+        "selection": "NBA:m_bridges::assists::UNDER",
         "market_type": "player_prop",
         "sources_combo": "action|juicereel_sxebets",
         "sources_present": [
           "action",
           "juicereel_sxebets"
         ],
-        "line": 7.5,
-        "score": 58,
-        "direction": "OVER",
-        "atomic_stat": "rebounds",
-        "experts": [
-          "Joe Dellera",
-          "Ryan Minion",
-          "sXeBets"
-        ],
-        "best_odds": null,
-        "away_team": "MIN",
-        "home_team": "DAL",
-        "event_key": "NBA:2025:11:17:MIN@DAL",
-        "day_key": "NBA:2025:11:17",
-        "line_min": 7.5,
-        "line_max": 35.5
-      },
-      "wilson_score": 0.4179,
-      "composite_score": 0.4179,
-      "tier": "D",
-      "gate_reason": "low_wilson:0.418",
-      "summary": "65.0% win rate in 20 similar rebounds player_prop picks (Wilson: 43.3%) [analyst: -1.5%]"
-    },
-    {
-      "signal": {
-        "signal_id": "52c5c4aba8b3ef328a3fae50b3920bbb649c91bbf918902a821c690d9e199531",
-        "selection": "NBA:sam_merrill::points::UNDER",
-        "market_type": "player_prop",
-        "sources_combo": "action|juicereel_nukethebooks",
-        "sources_present": [
-          "action",
-          "juicereel_nukethebooks"
-        ],
-        "line": 11.5,
-        "score": 54,
+        "line": 3.5,
+        "score": 10,
         "direction": "UNDER",
-        "atomic_stat": "points",
+        "atomic_stat": "assists",
         "experts": [
-          "Prop Bomb \ud83c\udfdd",
-          "nukethebooks"
+          "Allan Lem"
         ],
         "best_odds": null,
-        "away_team": "CLE",
-        "home_team": "MIL",
-        "event_key": "NBA:2025:11:17:CLE@MIL",
+        "away_team": "CHA",
+        "home_team": "TOR",
+        "event_key": "NBA:2025:11:17:CHA@TOR",
         "day_key": "NBA:2025:11:17",
-        "line_min": 11.5,
-        "line_max": 13.5
+        "line_min": 3.5,
+        "line_max": 3.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
       },
-      "wilson_score": 0.4441,
-      "composite_score": 0.4441,
+      "wilson_score": 0.4279,
+      "composite_score": 0.4279,
       "tier": "D",
-      "gate_reason": "low_wilson:0.444",
-      "summary": "56.8% win rate in 37 similar picks picks (Wilson: 40.9%) [hot: +2% | analyst: +1.5%]"
-    },
-    {
-      "signal": {
-        "signal_id": "d9d531219706c6eb1a9d87396fe49585227d199dd5c3dedafdbb018b35345eee",
-        "selection": "IND",
-        "market_type": "spread",
-        "sources_combo": "action|betql|dimers",
-        "sources_present": [
-          "action",
-          "betql",
-          "dimers"
-        ],
-        "line": 7.5,
-        "score": null,
-        "direction": "IND",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "IND",
-        "home_team": "DET",
-        "event_key": "NBA:2025:11:17:IND@DET",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "wilson_score": 0.4098,
-      "composite_score": 0.4098,
-      "tier": "D",
-      "gate_reason": "low_wilson:0.410",
-      "summary": "53.6% win rate in 69 similar picks picks (Wilson: 42.0%) [cold: -2% | line: +1.0%]"
-    },
-    {
-      "signal": {
-        "signal_id": "bad4c194983496c2a62b9b885769d1b181e4a3cf458549e4ab91a7681ec3ba5e",
-        "selection": "DAL",
-        "market_type": "spread",
-        "sources_combo": "betql|dimers",
-        "sources_present": [
-          "betql",
-          "dimers"
-        ],
-        "line": 14.0,
-        "score": null,
-        "direction": "DAL",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "DAL",
-        "home_team": "MIN",
-        "event_key": "NBA:2025:11:17:DAL@MIN",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "wilson_score": 0.273,
-      "composite_score": 0.273,
-      "tier": "D",
-      "gate_reason": "low_wilson:0.273",
-      "summary": "43.6% win rate in 39 similar picks picks (Wilson: 29.3%) [cold: -1% | line: -1.0%]"
-    },
-    {
-      "signal": {
-        "signal_id": "616370db87f99ff8d96f0db80902ccdcdb1016398f9e2ba88e95edfa2b4344a3",
-        "selection": "LAC",
-        "market_type": "spread",
-        "sources_combo": "betql|dimers",
-        "sources_present": [
-          "betql",
-          "dimers"
-        ],
-        "line": 4.5,
-        "score": null,
-        "direction": "LAC",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "LAC",
-        "home_team": "PHI",
-        "event_key": "NBA:2025:11:17:LAC@PHI",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "wilson_score": 0.293,
-      "composite_score": 0.293,
-      "tier": "D",
-      "gate_reason": "low_wilson:0.293",
-      "summary": "43.6% win rate in 39 similar picks picks (Wilson: 29.3%) [cold: -1% | line: +1.0%]"
+      "gate_reason": "low_wilson:0.428",
+      "summary": "60.9% win rate in 23 similar UNDER player_prop picks (Wilson: 40.8%) [hot: +2%]"
     },
     {
       "signal": {
@@ -1361,100 +2168,51 @@
         "event_key": "NBA:2025:11:17:MIL@CLE",
         "day_key": "NBA:2025:11:17",
         "line_min": null,
-        "line_max": null
+        "line_max": null,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
       },
-      "wilson_score": 0.461,
-      "composite_score": 0.461,
-      "tier": "C",
-      "gate_reason": "below_tier_b:wilson=0.461",
-      "summary": "52.1% win rate in 393 similar picks picks (Wilson: 47.1%) [cold: -2% | line: +1.0%]"
-    },
-    {
-      "signal": {
-        "signal_id": "1b863be4f5a0947b7e6103f090af7cc18f912db2ca3801e4ffaea1e57a264d35",
-        "selection": "NOP",
-        "market_type": "spread",
-        "sources_combo": "betql|dimers|oddstrader",
-        "sources_present": [
-          "betql",
-          "dimers",
-          "oddstrader"
-        ],
-        "line": 18.5,
-        "score": null,
-        "direction": "NOP",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "OKC",
-        "home_team": "NOP",
-        "event_key": "NBA:2025:11:17:OKC@NOP",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "wilson_score": 0.434,
-      "composite_score": 0.434,
+      "wilson_score": 0.4155,
+      "composite_score": 0.4155,
       "tier": "D",
-      "gate_reason": "low_wilson:0.434",
-      "summary": "56.8% win rate in 89 similar picks picks (Wilson: 46.4%) [cold: -2% | line: -1.0%]"
+      "gate_reason": "low_wilson:0.415",
+      "summary": "55.2% win rate in 29 similar spread picks (Wilson: 37.5%) [hot: +3% | line: +1.0%]"
     },
     {
       "signal": {
-        "signal_id": "ea4f39eeebf896101707b29c9e7e2d4448b40aa9372a972428624329097540b0",
-        "selection": "CHI",
-        "market_type": "spread",
-        "sources_combo": "dimers|oddstrader",
-        "sources_present": [
-          "dimers",
-          "oddstrader"
-        ],
-        "line": 13.5,
-        "score": null,
-        "direction": "CHI",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "DEN",
-        "home_team": "CHI",
-        "event_key": "NBA:2025:11:17:DEN@CHI",
-        "day_key": "NBA:2025:11:17",
-        "line_min": null,
-        "line_max": null
-      },
-      "wilson_score": 0.4081,
-      "composite_score": 0.4081,
-      "tier": "D",
-      "gate_reason": "low_wilson:0.408",
-      "summary": "49.6% win rate in 282 similar spread picks (Wilson: 43.8%) [cold: -2% | line: -1.0%]"
-    },
-    {
-      "signal": {
-        "signal_id": "b7f79463e82a6945cb8b83a3db96fc6b3e7b376652b5b139d537107f52772758",
-        "selection": "NBA:sam_merrill::pts_ast::UNDER",
+        "signal_id": "0a3d2ffc0ca19e3a81a40300f9db66c5f59aabd47df32f08c2ee14d3440d8f8d",
+        "selection": null,
         "market_type": "player_prop",
-        "sources_combo": "juicereel_nukethebooks",
+        "sources_combo": "action",
         "sources_present": [
-          "juicereel_nukethebooks"
+          "action"
         ],
-        "line": 13.5,
+        "line": 10.0,
         "score": null,
-        "direction": "UNDER",
-        "atomic_stat": "pts_ast",
+        "direction": null,
+        "atomic_stat": "rebounds",
         "experts": [],
         "best_odds": null,
-        "away_team": "CLE",
-        "home_team": "MIL",
-        "event_key": "NBA:2025:11:17:CLE@MIL",
+        "away_team": "NYK",
+        "home_team": "MIA",
+        "event_key": "NBA:2025:11:17:NYK@MIA",
         "day_key": "NBA:2025:11:17",
         "line_min": null,
-        "line_max": null
+        "line_max": null,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": null,
+        "consensus_strength": null,
+        "game_time_et": null
       },
-      "wilson_score": 0.3003,
-      "composite_score": 0.3003,
+      "wilson_score": 0.4236,
+      "composite_score": 0.4236,
       "tier": "D",
-      "gate_reason": "low_wilson:0.300",
-      "summary": "48.0% win rate in 25 similar pts_ast player_prop picks (Wilson: 30.0%)"
+      "gate_reason": "low_wilson:0.424",
+      "summary": "45.5% win rate in 244 similar rebounds player_prop picks (Wilson: 39.4%) [hot: +3%]"
     }
   ]
 }

@@ -3,13 +3,15 @@
 Dimers.com historical data backfill script.
 
 Navigates through the Dimers schedule calendar to extract Best Bets data
-from historical NBA games. Only extracts bets with edge >= 2.0%.
+from historical NBA or NCAAB games. Only extracts bets with edge >= 2.0%.
 
 Usage:
     python scripts/backfill_dimers.py --start-date 2025-10-22 --end-date 2026-01-31 --debug
+    python scripts/backfill_dimers.py --sport NCAAB --start-date 2024-11-01 --end-date 2026-03-10
 
 Output:
-    - out/backfill_dimers_bets.jsonl (appends)
+    - out/backfill_dimers_nba_bets.jsonl   (NBA, appends)
+    - out/backfill_dimers_ncaab_bets.jsonl (NCAAB, appends)
 """
 
 from __future__ import annotations
@@ -38,8 +40,20 @@ from src.dimers_extractors import sha256_digest
 # Constants
 STORAGE_STATE = REPO_ROOT / "dimers_storage_state.json"
 OUT_DIR = REPO_ROOT / "out"
-OUTPUT_FILE = OUT_DIR / "backfill_dimers_bets.jsonl"
-SCHEDULE_URL = "https://www.dimers.com/bet-hub/nba/schedule"
+
+SCHEDULE_URLS = {
+    "NBA":   "https://www.dimers.com/bet-hub/nba/schedule",
+    "NCAAB": "https://www.dimers.com/bet-hub/cbb/schedule",
+}
+SCHEDULE_HREF_FILTERS = {
+    "NBA":   "/bet-hub/nba/schedule/",
+    "NCAAB": "/bet-hub/cbb/schedule/",
+}
+# Default output files per sport (used when --output not specified)
+OUTPUT_FILES = {
+    "NBA":   OUT_DIR / "backfill_dimers_nba_bets.jsonl",
+    "NCAAB": OUT_DIR / "backfill_dimers_ncaab_bets.jsonl",
+}
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -84,6 +98,7 @@ def extract_bets_from_game_page(
     page: Page,
     game_url: str,
     game_date: str,
+    sport: str = "NBA",
     debug: bool = False
 ) -> List[DimersBetRecord]:
     """
@@ -104,12 +119,14 @@ def extract_bets_from_game_page(
         matchup_match = re.search(r"(\w+)\s+vs\.?\s+(\w+)", title)
         matchup = matchup_match.group(0) if matchup_match else "Unknown"
 
-        # Check if this is an NBA game
-        is_nba = any(team in title.lower() for team in NBA_TEAMS)
-        if not is_nba:
-            if debug:
-                print(f"  Skipping non-NBA game: {title}")
-            return []
+        # For NBA: verify the page is an NBA game via team name filter
+        # For NCAAB: trust the schedule URL — all games are CBB
+        if sport == "NBA":
+            is_nba = any(team in title.lower() for team in NBA_TEAMS)
+            if not is_nba:
+                if debug:
+                    print(f"  Skipping non-NBA game: {title}")
+                return []
 
         # Click Best Bets tab
         best_bets_tab = page.locator('div.tab-option:has-text("Best Bets")')
@@ -286,7 +303,7 @@ def extract_bets_from_game_page(
             record = DimersBetRecord(
                 source_id="dimers",
                 source_surface="dimers_schedule_backfill",
-                sport="NBA",
+                sport=sport,
                 game_date=game_date,
                 game_url=game_url,
                 matchup=matchup,
@@ -314,16 +331,19 @@ def extract_bets_from_game_page(
 def get_game_urls_for_date(
     page: Page,
     target_date: datetime,
+    sport: str = "NBA",
     debug: bool = False
 ) -> List[str]:
     """
-    Navigate to a specific date and get all NBA game URLs.
+    Navigate to a specific date and get all game URLs for the given sport.
     """
     game_urls = []
+    schedule_url = SCHEDULE_URLS.get(sport, SCHEDULE_URLS["NBA"])
+    href_filter = SCHEDULE_HREF_FILTERS.get(sport, SCHEDULE_HREF_FILTERS["NBA"])
 
     try:
         # Go to schedule page
-        page.goto(SCHEDULE_URL, wait_until="networkidle", timeout=30000)
+        page.goto(schedule_url, wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(2000)
 
         # Open calendar by clicking date dropdown
@@ -420,25 +440,25 @@ def get_game_urls_for_date(
 
         page.wait_for_timeout(2000)
 
-        # Extract game URLs for NBA only
-        game_urls = page.evaluate("""
-            () => {
+        # Extract game URLs for the target sport
+        game_urls = page.evaluate(f"""
+            () => {{
                 const urls = [];
-                document.querySelectorAll('a[href*="/bet-hub/nba/schedule/"]').forEach(a => {
+                document.querySelectorAll('a[href*="{href_filter}"]').forEach(a => {{
                     const href = a.href;
                     // Only include actual game URLs (have underscores indicating game ID)
-                    if (href.includes('_') && !href.endsWith('/schedule')) {
-                        if (!urls.includes(href)) {
+                    if (href.includes('_') && !href.endsWith('/schedule')) {{
+                        if (!urls.includes(href)) {{
                             urls.push(href);
-                        }
-                    }
-                });
+                        }}
+                    }}
+                }});
                 return urls;
-            }
+            }}
         """)
 
         if debug:
-            print(f"  Found {len(game_urls)} NBA games for {target_date.strftime('%Y-%m-%d')}")
+            print(f"  Found {len(game_urls)} {sport} games for {target_date.strftime('%Y-%m-%d')}")
 
     except Exception as e:
         if debug:
@@ -472,9 +492,10 @@ def append_records(output_file: Path, records: List[DimersBetRecord]) -> None:
 def backfill_dimers(
     start_date: datetime,
     end_date: datetime,
+    sport: str = "NBA",
     debug: bool = False,
     skip_processed: bool = True,
-    output_file: Path = OUTPUT_FILE,
+    output_file: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """
     Main backfill function.
@@ -482,12 +503,15 @@ def backfill_dimers(
     Args:
         start_date: Start date for backfill
         end_date: End date for backfill
+        sport: Sport to backfill ("NBA" or "NCAAB")
         debug: Enable debug output
         skip_processed: Skip games already in output file
 
     Returns:
         Statistics dict
     """
+    if output_file is None:
+        output_file = OUTPUT_FILES.get(sport, OUTPUT_FILES["NBA"])
     if sync_playwright is None:
         raise RuntimeError("playwright not installed")
 
@@ -524,7 +548,7 @@ def backfill_dimers(
             print(f"\n[{date_str}] Processing...")
 
             # Get game URLs for this date
-            game_urls = get_game_urls_for_date(page, current_date, debug=debug)
+            game_urls = get_game_urls_for_date(page, current_date, sport=sport, debug=debug)
 
             if not game_urls:
                 print(f"  No games found")
@@ -545,7 +569,7 @@ def backfill_dimers(
 
                 # Extract bets from game page
                 records = extract_bets_from_game_page(
-                    page, game_url, date_str, debug=debug
+                    page, game_url, date_str, sport=sport, debug=debug
                 )
 
                 stats["games_processed"] += 1
@@ -564,7 +588,14 @@ def backfill_dimers(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Backfill Dimers historical bets")
+    parser = argparse.ArgumentParser(description="Backfill Dimers historical bets (NBA or NCAAB)")
+    parser.add_argument(
+        "--sport",
+        type=str,
+        default="NBA",
+        choices=["NBA", "NCAAB"],
+        help="Sport to backfill (default: NBA)",
+    )
     parser.add_argument(
         "--start-date",
         type=str,
@@ -591,17 +622,19 @@ def main():
         "--output",
         type=str,
         default=None,
-        help=f"Output file (default: {OUTPUT_FILE})",
+        help="Output file (default: out/backfill_dimers_{sport}_bets.jsonl)",
     )
     args = parser.parse_args()
+
+    sport = args.sport.upper()
 
     # Parse dates
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
     end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
 
-    output_file = Path(args.output) if args.output else OUTPUT_FILE
+    output_file = Path(args.output) if args.output else OUTPUT_FILES[sport]
 
-    print(f"Dimers Backfill")
+    print(f"Dimers Backfill ({sport})")
     print(f"===============")
     print(f"Date range: {args.start_date} to {args.end_date}")
     print(f"Min edge: {MIN_EDGE_PCT}%")
@@ -611,6 +644,7 @@ def main():
     stats = backfill_dimers(
         start_date=start_date,
         end_date=end_date,
+        sport=sport,
         debug=args.debug,
         skip_processed=not args.no_skip,
         output_file=output_file,

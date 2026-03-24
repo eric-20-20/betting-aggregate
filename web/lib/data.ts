@@ -208,7 +208,7 @@ export async function getAggregatedTimeline(tiers: string[] = ["A"]): Promise<Ti
         selection: sig.selection,
         market_type: sig.market_type,
         line: sig.line,
-        best_odds: sig.best_odds,
+        best_odds: (sig.expert_odds ?? sig.best_odds) as number | null,
         pattern_label: play.matched_pattern?.label
           ? sanitizePatternLabel(play.matched_pattern.label)
           : null,

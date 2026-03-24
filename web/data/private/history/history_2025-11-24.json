@@ -1,147 +1,248 @@
 {
   "meta": {
-    "generated_at_utc": "2026-03-04T21:03:44.588921+00:00",
+    "generated_at_utc": "2026-03-18T20:11:23.950961+00:00",
     "date": "2025-11-24",
     "day_of_week": "Monday",
-    "total_signals": 121,
-    "scorable_signals": 29,
-    "excluded_count": 5,
-    "filtered_count": 9,
-    "exported_count": 15,
+    "total_signals": 148,
+    "scorable_signals": 54,
+    "excluded_count": 16,
+    "filtered_count": 13,
+    "exported_count": 22,
     "tier_counts": {
       "A": 2,
-      "B": 13,
-      "C": 2,
-      "D": 7
+      "B": 8,
+      "C": 12,
+      "D": 13
     }
   },
   "plays": [
     {
       "rank": 1,
       "tier": "A",
-      "wilson_score": 0.5255,
-      "composite_score": 0.5255,
+      "wilson_score": 0.6346,
+      "composite_score": 0.6346,
       "confidence": "high",
+      "confidence_score": 92,
       "a_tier_eligible": true,
-      "positive_dimensions": 0,
-      "negative_dimensions": 3,
-      "total_dimensions": 3,
+      "positive_dimensions": 1,
+      "negative_dimensions": 1,
+      "total_dimensions": 2,
       "signal": {
-        "signal_id": "27866ad5749ccd452b2ac65f61f82126afc5eb14c4376243bf0a80194dbea0b0",
-        "selection": "NBA:tim_hardaway_jr::points::OVER",
-        "market_type": "player_prop",
+        "signal_id": "b0ee5168df816f4d4546c5f65a545ae6dae343dc0d722346f40020f7d342dc03",
+        "selection": "MIN",
+        "market_type": "spread",
         "line": 10.5,
-        "score": null,
-        "direction": "OVER",
-        "atomic_stat": "points",
+        "score": 10,
+        "direction": "MIN",
+        "atomic_stat": null,
         "experts": [],
         "best_odds": null,
-        "away_team": "MEM",
-        "home_team": "DEN",
-        "event_key": "NBA:2025:11:24:MEM@DEN",
+        "away_team": "MIN",
+        "home_team": "SAC",
+        "event_key": "NBA:2025:11:24:MIN@SAC",
         "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
+        "line_min": 10.5,
+        "line_max": 10.5,
+        "market_line": null,
+        "line_diff": null,
         "sources_count": 1,
-        "consensus_strength": "1_source"
+        "consensus_strength": "1_source",
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.5255,
-        "win_pct": 0.5804,
-        "n": 317,
-        "wins": 184,
-        "losses": 133,
-        "lookup_level": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / points"
+        "wilson_lower": 0.6046,
+        "win_pct": 0.7183,
+        "n": 73,
+        "wins": 51,
+        "losses": 22,
+        "lookup_level": "combo_market_direction",
+        "label": "1_source / spread / MIN"
       },
       "historical_record": {
-        "wins": 184,
-        "losses": 133,
-        "n": 317,
-        "win_pct": 0.5804,
-        "source": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / points"
+        "wins": 51,
+        "losses": 22,
+        "n": 73,
+        "win_pct": 0.7183,
+        "source": "combo_market_direction",
+        "label": "1_source / spread / MIN"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "1_source / player_prop",
-          "win_pct": 0.4809,
-          "n": 8473,
-          "wilson_lower": 0.4703
-        },
-        {
-          "dimension": "stat_type",
-          "lookup_key": "points",
-          "win_pct": 0.4919,
-          "n": 4610,
-          "wilson_lower": 0.4775
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "player_prop / 0-10.5",
-          "win_pct": 0.4876,
-          "n": 6058,
-          "wilson_lower": 0.475
+          "lookup_key": "spread / 10+",
+          "win_pct": 0.4809,
+          "n": 1248,
+          "wilson_lower": 0.453
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "1_source / player_prop",
-          "win_pct": 0.4809,
-          "n": 8473,
-          "wilson_lower": 0.4703
-        },
-        {
-          "dimension": "stat_type",
-          "lookup_key": "points",
-          "win_pct": 0.4919,
-          "n": 4610,
-          "wilson_lower": 0.4775
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "player_prop / 0-10.5",
-          "win_pct": 0.4876,
-          "n": 6058,
-          "wilson_lower": 0.475
+          "lookup_key": "spread / 10+",
+          "win_pct": 0.4809,
+          "n": 1248,
+          "wilson_lower": 0.453
         }
       ],
-      "summary": "58.0% win rate in 317 similar points player_prop picks (Wilson: 52.5%)",
+      "summary": "71.8% win rate in 73 similar MIN spread picks (Wilson: 60.5%) [hot: +3%]",
       "small_sample": false,
-      "recency_adjustment": 0.0,
+      "recency_adjustment": 0.03,
       "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
       "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.0,
+      "total_adjustment": 0.03,
       "matched_pattern": {
-        "label": "nukethebooks player prop OVER",
-        "tier_eligible": "B",
+        "label": "source spread MIN",
+        "tier_eligible": "A",
         "hist": {
-          "record": "235-187",
-          "win_pct": 0.557,
-          "n": 422
+          "record": "48-17",
+          "win_pct": 0.738,
+          "n": 67
         }
       },
       "recent_trend": {
-        "wins": 112,
-        "losses": 129,
-        "n": 241,
-        "win_pct": 0.4647,
-        "window": 30,
-        "source": "consensus_market_stat",
-        "label": "1_source / player_prop / points"
+        "wins": 6,
+        "losses": 4,
+        "n": 11,
+        "win_pct": 0.6,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "1_source / spread / all"
+      },
+      "result": "WIN"
+    },
+    {
+      "rank": 2,
+      "tier": "A",
+      "wilson_score": 0.5809,
+      "composite_score": 0.5809,
+      "confidence": "high",
+      "confidence_score": 64,
+      "a_tier_eligible": true,
+      "positive_dimensions": 1,
+      "negative_dimensions": 1,
+      "total_dimensions": 2,
+      "signal": {
+        "signal_id": "bb9ab22ce0a911c010d36c4015d5afff49bfe11b6677b98921d0c9c5a3350239",
+        "selection": "DET",
+        "market_type": "spread",
+        "line": 10.0,
+        "score": null,
+        "direction": "DET",
+        "atomic_stat": null,
+        "experts": [],
+        "best_odds": null,
+        "away_team": "DET",
+        "home_team": "IND",
+        "event_key": "NBA:2025:11:24:DET@IND",
+        "day_key": "NBA:2025:11:24",
+        "line_min": null,
+        "line_max": null,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": 1,
+        "consensus_strength": "1_source",
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.5509,
+        "win_pct": 0.6585,
+        "n": 82,
+        "wins": 54,
+        "losses": 28,
+        "lookup_level": "combo_market_direction",
+        "label": "1_source / spread / DET"
+      },
+      "historical_record": {
+        "wins": 54,
+        "losses": 28,
+        "n": 82,
+        "win_pct": 0.6585,
+        "source": "combo_market_direction",
+        "label": "1_source / spread / DET"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "spread / 10+",
+          "win_pct": 0.4809,
+          "n": 1248,
+          "wilson_lower": 0.453
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "spread / 10+",
+          "win_pct": 0.4809,
+          "n": 1248,
+          "wilson_lower": 0.453
+        }
+      ],
+      "summary": "65.8% win rate in 82 similar DET spread picks (Wilson: 55.1%) [hot: +3%]",
+      "small_sample": false,
+      "recency_adjustment": 0.03,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.03,
+      "matched_pattern": {
+        "label": "source spread DET",
+        "tier_eligible": "A",
+        "hist": {
+          "record": "51-26",
+          "win_pct": 0.662,
+          "n": 77
+        }
+      },
+      "recent_trend": {
+        "wins": 6,
+        "losses": 4,
+        "n": 11,
+        "win_pct": 0.6,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "1_source / spread / all"
       },
       "result": "WIN"
     },
     {
       "rank": 3,
-      "tier": "A",
-      "wilson_score": 0.5183,
-      "composite_score": 0.5183,
+      "tier": "B",
+      "wilson_score": 0.5799,
+      "composite_score": 0.5799,
       "confidence": "high",
+      "confidence_score": 63,
       "a_tier_eligible": false,
       "positive_dimensions": 2,
       "negative_dimensions": 0,
@@ -162,753 +263,300 @@
         "day_key": "NBA:2025:11:24",
         "line_min": 230.5,
         "line_max": 234.5,
-        "sources_count": 4,
-        "consensus_strength": "3+_source"
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": 2,
+        "consensus_strength": "2_source",
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
+        "wilson_lower": 0.5399,
+        "win_pct": 0.6178,
+        "n": 157,
         "wins": 97,
-        "losses": 69,
+        "losses": 60,
         "lookup_level": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
+        "label": "2_source / total / UNDER"
       },
       "historical_record": {
         "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
+        "losses": 60,
+        "n": 157,
+        "win_pct": 0.6178,
         "source": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
+        "label": "2_source / total / UNDER"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "2_source / total",
+          "win_pct": 0.5201,
+          "n": 674,
+          "wilson_lower": 0.4823
         },
         {
           "dimension": "line_bucket",
           "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
+          "win_pct": 0.5108,
+          "n": 2239,
+          "wilson_lower": 0.49
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "2_source / total",
+          "win_pct": 0.5201,
+          "n": 674,
+          "wilson_lower": 0.4823
         },
         {
           "dimension": "line_bucket",
           "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
+          "win_pct": 0.5108,
+          "n": 2239,
+          "wilson_lower": 0.49
         }
       ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%) [line: +1.0%]",
+      "summary": "61.8% win rate in 157 similar UNDER total picks (Wilson: 54.0%) [hot: +3% | line: +1.0%]",
       "small_sample": false,
-      "recency_adjustment": 0.0,
+      "recency_adjustment": 0.03,
       "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
       "line_bucket_adjustment": 0.01,
-      "total_adjustment": 0.01,
+      "total_adjustment": 0.04,
       "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
+        "wins": 4,
+        "losses": 2,
+        "n": 6,
+        "win_pct": 0.6667,
+        "window": 14,
         "source": "combo_market_stat",
-        "label": "3+_source / total / all"
-      },
-      "matched_pattern": {
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
+        "label": "2_source / total / all"
       },
       "result": "WIN"
     },
     {
       "rank": 4,
-      "tier": "A",
-      "wilson_score": 0.5183,
-      "composite_score": 0.5183,
+      "tier": "B",
+      "wilson_score": 0.5699,
+      "composite_score": 0.5699,
       "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 2,
-      "negative_dimensions": 0,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "d8e27a9922255af763356576ebb94be6c283e01515643b21ed332900a1731b25",
-        "selection": "UNDER",
-        "market_type": "total",
-        "line": 229.0,
-        "score": null,
-        "direction": "UNDER",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "NYK",
-        "home_team": "BKN",
-        "event_key": "NBA:2025:11:24:NYK@BKN",
-        "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
-        "sources_count": 4,
-        "consensus_strength": "3+_source"
-      },
-      "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
-        "lookup_level": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
-      },
-      "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
-        "source": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
-        }
-      ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%) [line: +1.0%]",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.01,
-      "total_adjustment": 0.01,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "3+_source / total / all"
-      },
-      "matched_pattern": {
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      },
-      "result": "WIN"
-    },
-    {
-      "rank": 5,
-      "tier": "A",
-      "wilson_score": 0.5183,
-      "composite_score": 0.5183,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 2,
-      "negative_dimensions": 0,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "d68b56d6d79a926a80a421dde949d847234173ccfee50ebd08620a36a87471bf",
-        "selection": "game_total",
-        "market_type": "total",
-        "line": 233.0,
-        "score": null,
-        "direction": "under",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "TOR",
-        "home_team": "CLE",
-        "event_key": "NBA:2025:11:24:TOR@CLE",
-        "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
-        "sources_count": 4,
-        "consensus_strength": "3+_source"
-      },
-      "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
-        "lookup_level": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
-      },
-      "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
-        "source": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
-        }
-      ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%) [line: +1.0%]",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.01,
-      "total_adjustment": 0.01,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "3+_source / total / all"
-      },
-      "matched_pattern": {
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      },
-      "result": "WIN"
-    },
-    {
-      "rank": 2,
-      "tier": "A",
-      "wilson_score": 0.5155,
-      "composite_score": 0.5155,
-      "confidence": "high",
-      "a_tier_eligible": true,
-      "positive_dimensions": 0,
-      "negative_dimensions": 3,
-      "total_dimensions": 3,
-      "signal": {
-        "signal_id": "bada8396326489890037319f872edd987aae78a29738b14ec83cc64ea791bf6a",
-        "selection": "NBA:keyonte_george::points::UNDER",
-        "market_type": "player_prop",
-        "line": 21.5,
-        "score": null,
-        "direction": "UNDER",
-        "atomic_stat": "points",
-        "experts": [],
-        "best_odds": null,
-        "away_team": "GSW",
-        "home_team": "UTA",
-        "event_key": "NBA:2025:11:24:GSW@UTA",
-        "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
-        "sources_count": 1,
-        "consensus_strength": "1_source"
-      },
-      "primary_record": {
-        "wilson_lower": 0.5255,
-        "win_pct": 0.5804,
-        "n": 317,
-        "wins": 184,
-        "losses": 133,
-        "lookup_level": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / points"
-      },
-      "historical_record": {
-        "wins": 184,
-        "losses": 133,
-        "n": 317,
-        "win_pct": 0.5804,
-        "source": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / points"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "1_source / player_prop",
-          "win_pct": 0.4809,
-          "n": 8473,
-          "wilson_lower": 0.4703
-        },
-        {
-          "dimension": "stat_type",
-          "lookup_key": "points",
-          "win_pct": 0.4919,
-          "n": 4610,
-          "wilson_lower": 0.4775
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "player_prop / 21-30.5",
-          "win_pct": 0.4763,
-          "n": 1882,
-          "wilson_lower": 0.4537
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "1_source / player_prop",
-          "win_pct": 0.4809,
-          "n": 8473,
-          "wilson_lower": 0.4703
-        },
-        {
-          "dimension": "stat_type",
-          "lookup_key": "points",
-          "win_pct": 0.4919,
-          "n": 4610,
-          "wilson_lower": 0.4775
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "player_prop / 21-30.5",
-          "win_pct": 0.4763,
-          "n": 1882,
-          "wilson_lower": 0.4537
-        }
-      ],
-      "summary": "58.0% win rate in 317 similar points player_prop picks (Wilson: 52.5%) [line: -1.0%]",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": -0.01,
-      "total_adjustment": -0.01,
-      "matched_pattern": {
-        "label": "nukethebooks player prop UNDER",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "188-122",
-          "win_pct": 0.606,
-          "n": 310
-        }
-      },
-      "recent_trend": {
-        "wins": 112,
-        "losses": 129,
-        "n": 241,
-        "win_pct": 0.4647,
-        "window": 30,
-        "source": "consensus_market_stat",
-        "label": "1_source / player_prop / points"
-      },
-      "result": "LOSS"
-    },
-    {
-      "rank": 7,
-      "tier": "A",
-      "wilson_score": 0.5083,
-      "composite_score": 0.5083,
-      "confidence": "high",
+      "confidence_score": 58,
       "a_tier_eligible": false,
       "positive_dimensions": 1,
-      "negative_dimensions": 1,
+      "negative_dimensions": 0,
       "total_dimensions": 2,
       "signal": {
         "signal_id": "2daf28811278b952c6c6c384a130d8adaa3fcef2053e4f33298ec1dacff4442b",
         "selection": "UNDER",
         "market_type": "total",
-        "line": 240.5,
-        "score": null,
-        "direction": "UNDER",
+        "line": 239.5,
+        "score": 10,
+        "direction": "under",
         "atomic_stat": null,
         "experts": [],
-        "best_odds": null,
+        "best_odds": "-110",
         "away_team": "DAL",
         "home_team": "MIA",
         "event_key": "NBA:2025:11:24:DAL@MIA",
         "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
-        "sources_count": 4,
-        "consensus_strength": "3+_source"
+        "line_min": 239.5,
+        "line_max": 239.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": 2,
+        "consensus_strength": "2_source",
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
+        "wilson_lower": 0.5399,
+        "win_pct": 0.6178,
+        "n": 157,
         "wins": 97,
-        "losses": 69,
+        "losses": 60,
         "lookup_level": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
+        "label": "2_source / total / UNDER"
       },
       "historical_record": {
         "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
+        "losses": 60,
+        "n": 157,
+        "win_pct": 0.6178,
         "source": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
+        "label": "2_source / total / UNDER"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "2_source / total",
+          "win_pct": 0.5201,
+          "n": 674,
+          "wilson_lower": 0.4823
         },
         {
           "dimension": "line_bucket",
           "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
+          "win_pct": 0.5004,
+          "n": 1211,
+          "wilson_lower": 0.4723
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "2_source / total",
+          "win_pct": 0.5201,
+          "n": 674,
+          "wilson_lower": 0.4823
         },
         {
           "dimension": "line_bucket",
           "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
+          "win_pct": 0.5004,
+          "n": 1211,
+          "wilson_lower": 0.4723
         }
       ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%)",
+      "summary": "61.8% win rate in 157 similar UNDER total picks (Wilson: 54.0%) [hot: +3%]",
       "small_sample": false,
-      "recency_adjustment": 0.0,
+      "recency_adjustment": 0.03,
       "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
       "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.0,
+      "total_adjustment": 0.03,
       "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
+        "wins": 4,
+        "losses": 2,
+        "n": 6,
+        "win_pct": 0.6667,
+        "window": 14,
         "source": "combo_market_stat",
-        "label": "3+_source / total / all"
-      },
-      "matched_pattern": {
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
+        "label": "2_source / total / all"
       },
       "result": "WIN"
     },
     {
-      "rank": 8,
-      "tier": "A",
-      "wilson_score": 0.5083,
-      "composite_score": 0.5083,
-      "confidence": "high",
+      "rank": 5,
+      "tier": "B",
+      "wilson_score": 0.5447,
+      "composite_score": 0.5447,
+      "confidence": "medium",
+      "confidence_score": 45,
       "a_tier_eligible": false,
-      "positive_dimensions": 1,
-      "negative_dimensions": 1,
+      "positive_dimensions": 2,
+      "negative_dimensions": 0,
       "total_dimensions": 2,
       "signal": {
-        "signal_id": "64196e25b198e565ffba28a360121aba14ef6baec16d21b5f16652160d6a30f7",
-        "selection": "UNDER",
-        "market_type": "total",
-        "line": 238.0,
-        "score": null,
-        "direction": "UNDER",
+        "signal_id": "51ddaeba1a14564b42c8694bcf0e1a4c6f117862cdf18ded2f03c0a586604a3c",
+        "selection": "NOP",
+        "market_type": "spread",
+        "line": 5.5,
+        "score": 10,
+        "direction": "team",
         "atomic_stat": null,
         "experts": [],
-        "best_odds": null,
-        "away_team": "MIN",
-        "home_team": "SAC",
-        "event_key": "NBA:2025:11:24:MIN@SAC",
-        "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
-        "sources_count": 4,
-        "consensus_strength": "3+_source"
-      },
-      "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
-        "lookup_level": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
-      },
-      "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
-        "source": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%)",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.0,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "3+_source / total / all"
-      },
-      "matched_pattern": {
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      },
-      "result": "WIN"
-    },
-    {
-      "rank": 9,
-      "tier": "A",
-      "wilson_score": 0.5083,
-      "composite_score": 0.5083,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 1,
-      "negative_dimensions": 1,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "b1416325e1485aa1869650ad9f730cc4230926f0e3178e7e91ee05834120c430",
-        "selection": "UNDER",
-        "market_type": "total",
-        "line": 244.5,
-        "score": null,
-        "direction": "UNDER",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
+        "best_odds": "-105",
         "away_team": "CHI",
         "home_team": "NOP",
         "event_key": "NBA:2025:11:24:CHI@NOP",
         "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
-        "sources_count": 4,
-        "consensus_strength": "3+_source"
+        "line_min": 5.5,
+        "line_max": 5.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": 2,
+        "consensus_strength": "2_source",
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
+        "wilson_lower": 0.5547,
+        "win_pct": 0.6939,
+        "n": 49,
+        "wins": 34,
+        "losses": 15,
         "lookup_level": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
+        "label": "2_source / spread / TEAM"
       },
       "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
+        "wins": 34,
+        "losses": 15,
+        "n": 49,
+        "win_pct": 0.6939,
         "source": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
+        "label": "2_source / spread / TEAM"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "2_source / spread",
+          "win_pct": 0.5097,
+          "n": 1253,
+          "wilson_lower": 0.4819
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
+          "lookup_key": "spread / 3-5.5",
+          "win_pct": 0.5293,
+          "n": 1535,
+          "wilson_lower": 0.5042
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "2_source / spread",
+          "win_pct": 0.5097,
+          "n": 1253,
+          "wilson_lower": 0.4819
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
+          "lookup_key": "spread / 3-5.5",
+          "win_pct": 0.5293,
+          "n": 1535,
+          "wilson_lower": 0.5042
         }
       ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%)",
+      "summary": "69.4% win rate in 49 similar TEAM spread picks (Wilson: 55.5%) [cold: -2% | line: +1.0%]",
       "small_sample": false,
-      "recency_adjustment": 0.0,
+      "recency_adjustment": -0.02,
       "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.0,
+      "line_bucket_adjustment": 0.01,
+      "total_adjustment": -0.01,
       "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
+        "wins": 2,
+        "losses": 4,
+        "n": 6,
+        "win_pct": 0.3333,
         "window": 30,
         "source": "combo_market_stat",
-        "label": "3+_source / total / all"
+        "label": "2_source / spread / all"
       },
-      "matched_pattern": {
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
-        "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
-        }
-      },
-      "result": "LOSS"
+      "result": "WIN"
     },
     {
-      "rank": 10,
-      "tier": "A",
-      "wilson_score": 0.5083,
-      "composite_score": 0.5083,
+      "rank": 6,
+      "tier": "B",
+      "wilson_score": 0.5344,
+      "composite_score": 0.5344,
       "confidence": "high",
+      "confidence_score": 39,
       "a_tier_eligible": false,
       "positive_dimensions": 1,
       "negative_dimensions": 1,
       "total_dimensions": 2,
       "signal": {
-        "signal_id": "1cd282d3e4e191e2af576e9266261c1a9f87b0641557358102b459997c63b9ec",
-        "selection": "UNDER",
-        "market_type": "total",
-        "line": 239.5,
+        "signal_id": "0350fb75b19f7a6135a56a1cb34e040a22a212c014e9a16afb887512f0155f38",
+        "selection": "GSW",
+        "market_type": "spread",
+        "line": -13.5,
         "score": null,
-        "direction": "UNDER",
+        "direction": "GSW",
         "atomic_stat": null,
         "experts": [],
         "best_odds": null,
@@ -918,226 +566,237 @@
         "day_key": "NBA:2025:11:24",
         "line_min": null,
         "line_max": null,
-        "sources_count": 4,
-        "consensus_strength": "3+_source"
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": 1,
+        "consensus_strength": "1_source",
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.5083,
-        "win_pct": 0.5843,
-        "n": 166,
-        "wins": 97,
-        "losses": 69,
+        "wilson_lower": 0.5044,
+        "win_pct": 0.6,
+        "n": 107,
+        "wins": 63,
+        "losses": 44,
         "lookup_level": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
+        "label": "1_source / spread / GSW"
       },
       "historical_record": {
-        "wins": 97,
-        "losses": 69,
-        "n": 166,
-        "win_pct": 0.5843,
+        "wins": 63,
+        "losses": 44,
+        "n": 107,
+        "win_pct": 0.6,
         "source": "combo_market_direction",
-        "label": "3+_source / total / UNDER"
+        "label": "1_source / spread / GSW"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
+          "lookup_key": "spread / 10+",
+          "win_pct": 0.4809,
+          "n": 1248,
+          "wilson_lower": 0.453
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / total",
-          "win_pct": 0.5369,
-          "n": 1442,
-          "wilson_lower": 0.511
+          "lookup_key": "1_source / spread",
+          "win_pct": 0.5195,
+          "n": 3792,
+          "wilson_lower": 0.5035
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
+          "lookup_key": "spread / 10+",
+          "win_pct": 0.4809,
+          "n": 1248,
+          "wilson_lower": 0.453
         }
       ],
-      "summary": "58.4% win rate in 166 similar UNDER total picks (Wilson: 50.8%)",
+      "summary": "60.0% win rate in 107 similar GSW spread picks (Wilson: 50.4%) [hot: +3%]",
       "small_sample": false,
-      "recency_adjustment": 0.0,
+      "recency_adjustment": 0.03,
       "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
       "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.0,
-      "recent_trend": {
-        "wins": 8,
-        "losses": 7,
-        "n": 15,
-        "win_pct": 0.5333,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "3+_source / total / all"
-      },
+      "total_adjustment": 0.03,
       "matched_pattern": {
-        "label": "UNDER total (4+ sources)",
-        "tier_eligible": "A",
+        "label": "source spread GSW",
+        "tier_eligible": "B",
         "hist": {
-          "record": "812-709",
-          "win_pct": 0.536,
-          "n": 1521
+          "record": "58-35",
+          "win_pct": 0.624,
+          "n": 95
         }
       },
-      "result": "LOSS"
-    },
-    {
-      "rank": 6,
-      "tier": "B",
-      "wilson_score": 0.5169,
-      "composite_score": 0.5169,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 1,
-      "negative_dimensions": 1,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "3322f4f064e99223bb72c7e641a5107e04f1185cd3053af0f1446bde30904e62",
-        "selection": "NOP",
-        "market_type": "moneyline",
-        "line": null,
-        "score": null,
-        "direction": "NOP",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "NOP",
-        "home_team": "CHI",
-        "event_key": "NBA:2025:11:24:NOP@CHI",
-        "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
-        "sources_count": 1,
-        "consensus_strength": "1_source"
-      },
-      "primary_record": {
-        "wilson_lower": 0.5269,
-        "win_pct": 0.5613,
-        "n": 807,
-        "wins": 453,
-        "losses": 354,
-        "lookup_level": "combo_overall",
-        "label": "juicereel_nukethebooks overall"
-      },
-      "historical_record": {
-        "wins": 453,
-        "losses": 354,
-        "n": 807,
-        "win_pct": 0.5613,
-        "source": "combo_overall",
-        "label": "juicereel_nukethebooks overall"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "1_source / moneyline",
-          "win_pct": 0.5198,
-          "n": 808,
-          "wilson_lower": 0.4853
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "moneyline / no_line",
-          "win_pct": 0.4797,
-          "n": 838,
-          "wilson_lower": 0.4461
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "1_source / moneyline",
-          "win_pct": 0.5198,
-          "n": 808,
-          "wilson_lower": 0.4853
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "moneyline / no_line",
-          "win_pct": 0.4797,
-          "n": 838,
-          "wilson_lower": 0.4461
-        }
-      ],
-      "summary": "56.1% win rate in 807 similar picks picks (Wilson: 52.7%) [line: -1.0%]",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": -0.01,
-      "total_adjustment": -0.01,
       "recent_trend": {
-        "wins": 30,
-        "losses": 29,
-        "n": 59,
-        "win_pct": 0.5085,
-        "window": 30,
-        "source": "consensus_market_stat",
-        "label": "1_source / moneyline / all"
+        "wins": 6,
+        "losses": 4,
+        "n": 11,
+        "win_pct": 0.6,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "1_source / spread / all"
       },
       "result": "WIN"
     },
     {
-      "rank": 11,
+      "rank": 7,
       "tier": "B",
-      "wilson_score": 0.5041,
-      "composite_score": 0.5041,
+      "wilson_score": 0.4957,
+      "composite_score": 0.4957,
       "confidence": "high",
+      "confidence_score": 19,
       "a_tier_eligible": false,
       "positive_dimensions": 2,
       "negative_dimensions": 0,
       "total_dimensions": 2,
       "signal": {
-        "signal_id": "eeda7bf2b3fac3f4c79a98d7e1184cf139df835a19fbd2fe93fd9d8ac3983a47",
-        "selection": "NOP",
+        "signal_id": "8af183b394da601ca88cb45cc8c0d4114bf6204faaa1d3929b669f8b20796cf4",
+        "selection": "HOU",
         "market_type": "spread",
-        "line": 5.5,
+        "line": -6.5,
+        "score": 10,
+        "direction": "team",
+        "atomic_stat": null,
+        "experts": [],
+        "best_odds": "-105",
+        "away_team": "HOU",
+        "home_team": "PHX",
+        "event_key": "NBA:2025:11:24:HOU@PHX",
+        "day_key": "NBA:2025:11:24",
+        "line_min": -6.5,
+        "line_max": -6.5,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": 2,
+        "consensus_strength": "2_source",
+        "game_time_et": null
+      },
+      "primary_record": {
+        "wilson_lower": 0.4657,
+        "win_pct": 0.5038,
+        "n": 667,
+        "wins": 332,
+        "losses": 335,
+        "lookup_level": "combo_market_direction",
+        "label": "2_source / spread / TEAM"
+      },
+      "historical_record": {
+        "wins": 332,
+        "losses": 335,
+        "n": 667,
+        "win_pct": 0.5038,
+        "source": "combo_market_direction",
+        "label": "2_source / spread / TEAM"
+      },
+      "factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "2_source / spread",
+          "win_pct": 0.5097,
+          "n": 1253,
+          "wilson_lower": 0.4819
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "spread / 6-9.5",
+          "win_pct": 0.5309,
+          "n": 1577,
+          "wilson_lower": 0.506
+        }
+      ],
+      "supporting_factors": [
+        {
+          "dimension": "consensus_market",
+          "lookup_key": "2_source / spread",
+          "win_pct": 0.5097,
+          "n": 1253,
+          "wilson_lower": 0.4819
+        },
+        {
+          "dimension": "line_bucket",
+          "lookup_key": "spread / 6-9.5",
+          "win_pct": 0.5309,
+          "n": 1577,
+          "wilson_lower": 0.506
+        }
+      ],
+      "summary": "50.4% win rate in 667 similar TEAM spread picks (Wilson: 46.6%) [hot: +2% | line: +1.0%]",
+      "small_sample": false,
+      "recency_adjustment": 0.02,
+      "expert_adjustment": 0.0,
+      "stat_adjustment": 0.0,
+      "day_adjustment": 0.0,
+      "line_bucket_adjustment": 0.01,
+      "total_adjustment": 0.03,
+      "recent_trend": {
+        "wins": 4,
+        "losses": 3,
+        "n": 7,
+        "win_pct": 0.5714,
+        "window": 14,
+        "source": "combo_market_stat",
+        "label": "2_source / spread / all"
+      },
+      "result": "WIN"
+    },
+    {
+      "rank": 8,
+      "tier": "B",
+      "wilson_score": 0.477,
+      "composite_score": 0.477,
+      "confidence": "high",
+      "confidence_score": 9,
+      "a_tier_eligible": false,
+      "positive_dimensions": 2,
+      "negative_dimensions": 0,
+      "total_dimensions": 2,
+      "signal": {
+        "signal_id": "9bd98b0f632e6e642c2d205944ae657cfa4412053570eb4a169f9f7717257944",
+        "selection": "MEM",
+        "market_type": "spread",
+        "line": 8.0,
         "score": null,
-        "direction": "NOP",
+        "direction": "MEM",
         "atomic_stat": null,
         "experts": [],
         "best_odds": null,
-        "away_team": "CHI",
-        "home_team": "NOP",
-        "event_key": "NBA:2025:11:24:CHI@NOP",
+        "away_team": "MEM",
+        "home_team": "DEN",
+        "event_key": "NBA:2025:11:24:MEM@DEN",
         "day_key": "NBA:2025:11:24",
         "line_min": null,
         "line_max": null,
+        "market_line": null,
+        "line_diff": null,
         "sources_count": 2,
-        "consensus_strength": "2_source"
+        "consensus_strength": "2_source",
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.5141,
-        "win_pct": 0.5946,
-        "n": 149,
-        "wins": 88,
-        "losses": 61,
+        "wilson_lower": 0.467,
+        "win_pct": 0.5965,
+        "n": 59,
+        "wins": 34,
+        "losses": 25,
         "lookup_level": "combo_market",
         "label": "2_source / spread"
       },
       "historical_record": {
-        "wins": 88,
-        "losses": 61,
-        "n": 149,
-        "win_pct": 0.5946,
+        "wins": 34,
+        "losses": 25,
+        "n": 59,
+        "win_pct": 0.5965,
         "source": "combo_market",
         "label": "2_source / spread"
       },
@@ -1145,141 +804,35 @@
         {
           "dimension": "consensus_market",
           "lookup_key": "2_source / spread",
-          "win_pct": 0.5155,
-          "n": 1005,
-          "wilson_lower": 0.4845
+          "win_pct": 0.5097,
+          "n": 1253,
+          "wilson_lower": 0.4819
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "spread / 3-5.5",
-          "win_pct": 0.5403,
-          "n": 1159,
-          "wilson_lower": 0.5113
+          "lookup_key": "spread / 6-9.5",
+          "win_pct": 0.5309,
+          "n": 1577,
+          "wilson_lower": 0.506
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
           "lookup_key": "2_source / spread",
-          "win_pct": 0.5155,
-          "n": 1005,
-          "wilson_lower": 0.4845
+          "win_pct": 0.5097,
+          "n": 1253,
+          "wilson_lower": 0.4819
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "spread / 3-5.5",
-          "win_pct": 0.5403,
-          "n": 1159,
-          "wilson_lower": 0.5113
+          "lookup_key": "spread / 6-9.5",
+          "win_pct": 0.5309,
+          "n": 1577,
+          "wilson_lower": 0.506
         }
       ],
-      "summary": "59.5% win rate in 149 similar spread picks (Wilson: 51.4%) [cold: -2% | line: +1.0%]",
-      "small_sample": false,
-      "recency_adjustment": -0.02,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.01,
-      "total_adjustment": -0.01,
-      "recent_trend": {
-        "wins": 3,
-        "losses": 8,
-        "n": 11,
-        "win_pct": 0.2727,
-        "window": 30,
-        "source": "combo_market_stat",
-        "label": "2_source / spread / all"
-      },
-      "matched_pattern": {
-        "label": "source + source spread",
-        "tier_eligible": "B",
-        "hist": {
-          "record": "125-87",
-          "win_pct": 0.59,
-          "n": 212
-        }
-      },
-      "result": "WIN"
-    },
-    {
-      "rank": 12,
-      "tier": "B",
-      "wilson_score": 0.4983,
-      "composite_score": 0.4983,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 2,
-      "negative_dimensions": 0,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "16420476f6828051a33360ad3b9105de6a9623718cbbff42faba5a064eccacb3",
-        "selection": "OVER",
-        "market_type": "total",
-        "line": 231.5,
-        "score": null,
-        "direction": "OVER",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "CLE",
-        "home_team": "TOR",
-        "event_key": "NBA:2025:11:24:CLE@TOR",
-        "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
-        "sources_count": 2,
-        "consensus_strength": "2_source"
-      },
-      "primary_record": {
-        "wilson_lower": 0.4883,
-        "win_pct": 0.5242,
-        "n": 748,
-        "wins": 390,
-        "losses": 358,
-        "lookup_level": "combo_overall",
-        "label": "2_source overall"
-      },
-      "historical_record": {
-        "wins": 390,
-        "losses": 358,
-        "n": 748,
-        "win_pct": 0.5242,
-        "source": "combo_overall",
-        "label": "2_source overall"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "2_source / total",
-          "win_pct": 0.5366,
-          "n": 372,
-          "wilson_lower": 0.4856
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "2_source / total",
-          "win_pct": 0.5366,
-          "n": 372,
-          "wilson_lower": 0.4856
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 225-235",
-          "win_pct": 0.5121,
-          "n": 1995,
-          "wilson_lower": 0.4901
-        }
-      ],
-      "summary": "52.4% win rate in 748 similar picks picks (Wilson: 48.8%) [line: +1.0%]",
+      "summary": "59.7% win rate in 59 similar spread picks (Wilson: 46.7%) [line: +1.0%]",
       "small_sample": false,
       "recency_adjustment": 0.0,
       "expert_adjustment": 0.0,
@@ -1288,311 +841,240 @@
       "line_bucket_adjustment": 0.01,
       "total_adjustment": 0.01,
       "recent_trend": {
-        "wins": 5,
-        "losses": 5,
-        "n": 10,
-        "win_pct": 0.5,
-        "window": 30,
-        "source": "combo_overall",
-        "label": "2_source overall"
-      },
-      "result": "LOSS"
-    },
-    {
-      "rank": 13,
-      "tier": "B",
-      "wilson_score": 0.4883,
-      "composite_score": 0.4883,
-      "confidence": "high",
-      "a_tier_eligible": false,
-      "positive_dimensions": 1,
-      "negative_dimensions": 1,
-      "total_dimensions": 2,
-      "signal": {
-        "signal_id": "4a723cd15058a07c7b8b91e355c75b05857c6cde941c52f7be8f8e5403f0737e",
-        "selection": "OVER",
-        "market_type": "total",
-        "line": 236.5,
-        "score": null,
-        "direction": "OVER",
-        "atomic_stat": null,
-        "experts": [],
-        "best_odds": null,
-        "away_team": "DET",
-        "home_team": "IND",
-        "event_key": "NBA:2025:11:24:DET@IND",
-        "day_key": "NBA:2025:11:24",
-        "line_min": null,
-        "line_max": null,
-        "sources_count": 2,
-        "consensus_strength": "2_source"
-      },
-      "primary_record": {
-        "wilson_lower": 0.4883,
-        "win_pct": 0.5242,
-        "n": 748,
-        "wins": 390,
-        "losses": 358,
-        "lookup_level": "combo_overall",
-        "label": "2_source overall"
-      },
-      "historical_record": {
-        "wins": 390,
-        "losses": 358,
-        "n": 748,
-        "win_pct": 0.5242,
-        "source": "combo_overall",
-        "label": "2_source overall"
-      },
-      "factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "2_source / total",
-          "win_pct": 0.5366,
-          "n": 372,
-          "wilson_lower": 0.4856
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "supporting_factors": [
-        {
-          "dimension": "consensus_market",
-          "lookup_key": "2_source / total",
-          "win_pct": 0.5366,
-          "n": 372,
-          "wilson_lower": 0.4856
-        },
-        {
-          "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
-        }
-      ],
-      "summary": "52.4% win rate in 748 similar picks picks (Wilson: 48.8%)",
-      "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": 0.0,
-      "stat_adjustment": 0.0,
-      "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.0,
-      "recent_trend": {
-        "wins": 5,
-        "losses": 5,
-        "n": 10,
-        "win_pct": 0.5,
-        "window": 30,
-        "source": "combo_overall",
-        "label": "2_source overall"
+        "wins": 46,
+        "losses": 45,
+        "n": 92,
+        "win_pct": 0.5055,
+        "window": 14,
+        "source": "consensus_market_stat",
+        "label": "2_source / spread / all"
       },
       "result": "WIN"
     },
     {
-      "rank": 14,
+      "rank": 9,
       "tier": "B",
-      "wilson_score": 0.4883,
-      "composite_score": 0.4883,
+      "wilson_score": 0.4762,
+      "composite_score": 0.4762,
       "confidence": "high",
+      "confidence_score": 9,
       "a_tier_eligible": false,
       "positive_dimensions": 1,
       "negative_dimensions": 0,
       "total_dimensions": 2,
       "signal": {
-        "signal_id": "39ffddf22053b93443c7a7771b70e5a93b86825f0efbad79bf8c7b53e0938c5d",
-        "selection": "OVER",
+        "signal_id": "4ced8a8080a3f407291c6dee57fdd022c32d1fbf0f83dc61a3ad864c10b99cf7",
+        "selection": null,
         "market_type": "total",
-        "line": 222.5,
+        "line": null,
         "score": null,
-        "direction": "OVER",
+        "direction": null,
         "atomic_stat": null,
         "experts": [],
         "best_odds": null,
-        "away_team": "HOU",
-        "home_team": "PHX",
-        "event_key": "NBA:2025:11:24:HOU@PHX",
+        "away_team": "PHX",
+        "home_team": "HOU",
+        "event_key": "NBA:2025:11:24:PHX@HOU",
         "day_key": "NBA:2025:11:24",
         "line_min": null,
         "line_max": null,
-        "sources_count": 2,
-        "consensus_strength": "2_source"
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": 1,
+        "consensus_strength": "1_source",
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.4883,
-        "win_pct": 0.5242,
-        "n": 748,
-        "wins": 390,
-        "losses": 358,
-        "lookup_level": "combo_overall",
-        "label": "2_source overall"
+        "wilson_lower": 0.4762,
+        "win_pct": 0.5469,
+        "n": 194,
+        "wins": 105,
+        "losses": 89,
+        "lookup_level": "combo_market_direction",
+        "label": "juicereel_unitvacuum / total / unknown"
       },
       "historical_record": {
-        "wins": 390,
-        "losses": 358,
-        "n": 748,
-        "win_pct": 0.5242,
-        "source": "combo_overall",
-        "label": "2_source overall"
+        "wins": 105,
+        "losses": 89,
+        "n": 194,
+        "win_pct": 0.5469,
+        "source": "combo_market_direction",
+        "label": "juicereel_unitvacuum / total / unknown"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "2_source / total",
-          "win_pct": 0.5366,
-          "n": 372,
-          "wilson_lower": 0.4856
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 215-225",
-          "win_pct": 0.4967,
-          "n": 930,
-          "wilson_lower": 0.4645
+          "lookup_key": "total / no_line",
+          "win_pct": 0.5873,
+          "n": 64,
+          "wilson_lower": 0.4642
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "2_source / total",
-          "win_pct": 0.5366,
-          "n": 372,
-          "wilson_lower": 0.4856
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 215-225",
-          "win_pct": 0.4967,
-          "n": 930,
-          "wilson_lower": 0.4645
+          "lookup_key": "total / no_line",
+          "win_pct": 0.5873,
+          "n": 64,
+          "wilson_lower": 0.4642
         }
       ],
-      "summary": "52.4% win rate in 748 similar picks picks (Wilson: 48.8%)",
+      "summary": "54.7% win rate in 194 similar unknown total picks (Wilson: 47.6%) [cold: -1% | line: +1.0%]",
       "small_sample": false,
-      "recency_adjustment": 0.0,
+      "recency_adjustment": -0.01,
       "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.0,
+      "line_bucket_adjustment": 0.01,
       "total_adjustment": 0.0,
-      "recent_trend": {
-        "wins": 5,
-        "losses": 5,
-        "n": 10,
-        "win_pct": 0.5,
-        "window": 30,
-        "source": "combo_overall",
-        "label": "2_source overall"
+      "matched_pattern": {
+        "label": "unitvacuum total",
+        "tier_eligible": "B",
+        "hist": {
+          "record": "80-60",
+          "win_pct": 0.571,
+          "n": 140
+        }
       },
-      "result": "LOSS"
+      "recent_trend": {
+        "wins": 4,
+        "losses": 5,
+        "n": 9,
+        "win_pct": 0.4444,
+        "window": 30,
+        "source": "combo_market_stat",
+        "label": "juicereel_unitvacuum / total / all"
+      },
+      "result": "WIN"
     },
     {
-      "rank": 15,
+      "rank": 10,
       "tier": "B",
-      "wilson_score": 0.4883,
-      "composite_score": 0.4883,
+      "wilson_score": 0.4762,
+      "composite_score": 0.4762,
       "confidence": "high",
+      "confidence_score": 9,
       "a_tier_eligible": false,
       "positive_dimensions": 1,
-      "negative_dimensions": 1,
+      "negative_dimensions": 0,
       "total_dimensions": 2,
       "signal": {
-        "signal_id": "74983a533b0ac1e9b9481a441beadfd6558744a698a168c2eb78123d12b05e18",
-        "selection": "game_total",
+        "signal_id": "227789e836a542820a52be14650db7121b3a76982e44b9c1ef7b5afa6b5493e3",
+        "selection": null,
         "market_type": "total",
-        "line": 241.0,
+        "line": null,
         "score": null,
-        "direction": "over",
+        "direction": null,
         "atomic_stat": null,
         "experts": [],
         "best_odds": null,
-        "away_team": "DAL",
-        "home_team": "MIA",
-        "event_key": "NBA:2025:11:24:DAL@MIA",
+        "away_team": "MIA",
+        "home_team": "DAL",
+        "event_key": "NBA:2025:11:24:MIA@DAL",
         "day_key": "NBA:2025:11:24",
         "line_min": null,
         "line_max": null,
-        "sources_count": 2,
-        "consensus_strength": "2_source"
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": 1,
+        "consensus_strength": "1_source",
+        "game_time_et": null
       },
       "primary_record": {
-        "wilson_lower": 0.4883,
-        "win_pct": 0.5242,
-        "n": 748,
-        "wins": 390,
-        "losses": 358,
-        "lookup_level": "combo_overall",
-        "label": "2_source overall"
+        "wilson_lower": 0.4762,
+        "win_pct": 0.5469,
+        "n": 194,
+        "wins": 105,
+        "losses": 89,
+        "lookup_level": "combo_market_direction",
+        "label": "juicereel_unitvacuum / total / unknown"
       },
       "historical_record": {
-        "wins": 390,
-        "losses": 358,
-        "n": 748,
-        "win_pct": 0.5242,
-        "source": "combo_overall",
-        "label": "2_source overall"
+        "wins": 105,
+        "losses": 89,
+        "n": 194,
+        "win_pct": 0.5469,
+        "source": "combo_market_direction",
+        "label": "juicereel_unitvacuum / total / unknown"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "2_source / total",
-          "win_pct": 0.5366,
-          "n": 372,
-          "wilson_lower": 0.4856
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
+          "lookup_key": "total / no_line",
+          "win_pct": 0.5873,
+          "n": 64,
+          "wilson_lower": 0.4642
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "2_source / total",
-          "win_pct": 0.5366,
-          "n": 372,
-          "wilson_lower": 0.4856
+          "lookup_key": "1_source / total",
+          "win_pct": 0.5048,
+          "n": 4051,
+          "wilson_lower": 0.4894
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "total / 235+",
-          "win_pct": 0.4922,
-          "n": 1089,
-          "wilson_lower": 0.4625
+          "lookup_key": "total / no_line",
+          "win_pct": 0.5873,
+          "n": 64,
+          "wilson_lower": 0.4642
         }
       ],
-      "summary": "52.4% win rate in 748 similar picks picks (Wilson: 48.8%)",
+      "summary": "54.7% win rate in 194 similar unknown total picks (Wilson: 47.6%) [cold: -1% | line: +1.0%]",
       "small_sample": false,
-      "recency_adjustment": 0.0,
+      "recency_adjustment": -0.01,
       "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.0,
+      "line_bucket_adjustment": 0.01,
       "total_adjustment": 0.0,
+      "matched_pattern": {
+        "label": "unitvacuum total",
+        "tier_eligible": "B",
+        "hist": {
+          "record": "80-60",
+          "win_pct": 0.571,
+          "n": 140
+        }
+      },
       "recent_trend": {
-        "wins": 5,
+        "wins": 4,
         "losses": 5,
-        "n": 10,
-        "win_pct": 0.5,
+        "n": 9,
+        "win_pct": 0.4444,
         "window": 30,
-        "source": "combo_overall",
-        "label": "2_source overall"
+        "source": "combo_market_stat",
+        "label": "juicereel_unitvacuum / total / all"
       },
       "result": "LOSS"
     }
   ],
   "summary": {
     "wins": 9,
-    "losses": 6,
+    "losses": 1,
     "pushes": 0,
     "pending": 0
   }

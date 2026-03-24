@@ -396,11 +396,17 @@ STAT_TYPE_MAP = {
     "pts + reb": "pts_reb",
     "reb + ast": "reb_ast",
     "pts + reb + ast": "pts_reb_ast",
+    # Long-form variants captured from pick body text
+    "points + assists": "pts_ast",
+    "points + rebounds": "pts_reb",
+    "rebounds + assists": "reb_ast",
+    "points + assists + rebounds": "pts_reb_ast",
+    "points + rebounds + assists": "pts_reb_ast",
 }
 
 # Regex for date/time line: "Feb 20 2026, 4:00 pm PST"
 DATE_TIME_RE = re.compile(
-    r"(\w+ \d+ \d{4}),?\s+(\d+:\d+)\s*(am|pm)\s*(PST|EST|CST|MST|PT|ET|CT|MT)",
+    r"(\w+ \d+ \d{4}),?\s+(\d+:\d+)\s*(am|pm)\s*(PDT|EDT|CDT|MDT|PST|EST|CST|MST|PT|ET|CT|MT)",
     re.IGNORECASE,
 )
 
@@ -436,7 +442,7 @@ ML_PICK_RE = re.compile(
 
 # Regex for player prop: "StatLabel PlayerName Over|Under line Total StatName odds"
 PROP_PICK_RE = re.compile(
-    r"(?:Points|Rebounds|Assists|Steals|Blocks|Threes|PTS \+ (?:AST|REB)|REB \+ AST|PTS \+ REB \+ AST)\s+"
+    r"(?:PTS \+ (?:AST \+ REB|REB \+ AST)|PTS \+ (?:AST|REB)|REB \+ AST|Points|Rebounds|Assists|Steals|Blocks|Threes)\s+"
     r"(.+?)\s+(Over|Under)\s+(\d+(?:\.\d+)?)\s+Total\s+(.+?)\s+([+-]\d+)",
     re.IGNORECASE,
 )
@@ -467,10 +473,10 @@ def _parse_matchup_text(text: str) -> Dict[str, Any]:
                 hour = 0
 
             tz_map = {
-                "pst": "America/Los_Angeles", "pt": "America/Los_Angeles",
-                "est": "America/New_York", "et": "America/New_York",
-                "cst": "America/Chicago", "ct": "America/Chicago",
-                "mst": "America/Denver", "mt": "America/Denver",
+                "pst": "America/Los_Angeles", "pdt": "America/Los_Angeles", "pt": "America/Los_Angeles",
+                "est": "America/New_York", "edt": "America/New_York", "et": "America/New_York",
+                "cst": "America/Chicago", "cdt": "America/Chicago", "ct": "America/Chicago",
+                "mst": "America/Denver", "mdt": "America/Denver", "mt": "America/Denver",
             }
             tz_name = tz_map.get(tz_str.lower(), "America/Los_Angeles")
 
@@ -623,17 +629,43 @@ def _parse_expert_text(text: str) -> Dict[str, Any]:
         "Zack Cimini\\nContrarian with Chutzpah\\nProfile →\\n+90\\n4-1 in Last 5 NBA Picks"
         "Prop Bet Guy\\nDoug\\nProfile →\\n+1496\\n94-68 in Last 162 NBA Player Props Picks"
         "Micah Roberts\\nFormer Vegas Bookmaker\\nProfile →"
+
+    Guard against profit figures (e.g. "+2390.75") appearing as the first line
+    when the DOM renders the ROI/profit stat before the expert name.
     """
     result: Dict[str, Any] = {}
 
-    # The expert name is the first line
     lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
     if not lines:
         return result
 
-    name = lines[0]
+    # Find the first line that looks like a real name:
+    # - Not purely numeric / profit figure (e.g. "+2390.75", "-45", "1496")
+    # - Not a record string (e.g. "4-1 in Last 5 NBA Picks")
+    # - Not "Profile →" navigation text
+    # A valid name has at least one letter and doesn't start with a digit or sign
+    # followed only by digits/decimals.
+    import re as _re
+    _profit_re = _re.compile(r'^[+\-]?[\d,]+(\.\d+)?$')
+    _record_re = _re.compile(r'^\d+-\d+\s+in\s+', _re.IGNORECASE)
+    _nav_re = _re.compile(r'^Profile\s*[→>]?$', _re.IGNORECASE)
 
-    # Handle "Prop Bet Guy" specifically
+    name = None
+    for line in lines:
+        if _profit_re.match(line):
+            continue
+        if _record_re.match(line):
+            continue
+        if _nav_re.match(line):
+            continue
+        if any(c.isalpha() for c in line):
+            name = line
+            break
+
+    if not name:
+        return result
+
+    # Handle "Prop Bet Guy" specifically (DOM sometimes has "Prop Bet Guy\nDoug")
     if name.startswith("Prop Bet Guy"):
         result["expert_name"] = "Prop Bet Guy"
     else:

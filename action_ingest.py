@@ -33,7 +33,7 @@ from utils import normalize_text
 # Sport-specific URL patterns
 ACTION_LISTING_URLS = {
     NBA_SPORT: "https://www.actionnetwork.com/picks/game",
-    NCAAB_SPORT: "https://www.actionnetwork.com/ncaab/picks",
+    NCAAB_SPORT: "https://www.actionnetwork.com/ncaab/picks/game",
 }
 
 ACTION_GAME_PATTERNS = {
@@ -922,6 +922,79 @@ def write_json(path: str, payload: Iterable[dict]) -> None:
         json.dump(prepared, f, ensure_ascii=False, indent=2, default=json_default)
 
 
+class IncrementalJsonWriter:
+    """Writes a JSON array incrementally, one batch of records per game.
+
+    Opens the file immediately and appends each game's records as they
+    complete, so a timeout mid-run still produces valid, partial output.
+    A companion ``<path>_meta.json`` file is written on close showing
+    how many games were completed out of the total discovered.
+
+    Registers a SIGTERM handler on enter so that the shell's ``kill``
+    (the default signal from run_with_timeout) unwinds the context manager
+    and closes the file with valid JSON rather than leaving a truncated array.
+    """
+
+    def __init__(self, path: str, games_total: int) -> None:
+        self._path = path
+        self._meta_path = path.replace(".json", "_meta.json")
+        self._games_total = games_total
+        self._games_completed = 0
+        self._record_count = 0
+        self._first = True
+        self._closed = False
+        self._prev_sigterm = None
+        self._f = open(path, "w", encoding="utf-8")
+        self._f.write("[\n")
+        self._f.flush()
+
+    def append_game(self, records: List[dict]) -> None:
+        """Append one game's records to the open array."""
+        for item in records:
+            obj = asdict(item) if hasattr(item, "__dataclass_fields__") else item
+            serialized = json.dumps(obj, ensure_ascii=False, default=json_default)
+            if not self._first:
+                self._f.write(",\n")
+            self._f.write(serialized)
+            self._first = False
+            self._record_count += 1
+        self._games_completed += 1
+        self._f.flush()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._f.write("\n]\n")
+        self._f.close()
+        meta = {
+            "games_completed": self._games_completed,
+            "games_total": self._games_total,
+            "records_written": self._record_count,
+            "complete": self._games_completed == self._games_total,
+        }
+        with open(self._meta_path, "w", encoding="utf-8") as mf:
+            json.dump(meta, mf, indent=2)
+        print(
+            f"[INGEST] {self._games_completed}/{self._games_total} games completed, "
+            f"{self._record_count} raw records written → {os.path.basename(self._path)}"
+        )
+
+    def __enter__(self):
+        import signal as _signal
+        def _sigterm_handler(signum, frame):
+            self.close()
+            raise SystemExit(0)
+        self._prev_sigterm = _signal.signal(_signal.SIGTERM, _sigterm_handler)
+        return self
+
+    def __exit__(self, *_):
+        import signal as _signal
+        if self._prev_sigterm is not None:
+            _signal.signal(_signal.SIGTERM, self._prev_sigterm)
+        self.close()
+
+
 def dedupe_normalized_bets(bets: List[dict]) -> List[dict]:
     seen = set()
     deduped: List[dict] = []
@@ -936,6 +1009,7 @@ def dedupe_normalized_bets(bets: List[dict]) -> List[dict]:
             market.get("line"),
             prov.get("source_id"),
             prov.get("source_surface"),
+            prov.get("expert_name"),
         )
         if key in seen:
             continue
@@ -947,7 +1021,6 @@ def dedupe_normalized_bets(bets: List[dict]) -> List[dict]:
 def ingest_action_games(schedule=None, sport: str = NBA_SPORT, debug: bool = False) -> None:
     schedule = schedule if schedule is not None else SCHEDULE
     observed_at = datetime.now(timezone.utc)
-    all_raw: List[RawPickRecord] = []
     all_normalized: List[dict] = []
     stats = {
         "team_not_in_game": 0,
@@ -966,60 +1039,68 @@ def ingest_action_games(schedule=None, sport: str = NBA_SPORT, debug: bool = Fal
         for url in game_urls[:5]:
             print(f"[DEBUG] game_url: {url}")
 
-    for url in game_urls:
-        try:
-            html = fetch_expert_picks_html(url)
-        except Exception:
-            continue
-        event_start_time_utc = parse_game_start_utc(
-            html=html, url=url, schedule_game=None, observed_at_utc=observed_at
-        )
-        soup = BeautifulSoup(html, "html.parser")
-        away_team, home_team = parse_teams_from_page(soup, sport=sport, store=store)
-        if not (away_team and home_team):
-            slug_away, slug_home = parse_teams_from_slug(url, sport=sport, store=store)
-            away_team = away_team or slug_away
-            home_team = home_team or slug_home
-        if not (away_team and home_team):
-            continue
-
-        raw_records, card_infos = extract_picks_from_html(
-            html,
-            canonical_url=url,
-            observed_at_utc=observed_at,
-            debug=debug or bool(os.environ.get("ACTION_DEBUG")),
-            sport=sport,
-        )
-        # Debug: show picks per game
-        game_slug_match = re.search(r"/(?:nba-game|college-basketball-game)/([^/]+)/", url)
-        game_slug = game_slug_match.group(1) if game_slug_match else url
-        print(f"[DEBUG] {game_slug}: found {len(card_infos)} expert cards, {len(raw_records)} picks")
-        all_raw.extend(raw_records)
-        stats["cards_found"] += len(card_infos)
-        stats["raw_picks_total"] += len(raw_records)
-
-        for record in raw_records:
-            record.event_start_time_utc = event_start_time_utc
-            normalized = normalize_pick(record, home_team=home_team, away_team=away_team, stats=stats, sport=sport)
-            all_normalized.append(normalized)
-            stats["normalized_total"] += 1
-            if normalized.get("eligible_for_consensus"):
-                stats["normalized_eligible"] += 1
-
-        is_cle_cha = {away_team, home_team} == {"CLE", "CHA"}
-        if is_cle_cha:
-            print(f"[DEBUG] CLE@CHA expert cards found: {len(card_infos)}")
-            for idx, card in enumerate(card_infos[:5]):
-                picks_preview = card.get("picks", [])
-                print(
-                    f"[DEBUG] card {idx} expert_name={card.get('expert_name')} "
-                    f"handle={card.get('expert_handle')} picks={picks_preview}"
-                )
-
-    all_normalized = dedupe_normalized_bets(all_normalized)
     ensure_out_dir()
     sport_suffix = sport.lower()
-    write_json(os.path.join(OUT_DIR, f"raw_action_{sport_suffix}.json"), (asdict(r) for r in all_raw))
+    raw_path = os.path.join(OUT_DIR, f"raw_action_{sport_suffix}.json")
+
+    with IncrementalJsonWriter(raw_path, games_total=len(game_urls)) as raw_writer:
+        for url in game_urls:
+            try:
+                html = fetch_expert_picks_html(url)
+            except Exception:
+                raw_writer.append_game([])
+                continue
+            event_start_time_utc = parse_game_start_utc(
+                html=html, url=url, schedule_game=None, observed_at_utc=observed_at
+            )
+            soup = BeautifulSoup(html, "html.parser")
+            away_team, home_team = parse_teams_from_page(soup, sport=sport, store=store)
+            if not (away_team and home_team):
+                slug_away, slug_home = parse_teams_from_slug(url, sport=sport, store=store)
+                away_team = away_team or slug_away
+                home_team = home_team or slug_home
+            if not (away_team and home_team):
+                raw_writer.append_game([])
+                continue
+
+            raw_records, card_infos = extract_picks_from_html(
+                html,
+                canonical_url=url,
+                observed_at_utc=observed_at,
+                debug=debug or bool(os.environ.get("ACTION_DEBUG")),
+                sport=sport,
+            )
+            # Debug: show picks per game
+            game_slug_match = re.search(r"/(?:nba-game|college-basketball-game)/([^/]+)/", url)
+            game_slug = game_slug_match.group(1) if game_slug_match else url
+            print(f"[DEBUG] {game_slug}: found {len(card_infos)} expert cards, {len(raw_records)} picks")
+
+            # Attach event start time and normalize before flushing raw
+            for record in raw_records:
+                record.event_start_time_utc = event_start_time_utc
+
+            raw_writer.append_game(raw_records)
+            stats["cards_found"] += len(card_infos)
+            stats["raw_picks_total"] += len(raw_records)
+
+            for record in raw_records:
+                normalized = normalize_pick(record, home_team=home_team, away_team=away_team, stats=stats, sport=sport)
+                all_normalized.append(normalized)
+                stats["normalized_total"] += 1
+                if normalized.get("eligible_for_consensus"):
+                    stats["normalized_eligible"] += 1
+
+            is_cle_cha = {away_team, home_team} == {"CLE", "CHA"}
+            if is_cle_cha:
+                print(f"[DEBUG] CLE@CHA expert cards found: {len(card_infos)}")
+                for idx, card in enumerate(card_infos[:5]):
+                    picks_preview = card.get("picks", [])
+                    print(
+                        f"[DEBUG] card {idx} expert_name={card.get('expert_name')} "
+                        f"handle={card.get('expert_handle')} picks={picks_preview}"
+                    )
+
+    all_normalized = dedupe_normalized_bets(all_normalized)
     write_json(os.path.join(OUT_DIR, f"normalized_action_{sport_suffix}.json"), all_normalized)
     print(
         f"[DEBUG] cards_found={stats['cards_found']} raw_picks_total={stats['raw_picks_total']} "

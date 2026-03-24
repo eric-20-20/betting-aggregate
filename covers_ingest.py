@@ -26,6 +26,7 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 from action_ingest import (
+    IncrementalJsonWriter,
     RawPickRecord,
     dedupe_normalized_bets,
     json_default,
@@ -582,7 +583,6 @@ def write_json(path: str, payload: Iterable[dict]) -> None:
 def ingest_covers_games(matchup_urls: Optional[List[str]] = None, schedule=None, debug: bool = False, sport: str = NBA_SPORT) -> None:
     schedule = schedule if schedule is not None else SCHEDULE
     observed_at = datetime.now(timezone.utc)
-    all_raw: List[RawPickRecord] = []
     all_normalized: List[dict] = []
 
     # Get sport-specific store
@@ -608,111 +608,117 @@ def ingest_covers_games(matchup_urls: Optional[List[str]] = None, schedule=None,
         for ent in entries[:3]:
             print(f"[DEBUG] entry: {ent}")
 
-    for idx, (url, scheduled_away, scheduled_home) in enumerate(entries):
-        try:
-            html = fetch_html(url)
-        except Exception:
-            continue
-        event_start_time_utc = parse_event_start_utc(html, observed_at_utc=observed_at)
-        soup = BeautifulSoup(html, "html.parser")
-        page_away, page_home = extract_matchup_teams_from_header(soup, store=store)
-
-        away_code = page_away or scheduled_away
-        home_code = page_home or scheduled_home
-        if scheduled_away and scheduled_home and page_away and page_home:
-            if {scheduled_away, scheduled_home} != {page_away, page_home}:
-                continue
-        if debug and idx < 3:
-            print(f"[DEBUG] page[{idx}] detected away={away_code} home={home_code} has_pick_made={bool(re.search(r'Pick made', html, re.IGNORECASE))}")
-        if not away_code or not home_code:
-            if debug:
-                print(f"[DEBUG] page[{idx}] could not detect matchup teams, url={url}")
-            continue
-
-        if debug and idx == 0:
-            print("[DEBUG] === PAGE 0 START ===")
-            print(f"[DEBUG] page[{idx}] url={url}")
-            print(f"[DEBUG] page[{idx}] html_len={len(html)} has_pick_made={bool(re.search(r'Pick made', html, re.IGNORECASE))}")
-
-        debug_stats = {} if (debug and idx == 0) else None
-        raw_records = extract_picks_from_html(
-            html,
-            canonical_url=url,
-            observed_at_utc=observed_at,
-            debug=True if idx == 0 else bool(debug_stats),
-            debug_stats=debug_stats if idx == 0 else ({} if (debug and idx < 3) else None),
-            sport=sport,
-        )
-        all_raw.extend(raw_records)
-        normalized_batch: List[dict] = []
-        for record in raw_records:
-            normalized = normalize_covers_pick(
-                record,
-                home_team=home_code,
-                away_team=away_code,
-                event_start_time_utc=event_start_time_utc,
-                sport=sport,
-            )
-            normalized_batch.append(normalized)
-            all_normalized.append(normalized)
-
-        if debug and idx < 3:
-            eligible_count = sum(1 for n in normalized_batch if n.get("eligible_for_consensus"))
-            print(f"[DEBUG] page[{idx}] fetched_ok len={len(html)} url={url}")
-            print(f"[DEBUG] page[{idx}] matchup detected away={away_code} home={home_code}")
-        if debug_stats:
-            print(
-                f"[DEBUG] page[{idx}] cards_found={debug_stats.get('total_cards_found', 0)} "
-                f"analyst_cards_included={debug_stats.get('analyst_cards_included', 0)} "
-                f"picks_dom={debug_stats.get('picks_extracted_dom', 0)} "
-                f"picks_regex={debug_stats.get('picks_extracted_regex', 0)} "
-                f"raw_records={len(raw_records)} normalized={len(normalized_batch)} eligible={eligible_count} "
-                f"cards_excluded={debug_stats.get('cards_excluded_reason_counts', {})}"
-            )
-            if idx < 3 and debug_stats and debug_stats.get("first_card_preview"):
-                preview = debug_stats["first_card_preview"].replace("\n", " ")
-                print(f"[DEBUG] page[{idx}] first_card_preview: {preview}")
-            if idx < 3 and debug_stats.get("candidate_samples"):
-                print(f"[DEBUG] page[{idx}] candidate_samples: {debug_stats['candidate_samples']}")
-            if len(raw_records) == 0:
-                match = re.search(r"Pick made", html, re.IGNORECASE)
-                if match:
-                    start = max(0, match.start() - 120)
-                    end = min(len(html), match.end() + 120)
-                    snippet = html[start:end].replace("\\n", " ")
-                    print(f"[DEBUG] page[{idx}] snippet around 'Pick made': {snippet}")
-                else:
-                    print(f"[DEBUG] page[{idx}] contains 'Pick made' text? {bool(match)}")
-        if debug and idx == 0:
-            import json as _json
-
-            print("[DEBUG] page[0] debug_stats:", _json.dumps(debug_stats or {}, indent=2))
-            matches = [m.start() for m in re.finditer(r"Pick made", html, re.IGNORECASE)]
-            if matches:
-                pos = matches[0]
-                start = max(0, pos - 2500)
-                end = min(len(html), pos + 2500)
-                window = html[start:end]
-                window_text = BeautifulSoup(window, "html.parser").get_text(" ", strip=True)
-                print(f"[DEBUG] page[0] window_text preview: {window_text[:500]}")
-                prop_re = re.compile(
-                    r"[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){1,2}\\s+[ouOU]\\d+(?:\\.\\d+)?\\s+(?:Points|Points Scored|Rebounds|Assists|Total Points|Total Rebounds|Total Assists)",
-                    re.IGNORECASE,
-                )
-                total_re = re.compile(r"(?:Over|Under|[ouOU])\\s*\\d+(?:\\.\\d+)?", re.IGNORECASE)
-                spread_re = re.compile(r"\\b[A-Z]{2,3}\\s*[+-]\\d+(?:\\.\\d+)?", re.IGNORECASE)
-                money_re = re.compile(r"Moneyline", re.IGNORECASE)
-                print(
-                    f"[DEBUG] page[0] window counts: props={len(list(prop_re.finditer(window_text)))} "
-                    f"totals={len(list(total_re.finditer(window_text)))} spreads={len(list(spread_re.finditer(window_text)))} "
-                    f"moneyline_labels={len(list(money_re.finditer(window_text)))}"
-                )
-            print("[DEBUG] === PAGE 0 END ===")
-
-    all_normalized = dedupe_normalized_bets(all_normalized)
     ensure_out_dir()
     sport_suffix = sport.lower()
-    write_json(os.path.join(OUT_DIR, f"raw_covers_{sport_suffix}.json"), all_raw)
+    raw_path = os.path.join(OUT_DIR, f"raw_covers_{sport_suffix}.json")
+
+    with IncrementalJsonWriter(raw_path, games_total=len(entries)) as raw_writer:
+        for idx, (url, scheduled_away, scheduled_home) in enumerate(entries):
+            try:
+                html = fetch_html(url)
+            except Exception:
+                raw_writer.append_game([])
+                continue
+            event_start_time_utc = parse_event_start_utc(html, observed_at_utc=observed_at)
+            soup = BeautifulSoup(html, "html.parser")
+            page_away, page_home = extract_matchup_teams_from_header(soup, store=store)
+
+            away_code = page_away or scheduled_away
+            home_code = page_home or scheduled_home
+            if scheduled_away and scheduled_home and page_away and page_home:
+                if {scheduled_away, scheduled_home} != {page_away, page_home}:
+                    raw_writer.append_game([])
+                    continue
+            if debug and idx < 3:
+                print(f"[DEBUG] page[{idx}] detected away={away_code} home={home_code} has_pick_made={bool(re.search(r'Pick made', html, re.IGNORECASE))}")
+            if not away_code or not home_code:
+                if debug:
+                    print(f"[DEBUG] page[{idx}] could not detect matchup teams, url={url}")
+                raw_writer.append_game([])
+                continue
+
+            if debug and idx == 0:
+                print("[DEBUG] === PAGE 0 START ===")
+                print(f"[DEBUG] page[{idx}] url={url}")
+                print(f"[DEBUG] page[{idx}] html_len={len(html)} has_pick_made={bool(re.search(r'Pick made', html, re.IGNORECASE))}")
+
+            debug_stats = {} if (debug and idx == 0) else None
+            raw_records = extract_picks_from_html(
+                html,
+                canonical_url=url,
+                observed_at_utc=observed_at,
+                debug=True if idx == 0 else bool(debug_stats),
+                debug_stats=debug_stats if idx == 0 else ({} if (debug and idx < 3) else None),
+                sport=sport,
+            )
+            raw_writer.append_game(raw_records)
+
+            normalized_batch: List[dict] = []
+            for record in raw_records:
+                normalized = normalize_covers_pick(
+                    record,
+                    home_team=home_code,
+                    away_team=away_code,
+                    event_start_time_utc=event_start_time_utc,
+                    sport=sport,
+                )
+                normalized_batch.append(normalized)
+                all_normalized.append(normalized)
+
+            if debug and idx < 3:
+                eligible_count = sum(1 for n in normalized_batch if n.get("eligible_for_consensus"))
+                print(f"[DEBUG] page[{idx}] fetched_ok len={len(html)} url={url}")
+                print(f"[DEBUG] page[{idx}] matchup detected away={away_code} home={home_code}")
+            if debug_stats:
+                print(
+                    f"[DEBUG] page[{idx}] cards_found={debug_stats.get('total_cards_found', 0)} "
+                    f"analyst_cards_included={debug_stats.get('analyst_cards_included', 0)} "
+                    f"picks_dom={debug_stats.get('picks_extracted_dom', 0)} "
+                    f"picks_regex={debug_stats.get('picks_extracted_regex', 0)} "
+                    f"raw_records={len(raw_records)} normalized={len(normalized_batch)} eligible={eligible_count} "
+                    f"cards_excluded={debug_stats.get('cards_excluded_reason_counts', {})}"
+                )
+                if idx < 3 and debug_stats and debug_stats.get("first_card_preview"):
+                    preview = debug_stats["first_card_preview"].replace("\n", " ")
+                    print(f"[DEBUG] page[{idx}] first_card_preview: {preview}")
+                if idx < 3 and debug_stats.get("candidate_samples"):
+                    print(f"[DEBUG] page[{idx}] candidate_samples: {debug_stats['candidate_samples']}")
+                if len(raw_records) == 0:
+                    match = re.search(r"Pick made", html, re.IGNORECASE)
+                    if match:
+                        start = max(0, match.start() - 120)
+                        end = min(len(html), match.end() + 120)
+                        snippet = html[start:end].replace("\\n", " ")
+                        print(f"[DEBUG] page[{idx}] snippet around 'Pick made': {snippet}")
+                    else:
+                        print(f"[DEBUG] page[{idx}] contains 'Pick made' text? {bool(match)}")
+            if debug and idx == 0:
+                import json as _json
+
+                print("[DEBUG] page[0] debug_stats:", _json.dumps(debug_stats or {}, indent=2))
+                matches = [m.start() for m in re.finditer(r"Pick made", html, re.IGNORECASE)]
+                if matches:
+                    pos = matches[0]
+                    start = max(0, pos - 2500)
+                    end = min(len(html), pos + 2500)
+                    window = html[start:end]
+                    window_text = BeautifulSoup(window, "html.parser").get_text(" ", strip=True)
+                    print(f"[DEBUG] page[0] window_text preview: {window_text[:500]}")
+                    prop_re = re.compile(
+                        r"[A-Z][a-z]+(?:\\s+[A-Z][a-z]+){1,2}\\s+[ouOU]\\d+(?:\\.\\d+)?\\s+(?:Points|Points Scored|Rebounds|Assists|Total Points|Total Rebounds|Total Assists)",
+                        re.IGNORECASE,
+                    )
+                    total_re = re.compile(r"(?:Over|Under|[ouOU])\\s*\\d+(?:\\.\\d+)?", re.IGNORECASE)
+                    spread_re = re.compile(r"\\b[A-Z]{2,3}\\s*[+-]\\d+(?:\\.\\d+)?", re.IGNORECASE)
+                    money_re = re.compile(r"Moneyline", re.IGNORECASE)
+                    print(
+                        f"[DEBUG] page[0] window counts: props={len(list(prop_re.finditer(window_text)))} "
+                        f"totals={len(list(total_re.finditer(window_text)))} spreads={len(list(spread_re.finditer(window_text)))} "
+                        f"moneyline_labels={len(list(money_re.finditer(window_text)))}"
+                    )
+                print("[DEBUG] === PAGE 0 END ===")
+
+    all_normalized = dedupe_normalized_bets(all_normalized)
     write_json(os.path.join(OUT_DIR, f"normalized_covers_{sport_suffix}.json"), all_normalized)
 
     eligible_records = [n for n in all_normalized if n.get("eligible_for_consensus")]
@@ -722,7 +728,7 @@ def ingest_covers_games(matchup_urls: Optional[List[str]] = None, schedule=None,
             {
                 "sport": sport,
                 "matchup_pages_processed": len(entries),
-                "raw_records": len(all_raw),
+                "raw_records_written": len(all_normalized),
                 "normalized_records": len(all_normalized),
                 "eligible_records": len(eligible_records),
                 "unique_event_keys": len(unique_event_keys),

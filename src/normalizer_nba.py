@@ -153,7 +153,7 @@ def _extract_line(text: str) -> Optional[float]:
 def _extract_odds(text: str) -> Optional[int]:
     if not text:
         return None
-    match = re.search(r"([+-]\d{2,4})", text)
+    match = re.search(r"([+-]\d{3,4})(?!\.\d)(?!\d)", text)
     if match:
         try:
             return int(match.group(1))
@@ -318,12 +318,11 @@ def normalize_raw_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         selection = _build_selection(player_key, stat_key, direction)
     else:
         unrealistic_line = False
-        odds = _extract_odds(pick_text) or _extract_odds(block_text)
-        odds = int(odds) if isinstance(odds, str) and re.match(r"[+-]\d{2,4}", odds) else odds
 
         parsed = parse_standard_market(pick_text)
         market_type = market_type or parsed.get("market_type") or "unknown"
-        odds = odds or parsed.get("odds")
+        odds = parsed.get("odds") or _extract_odds(pick_text) or _extract_odds(block_text)
+        odds = int(odds) if isinstance(odds, str) and re.match(r"[+-]\d{3,4}$", odds) else odds
         if market_type == "spread":
             team_code = _normalize_team(parsed.get("team_code"))
             selection = team_code

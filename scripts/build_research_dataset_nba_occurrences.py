@@ -558,6 +558,7 @@ def build_rows(signals_path: Path, grades_path: Path, ledger_path: Optional[Path
             "grade_status": grade_status,
             "status": grade.get("status"),
             "result": result,
+            "graded_at_utc": grade.get("graded_at_utc"),
             "units": units,
             "notes": grade.get("notes"),
             "provider": grade.get("provider"),

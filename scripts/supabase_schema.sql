@@ -48,38 +48,6 @@ CREATE TABLE IF NOT EXISTS experts (
 );
 
 -- ============================================================
--- picks: one row per raw normalized pick per source per day
--- ============================================================
-CREATE TABLE IF NOT EXISTS picks (
-  id              BIGSERIAL PRIMARY KEY,
-  source_id       TEXT REFERENCES sources(id),
-  expert_id       INTEGER REFERENCES experts(id),
-  day_key         TEXT NOT NULL,          -- "NBA:2026:03:17"
-  event_key       TEXT,                   -- "NBA:2026:03:17:OKC@ORL" (nullable for older signals)
-  sport           TEXT NOT NULL DEFAULT 'NBA',
-  away_team       TEXT,
-  home_team       TEXT,
-  market_type     TEXT,                   -- "player_prop", "spread", "total", "moneyline"
-  selection       TEXT,                   -- "NBA:jalen_suggs::pts_reb_ast::UNDER"
-  side            TEXT,                   -- "OVER", "UNDER", "OKC"
-  line            REAL,
-  odds            INTEGER,
-  player_key      TEXT,                   -- "NBA:jalen_suggs"
-  stat_key        TEXT,                   -- "pts_reb_ast"
-  unit_size       REAL,
-  raw_pick_text   TEXT,
-  raw_fingerprint TEXT UNIQUE,            -- deduplicate on fingerprint
-  observed_at_utc TIMESTAMPTZ,
-  eligible        BOOLEAN DEFAULT true,
-  inelig_reason   TEXT
-);
-CREATE INDEX IF NOT EXISTS picks_day_key      ON picks(day_key);
-CREATE INDEX IF NOT EXISTS picks_event_key    ON picks(event_key);
-CREATE INDEX IF NOT EXISTS picks_source_id    ON picks(source_id);
-CREATE INDEX IF NOT EXISTS picks_player_key   ON picks(player_key);
-CREATE INDEX IF NOT EXISTS picks_expert_id    ON picks(expert_id);
-
--- ============================================================
 -- signals: one row per consensus signal (merged from picks)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS signals (
@@ -97,7 +65,6 @@ CREATE TABLE IF NOT EXISTS signals (
   line_max        REAL,
   atomic_stat     TEXT,                   -- "points", "rebounds", "pts_reb_ast"
   player_key      TEXT,
-  stat_key        TEXT,
   sources_combo   TEXT,                   -- "action|betql|covers" (pipe-sorted)
   sources_count   INTEGER,
   signal_type     TEXT,                   -- "solo_pick", "hard_cross_source", "soft_atomic"
@@ -292,7 +259,7 @@ SELECT
   s.line,
   s.atomic_stat,
   s.player_key,
-  s.stat_key,
+  s.atomic_stat AS stat_key,
   s.sources_combo,
   s.sources_count,
   s.signal_type,
@@ -479,7 +446,8 @@ CREATE TABLE IF NOT EXISTS graded_occurrences (
   score                 INTEGER,
   signal_type           TEXT,
   run_id                TEXT,
-  observed_at_utc       TIMESTAMPTZ
+  observed_at_utc       TIMESTAMPTZ,
+  graded_at_utc         TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS go_day_key             ON graded_occurrences(day_key);
@@ -491,7 +459,7 @@ CREATE INDEX IF NOT EXISTS go_atomic_stat         ON graded_occurrences(atomic_s
 CREATE INDEX IF NOT EXISTS go_direction           ON graded_occurrences(direction);
 CREATE INDEX IF NOT EXISTS go_expert_name         ON graded_occurrences(expert_name);
 CREATE INDEX IF NOT EXISTS go_player_key          ON graded_occurrences(player_key);
-CREATE INDEX IF NOT EXISTS go_signal_id           ON graded_occurrences(signal_id);
+CREATE UNIQUE INDEX IF NOT EXISTS go_signal_id    ON graded_occurrences(signal_id);
 
 -- ============================================================
 -- expert_records: aggregated W-L record per expert per market.

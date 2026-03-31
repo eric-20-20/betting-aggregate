@@ -113,11 +113,11 @@ HAVING COUNT(*) FILTER (WHERE result IN ('WIN','LOSS')) >= {min_n}
 ORDER BY win_pct DESC NULLS LAST;
 """
 
-# Sweep by: source × stat_key × direction (fine-grained prop analysis)
+# Sweep by: source × atomic_stat × direction (fine-grained prop analysis)
 QUERY_STAT = """
 SELECT
   occ_source_id,
-  stat_key,
+  atomic_stat,
   direction,
   COUNT(*) FILTER (WHERE result IN ('WIN','LOSS'))           AS n,
   COUNT(*) FILTER (WHERE result = 'WIN')                     AS wins,
@@ -130,7 +130,7 @@ FROM graded_occurrences
 WHERE sport = '{sport}'
   AND result IN ('WIN', 'LOSS')
   AND market_type = 'player_prop'
-GROUP BY occ_source_id, stat_key, direction
+GROUP BY occ_source_id, atomic_stat, direction
 HAVING COUNT(*) FILTER (WHERE result IN ('WIN','LOSS')) >= {min_n}
 ORDER BY win_pct DESC NULLS LAST;
 """

@@ -33,7 +33,7 @@ from src.normalizer_bettingpros_nba import (
     _parse_game_date,
 )
 
-ALLOWED_MARKETS = {"spread", "total", "moneyline", "player_prop"}
+ALLOWED_MARKETS = {"spread", "total", "moneyline", "player_prop", "team_total"}
 
 # Stat keyword → canonical stat_key mapping (longest match wins)
 _STAT_MAP: Dict[str, str] = {
@@ -141,7 +141,11 @@ def _extract_prop_player(text: str) -> Optional[str]:
 
     # Strip matchup prefix
     core = text
-    if " @ " in text or " At " in text or re.search(r"\s+vs\.?\s+", text, re.I):
+    if (
+        " @ " in text
+        or re.search(r"\s+at\s+", text, re.I)
+        or re.search(r"\s+vs\.?\s+", text, re.I)
+    ):
         m = re.split(r"\s+-\s+", text, maxsplit=1)
         core = m[1] if len(m) > 1 else text
     core = core.strip()
@@ -189,12 +193,20 @@ def _parse_teams_from_text(text: str, store=None, sport: str = "NBA") -> Tuple[O
     Handles format: 'DET Pistons @ BKN Nets - Total - Under 216.5'
     or 'Dallas Mavericks @ Atlanta Hawks - Spread - DAL -5.5'
     """
-    if not text or " @ " not in text:
+    if not text:
         return None, None
-    parts = text.split(" @ ", 1)
+    parts = None
+    if " @ " in text:
+        parts = text.split(" @ ", 1)
+    else:
+        m = re.match(r"^\s*(.+?)\s+at\s+(.+?)(?:\s+-\s+.*)?$", text, re.IGNORECASE)
+        if m:
+            parts = [m.group(1), m.group(2)]
+    if not parts:
+        return None, None
     away_raw = parts[0].strip()
     # home is everything before the first ' - '
-    remainder = parts[1]
+    remainder = parts[1].strip()
     home_raw = remainder.split(" - ")[0].strip() if " - " in remainder else remainder.strip()
 
     # Short abbreviation overrides not covered by _map_team's fallback dict
@@ -219,6 +231,47 @@ def _parse_teams_from_text(text: str, store=None, sport: str = "NBA") -> Tuple[O
     away = _try_map(away_raw)
     home = _try_map(home_raw)
     return away, home
+
+
+def _extract_team_total_team(
+    text: str,
+    away_team: Optional[str],
+    home_team: Optional[str],
+    store=None,
+    sport: str = "NBA",
+) -> Optional[str]:
+    """Extract the team code for 'Team Total' pick text."""
+    if not text:
+        return None
+
+    parts = [p.strip() for p in re.split(r"\s+-\s+", text)]
+    if len(parts) < 2:
+        return None
+
+    team_part = parts[1]
+    team_part = re.sub(r":\s*team total.*$", "", team_part, flags=re.IGNORECASE).strip()
+    if not team_part:
+        return None
+
+    _SHORT_ABBREV: Dict[str, str] = {
+        "sa": "SAS", "gs": "GSW", "ny": "NYK", "la": "LAL",
+        "okc": "OKC", "nop": "NOP", "no": "NOP",
+    }
+
+    mapped = _map_team(team_part, store=store, sport=sport)
+    if mapped:
+        return mapped
+
+    lower = team_part.lower()
+    if lower in _SHORT_ABBREV:
+        return _SHORT_ABBREV[lower]
+
+    if lower == "home":
+        return home_team
+    if lower == "away":
+        return away_team
+
+    return None
 
 
 def normalize_bettingpros_experts_record(
@@ -265,6 +318,18 @@ def normalize_bettingpros_experts_record(
     line = raw.get("line")
     odds = raw.get("odds")
     side = None
+    raw_text = raw.get("raw_pick_text") or raw.get("selection") or ""
+
+    if market_type == "player_prop":
+        raw_text_lower = raw_text.lower()
+        if "team total" in raw_text_lower:
+            market_type = "team_total"
+            if "over" in raw_text_lower:
+                selection = "OVER"
+                side = "OVER"
+            elif "under" in raw_text_lower:
+                selection = "UNDER"
+                side = "UNDER"
 
     eligible = True
     inelig_reason = None
@@ -371,10 +436,26 @@ def normalize_bettingpros_experts_record(
             selection = _map_team(selection, store=store, sport=sport) or selection
             side = selection
 
+    elif market_type == "team_total":
+        direction = (raw.get("side") or side or selection or "").upper()
+        team_code = _extract_team_total_team(raw_text, away_team, home_team, store=store, sport=sport)
+        if not team_code:
+            eligible = False
+            inelig_reason = "unparsed_team"
+        elif direction not in ("OVER", "UNDER"):
+            eligible = False
+            inelig_reason = "missing_direction"
+        elif line is None:
+            eligible = False
+            inelig_reason = "missing_line"
+        else:
+            selection = f"{team_code}_team_total"
+            side = direction
+
     elif market_type == "player_prop":
         prop_direction = (raw.get("side") or "").upper()
         prop_line = line  # already set from raw.get("line")
-        text = raw.get("raw_pick_text") or raw.get("selection") or ""
+        text = raw_text
 
         player_name = _extract_prop_player(text)
         stat_key_parsed = _extract_prop_stat(text)

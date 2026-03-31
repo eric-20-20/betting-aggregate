@@ -84,7 +84,13 @@ PROP_STAT_ALIASES_SEED: Dict[str, List[str]] = {
         "threes",
         "3pm",
         "3 point",
+        "3-pointers made",
+        "3 pointers made",
+        "3-pointer made",
+        "3-pt made",
         "3pt made",
+        "three pointers made",
+        "threes made",
     ],
     "pts_reb_ast": [
         "pra",

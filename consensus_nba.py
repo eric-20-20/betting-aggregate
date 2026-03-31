@@ -210,12 +210,6 @@ def compute_score(source_strength: int, expert_strength: int, count_total: int, 
     return clamp_score(base)
 
 
-def normalize_team_selection(selection: str | None) -> Optional[str]:
-    if not selection or not isinstance(selection, str):
-        return None
-    return selection.lower().replace(" ", "_")
-
-
 def _normalize_prop_direction(side: Optional[str], selection: Optional[str]) -> Optional[str]:
     for val in (side, selection):
         if not val or not isinstance(val, str):
@@ -370,69 +364,6 @@ def _assert_no_sets(obj: Any, path: str = "root") -> None:
     elif isinstance(obj, list):
         for idx, v in enumerate(obj):
             _assert_no_sets(v, f"{path}[{idx}]")
-
-
-def betql_prop_to_standard_pick(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Adapt a normalized BetQL prop-picks record into the Action/Covers-shaped schema.
-    This does not perform any grouping or consensus logic.
-    """
-    stat_map = {
-        "player_points": "points",
-        "player_rebounds": "rebounds",
-        "player_assists": "assists",
-        "player_threes": "threes_made",
-    }
-    stat_key = stat_map.get(raw.get("market")) or None
-    direction = (raw.get("direction") or "").upper() or None
-    side = None
-    if direction == "OVER":
-        side = "player_over"
-    elif direction == "UNDER":
-        side = "player_under"
-
-    player_token = raw.get("player_name_norm") or raw.get("player_name_raw")
-    selection = None
-    if player_token and stat_key and direction:
-        selection = f"{player_token}::{stat_key}::{direction}"
-
-    provenance = {
-        "source_id": raw.get("source_id"),
-        "source_surface": raw.get("source_surface"),
-        "sport": raw.get("sport"),
-        "observed_at_utc": raw.get("observed_at_utc"),
-        "canonical_url": raw.get("canonical_url"),
-        "raw_fingerprint": raw.get("raw_fingerprint"),
-        "expert_name": "BetQL Model",
-        "rating_stars": raw.get("rating_stars"),
-    }
-
-    event = {
-        "away_team": raw.get("away_team"),
-        "home_team": raw.get("home_team"),
-        "event_key": None,
-        "day_key": None,
-        "matchup_key": None,
-        "event_start_time_utc": None,
-        "player_team": raw.get("player_team") or raw.get("team_panel_abbrev"),
-    }
-
-    market = {
-        "market_type": "player_prop",
-        "side": side,
-        "stat_key": stat_key,
-        "line": raw.get("line"),
-        "odds": raw.get("odds"),
-        "player_key": None,
-        "selection": selection,
-    }
-
-    return {
-        "provenance": provenance,
-        "event": event,
-        "market": market,
-        "eligible_for_consensus": True,
-    }
 
 
 def normalize_player_id(player_id: Optional[str]) -> Optional[str]:
@@ -1172,6 +1103,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                     "player_id": e.get("player_id"),
                     "rating_stars": e.get("rating_stars"),
                     "unit_size": e.get("unit_size"),
+                    "odds": e.get("odds"),
                 })
             results.append(
                 {
@@ -1816,41 +1748,6 @@ def format_soft_row(item: Dict[str, Any]) -> str:
     )
 
 
-def format_within_row(item: Dict[str, Any]) -> str:
-    return (
-        f"{item.get('day_key')} {item.get('player_id')}::{item.get('atomic_stat')}::{item.get('direction')} "
-        f"source={item.get('source')} exp_strength={item.get('expert_strength')} "
-        f"count={item.get('count_total')} sample_urls={item.get('sample_urls', [])}"
-    )
-
-
-def format_signal_row(item: Dict[str, Any]) -> str:
-    subject = item.get("player_id") or item.get("selection")
-    detail = f"{item.get('atomic_stat')}" if item.get("atomic_stat") else item.get("market_type")
-    line_str = ""
-    if item.get("line_median") is not None:
-        line_str = f" line={item.get('line_median')} [{item.get('line_min')},{item.get('line_max')}]"
-    return (
-        f"{item.get('day_key')} {subject} {detail} {item.get('direction')} "
-        f"score={item.get('score')} src={item.get('source_strength')} "
-        f"exp={item.get('expert_strength')} "
-        f"ae={item.get('atomic_evidence_count', 0)} ce={item.get('combo_evidence_count', 0)} "
-        f"we={item.get('weighted_expert_strength', item.get('expert_strength'))} "
-        f"count={item.get('count_total')} "
-        f"sources={','.join(item.get('sources', []))}{line_str}"
-    )
-
-
-def format_avoid_row(item: Dict[str, Any]) -> str:
-    return (
-        f"{item.get('day_key')} {item.get('player_id')}::{item.get('atomic_stat')} CONFLICT "
-        f"over(exp={item.get('over_expert_strength')}|count={item.get('over_count_total')}) "
-        f"under(exp={item.get('under_expert_strength')}|count={item.get('under_count_total')}) "
-        f"sources={','.join(item.get('sources', []))} "
-        f"lines_over={item.get('over_lines', [])} lines_under={item.get('under_lines', [])}"
-    )
-
-
 def format_conflict_row(item: Dict[str, Any]) -> str:
     key_disp = item.get("matchup_key") or item.get("matchup") or item.get("event_key") or item.get("day_key") or "N/A"
     if item.get("market_type") == "player_prop":
@@ -2196,6 +2093,7 @@ def build_solo_signals(
                 "edge_pct": prov.get("edge_pct"),
                 "best_odds": prov.get("best_odds"),
                 "badge": prov.get("badge"),
+                "odds": odds,
             }],
             "odds": [odds] if odds else [],
             "odds_list": [odds] if odds else [],
@@ -2866,88 +2764,6 @@ def build_standard_directional_consensus(records: List[Dict[str, Any]], debug: b
             )
 
     return hard_results, avoid_results
-
-
-def build_avoid_signals(signals: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    directional: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
-    for sig in signals:
-        day = sig.get("day_key")
-        player_id = sig.get("player_id")
-        atomic_stat = sig.get("atomic_stat")
-        direction = sig.get("direction")
-        if not (day and player_id and atomic_stat and direction in {"OVER", "UNDER"}):
-            continue
-        key = (day, player_id, atomic_stat, direction)
-        entry = directional.setdefault(
-            key,
-            {
-                "day_key": day,
-                "player_id": player_id,
-                "atomic_stat": atomic_stat,
-                "direction": direction,
-                "sources": set(),
-                "experts": set(),
-                "supports": [],
-                "count_total": 0,
-                "event_key": sig.get("event_key"),
-            },
-        )
-        entry["sources"].update(sig.get("sources") or [])
-        entry["experts"].update(sig.get("experts") or [])
-        entry["supports"].extend(sig.get("supports") or [])
-        entry["count_total"] += sig.get("count_total", 0)
-
-    for entry in directional.values():
-        entry["source_strength"] = len(entry["sources"])
-        entry["expert_strength"] = len(entry["experts"])
-        entry["score"] = compute_score(entry["source_strength"], entry["expert_strength"], entry["count_total"])
-
-    grouped: Dict[Tuple[str, str, str], Dict[str, Dict[str, Any]]] = {}
-    for key, entry in directional.items():
-        dk, pid, atomic_stat, direction = key
-        grouped.setdefault((dk, pid, atomic_stat), {})[direction] = entry
-
-    avoid_signals: List[Dict[str, Any]] = []
-    for (dk, pid, atomic_stat), dir_map in grouped.items():
-        over = dir_map.get("OVER")
-        under = dir_map.get("UNDER")
-        if not (over and under):
-            continue
-        over_ok = over["expert_strength"] >= 2 or over["score"] >= 60
-        under_ok = under["expert_strength"] >= 2 or under["score"] >= 60
-        if not (over_ok and under_ok):
-            continue
-        sources_union = set(over["sources"]) | set(under["sources"])
-        experts_union = set(over["experts"]) | set(under["experts"])
-        avoid_signals.append(
-            {
-                "signal_type": "avoid_conflict",
-                "day_key": dk,
-                "event_key": over.get("event_key") or under.get("event_key"),
-                "market_type": "player_prop",
-                "player_id": pid,
-                "selection": f"{pid}::{atomic_stat}::CONFLICT",
-                "atomic_stat": atomic_stat,
-                "direction": "CONFLICT",
-                "line": None,
-                "score": max(over["score"], under["score"]),
-                "source_strength": len(sources_union),
-                "expert_strength": len(experts_union),
-                "count_total": over["count_total"] + under["count_total"],
-                "sources": sorted(sources_union),
-                "experts": sorted(experts_union),
-                "supports": over["supports"] + under["supports"],
-                "over_supports": over["supports"],
-                "under_supports": under["supports"],
-                "over_score": over["score"],
-                "under_score": under["score"],
-                "sources_over": sorted(over["sources"]),
-                "sources_under": sorted(under["sources"]),
-                "experts_over": sorted(over["experts"]),
-                "experts_under": sorted(under["experts"]),
-            }
-        )
-    return avoid_signals
 
 
 def compute_expert_id_value(prov: Dict[str, Any]) -> Optional[str]:

@@ -178,7 +178,7 @@ def upsert_signals(signal_records: List[Dict]) -> int:
                 "expert_slug":  expert_slug,
                 "expert_name":  expert_name,
                 "line":         sup.get("line"),
-                "odds":         None,
+                "odds":         sup.get("odds"),
                 "raw_pick_text": sup.get("raw_pick_text"),
             })
 
@@ -244,36 +244,59 @@ def upsert_grades(grade_records: List[Dict]) -> int:
 
     total = _upsert("grades", rows, "signal_id")
 
-    # Update expert_result / expert_graded_line on matching signal_sources rows
+    # Bulk-update expert_result / expert_graded_line on matching signal_sources rows
+    # via a single Postgres RPC call instead of one HTTP PATCH per row.
+    # Deployed by: scripts/migrations/002_batch_update_expert_results.sql
     if source_grade_updates:
         client = get_client()
-        for upd in source_grade_updates:
-            try:
-                q = (
-                    client.table("signal_sources")
-                    .update({
-                        "expert_result":      upd["expert_result"],
-                        "expert_graded_line": upd["expert_graded_line"],
-                    })
-                    .eq("signal_id", upd["signal_id"])
-                    .eq("source_id", upd["source_id"])
-                )
-                if upd.get("expert_slug"):
-                    q = q.eq("expert_slug", upd["expert_slug"])
-                else:
-                    q = q.is_("expert_slug", "null")
-                graded_line = upd.get("expert_graded_line")
-                if graded_line is not None:
-                    q = q.eq("line", graded_line)
-                else:
-                    q = q.is_("line", "null")
-                q.execute()
-                total += 1
-            except Exception as e:
-                logger.warning(
-                    "Failed to update expert_result for signal_id=%s source=%s expert=%s: %s",
-                    upd["signal_id"], upd["source_id"], upd.get("expert_slug"), e,
-                )
+        try:
+            resp = client.rpc(
+                "bulk_update_expert_results",
+                {"updates": source_grade_updates},
+            ).execute()
+            rows_updated = resp.data or 0
+            logger.debug(
+                "bulk_update_expert_results: %d rows updated for %d source_grade_updates",
+                rows_updated,
+                len(source_grade_updates),
+            )
+            total += rows_updated
+        except Exception as e:
+            logger.warning(
+                "bulk_update_expert_results RPC failed (%d updates): %s — "
+                "falling back to per-row PATCH",
+                len(source_grade_updates),
+                e,
+            )
+            # Fallback: per-row PATCH (original behaviour) so a function deployment
+            # issue never silently drops grade updates.
+            for upd in source_grade_updates:
+                try:
+                    q = (
+                        client.table("signal_sources")
+                        .update({
+                            "expert_result":      upd["expert_result"],
+                            "expert_graded_line": upd["expert_graded_line"],
+                        })
+                        .eq("signal_id", upd["signal_id"])
+                        .eq("source_id", upd["source_id"])
+                    )
+                    if upd.get("expert_slug"):
+                        q = q.eq("expert_slug", upd["expert_slug"])
+                    else:
+                        q = q.is_("expert_slug", "null")
+                    graded_line = upd.get("expert_graded_line")
+                    if graded_line is not None:
+                        q = q.eq("line", graded_line)
+                    else:
+                        q = q.is_("line", "null")
+                    q.execute()
+                    total += 1
+                except Exception as inner_e:
+                    logger.warning(
+                        "Failed to update expert_result for signal_id=%s source=%s expert=%s: %s",
+                        upd["signal_id"], upd["source_id"], upd.get("expert_slug"), inner_e,
+                    )
 
     return total
 
@@ -339,7 +362,7 @@ def upsert_occurrences(occurrence_records: List[Dict]) -> int:
             "line":                   r.get("line"),
             "atomic_stat":            r.get("atomic_stat"),
             "player_key":             r.get("player_key"),
-            "stat_key":               r.get("stat_key"),
+            "stat_key":               r.get("atomic_stat"),
             "occ_source_id":          r.get("occ_source_id"),
             "occ_sources_combo":      r.get("occ_sources_combo"),
             "signal_sources_combo":   r.get("signal_sources_combo") or r.get("sources_combo"),
@@ -352,8 +375,9 @@ def upsert_occurrences(occurrence_records: List[Dict]) -> int:
             "signal_type":            r.get("signal_type"),
             "run_id":                 r.get("run_id"),
             "observed_at_utc":        r.get("observed_at_utc"),
+            "graded_at_utc":          r.get("graded_at_utc"),
         })
-    return _upsert("graded_occurrences", rows, "occurrence_id")
+    return _upsert("graded_occurrences", rows, "signal_id")
 
 
 def push_daily_run(signals_file: str, grades_file: str, plays_file: str) -> None:

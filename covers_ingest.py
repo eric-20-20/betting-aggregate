@@ -122,23 +122,6 @@ def discover_matchup_pick_urls(listing_url: str = None, sport: str = NBA_SPORT) 
             urls.append(full)
     return urls
 
-def map_team_token_to_code(token: str, store=None) -> Optional[str]:
-    store = store or data_store
-    normalized = normalize_text(token)
-    alt = {
-        "pho": "PHX",
-        "no": "NOP",
-    }
-    if normalized in alt:
-        return alt[normalized]
-    code_matches = store.lookup_team_code(normalized)
-    if len(code_matches) == 1:
-        return next(iter(code_matches))
-    if len(normalized) == 3 and normalized.upper() in store.teams:
-        return normalized.upper()
-    return None
-
-
 def extract_matchup_teams_from_header(soup: BeautifulSoup, store=None) -> tuple[Optional[str], Optional[str]]:
     store = store or data_store
     text = soup.get_text(" ", strip=True)
@@ -739,11 +722,6 @@ def ingest_covers_games(matchup_urls: Optional[List[str]] = None, schedule=None,
 
 
 # Backward compatibility alias
-def ingest_covers_nba_games(matchup_urls: Optional[List[str]] = None, schedule=None, debug: bool = False) -> None:
-    """Backward compatibility wrapper for ingest_covers_games with NBA sport."""
-    ingest_covers_games(matchup_urls=matchup_urls, schedule=schedule, debug=debug, sport=NBA_SPORT)
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ingest Covers analyst picks.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")

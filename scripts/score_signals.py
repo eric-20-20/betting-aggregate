@@ -27,17 +27,7 @@ SIGNALS_PATH = Path("data/ledger/signals_latest.jsonl")
 PLAYS_DIR = Path("data/plays")
 
 CURRENT_LINES_PATH = Path("data/cache/current_lines.json")
-RECENT_TRENDS_PATH = REPORTS_DIR / "recent_trends_lookup.json"
 CACHE_DIR = Path("data/cache/results")
-
-CROSS_TAB_PATH = REPORTS_DIR / "cross_tabulation.json"
-CONSENSUS_PATH = REPORTS_DIR / "trends" / "consensus_strength.json"
-LINE_BUCKET_PATH = REPORTS_DIR / "by_line_bucket.json"
-STAT_TYPE_PATH = REPORTS_DIR / "by_stat_type.json"
-DAY_OF_WEEK_PATH = REPORTS_DIR / "trends" / "by_day_of_week.json"
-EXPERT_PATH = REPORTS_DIR / "by_expert_record.json"
-MARKET_TYPE_PATH = REPORTS_DIR / "trends" / "market_type.json"
-
 
 def get_sport_paths(sport: str) -> Tuple[Path, Path, Path]:
     """Return (reports_dir, signals_path, plays_dir) for the given sport."""
@@ -60,12 +50,9 @@ EXCLUDED_SIGNAL_TYPES = {"avoid_conflict"}
 MIN_SAMPLE_PRIMARY = 15   # min n to accept a primary combo lookup
 MIN_SAMPLE_TREND = 5      # min decided bets for recent trend modifier
 
-# Tier thresholds (Wilson lower bound)
-WILSON_TIER_A = 0.52      # strong edge
 WILSON_TIER_B = 0.46      # positive edge
 WILSON_TIER_C = 0.45      # marginal — not exported
 WILSON_HARD_EXCLUDE = 0.42  # hard-exclude if n >= 30 and Wilson below this
-WILSON_A_TIER_PATTERN = 0.58  # minimum pattern wilson for A-tier eligibility
 
 # Confidence score (0-100): maps wilson_score to a human-readable scale
 # Floor = WILSON_TIER_B (0.46) → 0,  Ceiling = 0.65 → 100
@@ -92,8 +79,6 @@ EXPERT_PENALTY = -0.015    # worst expert <45% wp (n>=30)
 EXPERT_MIN_N = 30
 STAT_TYPE_BOOST = 0.01     # stat wp >52%
 STAT_TYPE_PENALTY = -0.01  # stat wp <47%
-DAY_BOOST_THURS = 0.01
-DAY_PENALTY_FRI = -0.01
 LINE_BUCKET_BOOST = 0.01   # bucket wp >51%
 LINE_BUCKET_PENALTY = -0.01  # bucket wp <48%
 
@@ -104,11 +89,24 @@ EXCLUDED_STAT_TYPES = {"steals", "unknown", "pts_reb"}
 # Direction-aware stat exclusions: exclude (stat, direction) combos that are bad,
 # while allowing the other direction through (e.g. pts_reb_ast UNDER is 57.9%).
 EXCLUDED_STAT_DIR: Set[Tuple[str, str]] = {
-    ("reb_ast", "OVER"),       # 35-32 (52%), small sample — not reliable
+    # ("reb_ast", "OVER") removed — Mike Barner reb_ast OVER is 37-21 (63.8%), A-tier pattern
     ("pts_reb_ast", "OVER"),   # 203-247 (45.1%) — clearly negative edge
 }
-MAX_PROP_LINE = 30.5
 MIN_DAILY_PICKS = 3
+
+# ── Player prop selection validation ─────────────────────────────────────────
+TEAM_SLUGS: Set[str] = {
+    "atlanta_hawks", "boston_celtics", "brooklyn_nets", "charlotte_hornets",
+    "chicago_bulls", "cleveland_cavaliers", "dallas_mavericks", "denver_nuggets",
+    "detroit_pistons", "golden_state_warriors", "houston_rockets", "indiana_pacers",
+    "la_clippers", "los_angeles_clippers", "los_angeles_lakers", "memphis_grizzlies",
+    "miami_heat", "milwaukee_bucks", "minnesota_timberwolves", "new_orleans_pelicans",
+    "new_york_knicks", "oklahoma_city_thunder", "orlando_magic", "philadelphia_76ers",
+    "phoenix_suns", "portland_trail_blazers", "sacramento_kings", "san_antonio_spurs",
+    "toronto_raptors", "utah_jazz", "washington_wizards",
+    "home_team_total", "away_team_total",
+}
+_COVERS_GARBAGE_PREFIX = re.compile(r"^(cs_|sc_|jt_)")
 
 # ── Player availability: ruled-out players ────────────────────────────────
 # Add (player_key, "YYYY-MM-DD") tuples for players confirmed out on a specific date.
@@ -127,6 +125,19 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
     # Ordered most-specific first — first match wins.
     # Dataset: 22,426 graded WIN/LOSS records across 2024-25 and 2025-26 NBA seasons.
     # Wilson scores use z=1.645 (90% CI lower bound).
+
+    # nukethebooks rebounds UNDER: 19-11 (63.3%) n=30 Wilson=0.465 — B-tier (added 2026-03-25)
+    # juicereel_nukethebooks source. MUST be before nukethebooks_solo_props_under (more specific).
+    {
+        "id": "nukethebooks_rebounds_under",
+        "label": "nukethebooks rebounds prop UNDER",
+        "exact_combo": "juicereel_nukethebooks",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "rebounds",
+        "hist": {"record": "19-11", "win_pct": 0.633, "n": 30},
+        "tier_eligible": "B",
+    },
 
     # nukethebooks solo UNDER props: 100-69 (59.2%) n=169 Wilson=0.529
     # Updated 2026-03-23: removed line-movement duplicates (803 rows cleaned up)
@@ -216,19 +227,6 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "B",
     },
 
-    # action solo UNDER props: 399-257 (60.8%) n=656 Wilson=0.576
-    # Consistent across all months; strong A-tier solo.
-    # Catches all action UNDER props not matched by a more-specific stat_type pattern above.
-    {
-        "id": "action_solo_props_under",
-        "label": "action player prop UNDER",
-        "exact_combo": "action",
-        "market_type": "player_prop",
-        "direction": "UNDER",
-        "hist": {"record": "399-257", "win_pct": 0.608, "n": 656},
-        "tier_eligible": "A",
-    },
-
     # sxebets (JuiceReel) solo UNDER props: REMOVED 2026-03-20
     # validate_patterns.py: actual n=184 (was n=1068), Wilson=0.456 — below B-tier threshold 0.46.
     # The large historical n was from the pre-fix ledger. With clean rebuild data, no edge confirmed.
@@ -302,20 +300,6 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
     #
     # These patterns need to re-accumulate real live data before being re-added.
 
-    # betql + juicereel_sxebets player prop UNDER: 11-5 n=16 Wilson=0.482 — B-tier
-    # Actual current record in clean rebuild; was incorrectly n=49 (merge bug inflated).
-    # B-tier until sample grows to ≥30. MUST be before betql_solo_props_under.
-    {
-        "id": "betql_sxebets_props_under",
-        "label": "betql + sxebets player prop UNDER",
-        "source_pair": ["betql", "juicereel_sxebets"],
-        "market_type": "player_prop",
-        "direction": "UNDER",
-        "min_sources": 2,
-        "hist": {"record": "11-5", "win_pct": 0.688, "n": 16},
-        "tier_eligible": "B",
-    },
-
     # unitvacuum solo total: actual record from clean rebuild (validate_patterns.py)
     # WARN: n drift from hist — accumulating live data, update when n>=50.
     {
@@ -348,81 +332,27 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
     # Data: grades_latest.jsonl (2026-03-05). All records are current-season validated.
     # A-tier requires Wilson >= 0.50 AND consistent across multiple months.
 
-    # betql OKC spread: 81-28 (74.3%) n=109 Wilson=0.669 — A-tier (25-26: 33-16, 67.3%)
-    {
-        "id": "betql_spread_okc",
-        "label": "betql spread OKC",
-        "exact_combo": "betql",
-        "market_type": "spread",
-        "team": "OKC",
-        "hist": {"record": "81-28", "win_pct": 0.743, "n": 109},
-        "tier_eligible": "A",
-    },
-    # betql BOS spread: 64-30 (68.1%) n=94 Wilson=0.598 — A-tier
-    # Updated 2026-03-23: accumulated new season data
+    # betql BOS spread: 63-33 (65.6%) n=96 Wilson=0.564 — A-tier
+    # Updated 2026-03-25
     {
         "id": "betql_spread_bos",
         "label": "betql spread BOS",
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "BOS",
-        "hist": {"record": "64-30", "win_pct": 0.681, "n": 94},
+        "hist": {"record": "63-33", "win_pct": 0.656, "n": 96},
         "tier_eligible": "A",
     },
-    # betql MIN spread: 62-24 (72.1%) n=86 Wilson=0.636 — A-tier
-    # Updated 2026-03-23
+    # betql MIN spread: 59-27 (68.6%) n=86 Wilson=0.591 — A-tier
+    # Updated 2026-03-25
     {
         "id": "betql_spread_min",
         "label": "betql spread MIN",
         "exact_combo": "betql",
         "market_type": "spread",
         "team": "MIN",
-        "hist": {"record": "62-24", "win_pct": 0.721, "n": 86},
+        "hist": {"record": "59-27", "win_pct": 0.686, "n": 86},
         "tier_eligible": "A",
-    },
-    # betql LAC spread: 61-29 (67.8%) n=90 Wilson=0.593 — A-tier
-    # Updated 2026-03-23
-    {
-        "id": "betql_spread_lac",
-        "label": "betql spread LAC",
-        "exact_combo": "betql",
-        "market_type": "spread",
-        "team": "LAC",
-        "hist": {"record": "61-29", "win_pct": 0.678, "n": 90},
-        "tier_eligible": "A",
-    },
-    # betql DET spread: 50-27 (64.9%) n=77 Wilson=0.538 — PROMOTED back to A-tier (2026-03-20)
-    # Previous n=144 entry used corrupt/stale data. Clean rebuild shows strong real record.
-    {
-        "id": "betql_spread_det",
-        "label": "betql spread DET",
-        "exact_combo": "betql",
-        "market_type": "spread",
-        "team": "DET",
-        "hist": {"record": "50-27", "win_pct": 0.649, "n": 77},
-        "tier_eligible": "B",
-    },
-    # betql PHX spread: 45-22 (67.2%) n=67 Wilson=0.572 — A-tier
-    # Updated 2026-03-23
-    {
-        "id": "betql_spread_phx",
-        "label": "betql spread PHX",
-        "exact_combo": "betql",
-        "market_type": "spread",
-        "team": "PHX",
-        "hist": {"record": "45-22", "win_pct": 0.672, "n": 67},
-        "tier_eligible": "B",
-    },
-    # betql HOU spread: 66-46 (58.9%) n=112 Wilson=0.512 — B-tier
-    # Updated 2026-03-23: accumulated more data, still B-tier territory
-    {
-        "id": "betql_spread_hou",
-        "label": "betql spread HOU",
-        "exact_combo": "betql",
-        "market_type": "spread",
-        "team": "HOU",
-        "hist": {"record": "66-46", "win_pct": 0.589, "n": 112},
-        "tier_eligible": "B",
     },
     # betql GSW spread: 58-37 (61.1%) n=97 Wilson=0.510 — B-tier (25-26: degraded)
     # Current season deteriorated; overall still positive edge at B-tier level.
@@ -458,20 +388,6 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "moneyline",
         "min_sources": 2,
         "hist": {"record": "46-16", "win_pct": 0.742, "n": 62},
-        "tier_eligible": "B",
-    },
-
-    # betql + sportsline spread: 209-143 n=352 Wilson=0.550 — A-tier (updated 2026-03-20)
-    # validate_patterns.py: actual n=352 (was n=106, data grew 3x). Wilson=0.550 — A-tier.
-    # 11 months of data, no month concentration, consistent performance. Confirmed A-tier.
-    # MUST be before solo betql or sportsline spread patterns (more specific).
-    {
-        "id": "betql_sportsline_spread",
-        "label": "betql + sportsline spread",
-        "source_pair": ["betql", "sportsline"],
-        "market_type": "spread",
-        "min_sources": 2,
-        "hist": {"record": "209-143", "win_pct": 0.594, "n": 352},
         "tier_eligible": "B",
     },
 
@@ -524,6 +440,143 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "player_prop",
         "direction": "UNDER",
         "hist": {"record": "189-130", "win_pct": 0.592, "n": 319},
+        "tier_eligible": "B",
+    },
+
+    # ── SportsLine expert-level patterns ─────────────────────────────────────
+    # These MUST come before sportsline_solo_props_over / sportsline_solo_props_under
+    # (first-match-wins; generic sportsline pattern would fire first otherwise).
+    # All sportsline source. Expert field matched via signal.experts list.
+
+    # Larry Hartstein assists OVER: 20-6 (76.9%) n=26 Wilson=0.593 — A-tier (added 2026-03-25)
+    {
+        "id": "expert_larry_hartstein_assists_over",
+        "label": "Larry Hartstein assists prop OVER",
+        "expert": "Larry Hartstein",
+        "market_type": "player_prop",
+        "direction": "OVER",
+        "stat_type": "assists",
+        "hist": {"record": "20-6", "win_pct": 0.769, "n": 26},
+        "tier_eligible": "A",
+    },
+
+    # Mike Barner assists OVER: 17-8 (68.0%) n=25 Wilson=0.505 — A-tier (added 2026-03-25)
+    # MUST be before expert_mike_barner (more specific).
+    {
+        "id": "expert_mike_barner_assists_over",
+        "label": "Mike Barner assists prop OVER",
+        "expert": "Mike Barner",
+        "market_type": "player_prop",
+        "direction": "OVER",
+        "stat_type": "assists",
+        "hist": {"record": "17-8", "win_pct": 0.680, "n": 25},
+        "tier_eligible": "A",
+    },
+
+    # Mike Barner reb+ast OVER: 37-21 (63.8%) n=58 Wilson=0.519 — A-tier (added 2026-03-25)
+    # MUST be before expert_mike_barner (more specific).
+    {
+        "id": "expert_mike_barner_reb_ast_over",
+        "label": "Mike Barner reb+ast prop OVER",
+        "expert": "Mike Barner",
+        "market_type": "player_prop",
+        "direction": "OVER",
+        "stat_type": "reb_ast",
+        "hist": {"record": "37-21", "win_pct": 0.638, "n": 58},
+        "tier_eligible": "A",
+    },
+
+    # Mike Barner points: 164-121 (57.5%) n=285 Wilson=0.518 — A-tier (added 2026-03-25)
+    # MUST be before expert_mike_barner (more specific).
+    {
+        "id": "expert_mike_barner_points",
+        "label": "Mike Barner points prop",
+        "expert": "Mike Barner",
+        "market_type": "player_prop",
+        "stat_type": "points",
+        "hist": {"record": "164-121", "win_pct": 0.575, "n": 285},
+        "tier_eligible": "A",
+    },
+
+    # Mike Barner: 294-211 (58.2%) n=505 Wilson=0.546 — B-tier (catch-all for other stats)
+    {
+        "id": "expert_mike_barner",
+        "label": "Mike Barner player prop",
+        "expert": "Mike Barner",
+        "market_type": "player_prop",
+        "hist": {"record": "294-211", "win_pct": 0.582, "n": 505},
+        "tier_eligible": "B",
+    },
+
+    # Matt Severance points UNDER: 27-9 (75.0%) n=36 Wilson=0.601 — A-tier (added 2026-03-25)
+    # MUST be before expert_matt_severance (more specific).
+    {
+        "id": "expert_matt_severance_points_under",
+        "label": "Matt Severance points prop UNDER",
+        "expert": "Matt Severance",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "points",
+        "hist": {"record": "27-9", "win_pct": 0.750, "n": 36},
+        "tier_eligible": "A",
+    },
+
+    # Matt Severance: 61-31 (66.3%) n=92 Wilson=0.562 — B-tier (catch-all; spreads excluded)
+    {
+        "id": "expert_matt_severance",
+        "label": "Matt Severance player prop",
+        "expert": "Matt Severance",
+        "market_type": "player_prop",
+        "hist": {"record": "61-31", "win_pct": 0.663, "n": 92},
+        "tier_eligible": "B",
+    },
+
+    # Prop Bet Guy pts+ast OVER: 33-24 (57.9%) n=57 Wilson=0.461 — A-tier (added 2026-03-25)
+    # MUST be before expert_prop_bet_guy (more specific).
+    {
+        "id": "expert_prop_bet_guy_pts_ast_over",
+        "label": "Prop Bet Guy pts+ast prop OVER",
+        "expert": "Prop Bet Guy",
+        "market_type": "player_prop",
+        "direction": "OVER",
+        "stat_type": "pts_ast",
+        "hist": {"record": "33-24", "win_pct": 0.579, "n": 57},
+        "tier_eligible": "A",
+    },
+
+    # Prop Bet Guy rebounds OVER: 28-18 (60.9%) n=46 Wilson=0.467 — A-tier (added 2026-03-25)
+    # MUST be before expert_prop_bet_guy (more specific).
+    {
+        "id": "expert_prop_bet_guy_rebounds_over",
+        "label": "Prop Bet Guy rebounds prop OVER",
+        "expert": "Prop Bet Guy",
+        "market_type": "player_prop",
+        "direction": "OVER",
+        "stat_type": "rebounds",
+        "hist": {"record": "28-18", "win_pct": 0.609, "n": 46},
+        "tier_eligible": "A",
+    },
+
+    # Prop Bet Guy pts+reb+ast UNDER: 34-16 (68.0%) n=50 Wilson=0.548 — A-tier (added 2026-03-25)
+    # MUST be before expert_prop_bet_guy (more specific).
+    {
+        "id": "expert_prop_bet_guy_pts_reb_ast_under",
+        "label": "Prop Bet Guy pts+reb+ast prop UNDER",
+        "expert": "Prop Bet Guy",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "pts_reb_ast",
+        "hist": {"record": "34-16", "win_pct": 0.680, "n": 50},
+        "tier_eligible": "A",
+    },
+
+    # Prop Bet Guy: 319-281 (53.2%) n=600 Wilson=0.492 — B-tier (catch-all)
+    {
+        "id": "expert_prop_bet_guy",
+        "label": "Prop Bet Guy player prop",
+        "expert": "Prop Bet Guy",
+        "market_type": "player_prop",
+        "hist": {"record": "319-281", "win_pct": 0.532, "n": 600},
         "tier_eligible": "B",
     },
 
@@ -586,7 +639,7 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "market_type": "player_prop",
         "direction": "OVER",
         "hist": {"record": "381-207", "win_pct": 0.648, "n": 588},
-        "tier_eligible": "A",
+        "tier_eligible": "B",
     },
 
     # bettingpros_experts total OVER: 43-25 (63.2%) n=68 Wilson=0.533 — B-tier (added 2026-03-23)
@@ -679,17 +732,6 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "tier_eligible": "A",
     },
 
-    # Scott Rickenbach spreads: 118-74 (61.5%) n=192 Wilson=0.544 — B-tier (updated 2026-03-24)
-    # action source. Updated record from full expert_records rebuild. Totals record is 3-11 (21.4%) — spread only.
-    {
-        "id": "expert_scott_rickenbach_spread",
-        "label": "Scott Rickenbach spread",
-        "expert": "scott_rickenbach",
-        "market_type": "spread",
-        "hist": {"record": "118-74", "win_pct": 0.615, "n": 192},
-        "tier_eligible": "B",
-    },
-
     # Kyle Murray pts+reb UNDER: 50-13 (79.4%) n=63 Wilson=0.699 — A-tier (added 2026-03-23)
     # action source. Temporal: 6 months, top month 38% (Jan 2026). Nov dip (1-3) then very hot.
     # Very high Wilson even with conservative estimate. Props only, pts_reb UNDER specifically.
@@ -713,42 +755,6 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "expert": "Bruce Marshall",
         "market_type": "spread",
         "hist": {"record": "123-94", "win_pct": 0.567, "n": 218},
-        "tier_eligible": "B",
-    },
-
-    # Mike Barner: 344-244 (58.5%) n=588 Wilson=0.551 — A-tier (player props)
-    # sportsline source; backfill goes back to Oct 2023. Player props: 294-211 (58.2%) W=0.546.
-    # Spreads (19-13, 59.4%) and ML (32-23, 58.2%) also positive but smaller samples.
-    {
-        "id": "expert_mike_barner",
-        "label": "Mike Barner player prop",
-        "expert": "Mike Barner",
-        "market_type": "player_prop",
-        "hist": {"record": "294-211", "win_pct": 0.582, "n": 505},
-        "tier_eligible": "B",
-    },
-
-    # Matt Severance: 203-160 (55.9%) n=364 Wilson=0.508 — B-tier
-    # sportsline source; player props are exceptional: 61-31 (66.3%) W=0.562 (n=92)
-    # Spreads are terrible: 22-38 (36.7%) — player props only.
-    {
-        "id": "expert_matt_severance",
-        "label": "Matt Severance player prop",
-        "expert": "Matt Severance",
-        "market_type": "player_prop",
-        "hist": {"record": "61-31", "win_pct": 0.663, "n": 92},
-        "tier_eligible": "B",
-    },
-
-    # Prop Bet Guy: 319-281 (53.2%) n=600 Wilson=0.492 — B-tier (player props)
-    # sportsline source; backfill Feb 2025–present. Earlier 41-28 was 6-week recency spike.
-    # True long-run record: 53.2% — positive edge but not exceptional.
-    {
-        "id": "expert_prop_bet_guy",
-        "label": "Prop Bet Guy player prop",
-        "expert": "Prop Bet Guy",
-        "market_type": "player_prop",
-        "hist": {"record": "319-281", "win_pct": 0.532, "n": 600},
         "tier_eligible": "B",
     },
 
@@ -818,6 +824,170 @@ PATTERN_REGISTRY: List[Dict[str, Any]] = [
         "expert": "Allan Lem",
         "market_type": "player_prop",
         "hist": {"record": "146-106", "win_pct": 0.579, "n": 252},
+        "tier_eligible": "B",
+    },
+
+    # ── OddsTrader team-specific spread patterns ─────────────────────────────
+    # Validated 2026-03-25. oddstrader source. MUST be before oddstrader_ai_spread (more specific).
+    # Wilson scores use z=1.645 (90% CI lower bound).
+
+    # oddstrader SAC spread: 41-8 (83.7%) n=49 Wilson=0.731 — A-tier
+    {
+        "id": "oddstrader_spread_sac",
+        "label": "OddsTrader spread SAC",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "SAC",
+        "hist": {"record": "41-8", "win_pct": 0.837, "n": 49},
+        "tier_eligible": "A",
+    },
+    # oddstrader NOP spread: 34-7 (82.9%) n=41 Wilson=0.706 — A-tier
+    {
+        "id": "oddstrader_spread_nop",
+        "label": "OddsTrader spread NOP",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "NOP",
+        "hist": {"record": "34-7", "win_pct": 0.829, "n": 41},
+        "tier_eligible": "A",
+    },
+    # oddstrader IND spread: 26-7 (78.8%) n=33 Wilson=0.645 — A-tier
+    {
+        "id": "oddstrader_spread_ind",
+        "label": "OddsTrader spread IND",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "IND",
+        "hist": {"record": "26-7", "win_pct": 0.788, "n": 33},
+        "tier_eligible": "A",
+    },
+    # oddstrader CHA spread: 20-6 (76.9%) n=26 Wilson=0.593 — A-tier
+    {
+        "id": "oddstrader_spread_cha",
+        "label": "OddsTrader spread CHA",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "CHA",
+        "hist": {"record": "20-6", "win_pct": 0.769, "n": 26},
+        "tier_eligible": "A",
+    },
+    # oddstrader MEM spread: 21-7 (75.0%) n=28 Wilson=0.579 — A-tier
+    {
+        "id": "oddstrader_spread_mem",
+        "label": "OddsTrader spread MEM",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "MEM",
+        "hist": {"record": "21-7", "win_pct": 0.750, "n": 28},
+        "tier_eligible": "A",
+    },
+    # oddstrader WAS spread: 31-12 (72.1%) n=43 Wilson=0.584 — A-tier
+    {
+        "id": "oddstrader_spread_was",
+        "label": "OddsTrader spread WAS",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "WAS",
+        "hist": {"record": "31-12", "win_pct": 0.721, "n": 43},
+        "tier_eligible": "A",
+    },
+    # oddstrader CHI spread: 26-10 (72.2%) n=36 Wilson=0.574 — A-tier
+    {
+        "id": "oddstrader_spread_chi",
+        "label": "OddsTrader spread CHI",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "CHI",
+        "hist": {"record": "26-10", "win_pct": 0.722, "n": 36},
+        "tier_eligible": "A",
+    },
+    # oddstrader MIL spread: 18-8 (69.2%) n=26 Wilson=0.511 — A-tier (borderline)
+    {
+        "id": "oddstrader_spread_mil",
+        "label": "OddsTrader spread MIL",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "MIL",
+        "hist": {"record": "18-8", "win_pct": 0.692, "n": 26},
+        "tier_eligible": "A",
+    },
+    # oddstrader DAL spread: 23-13 (63.9%) n=36 Wilson=0.487 — B-tier
+    {
+        "id": "oddstrader_spread_dal",
+        "label": "OddsTrader spread DAL",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "DAL",
+        "hist": {"record": "23-13", "win_pct": 0.639, "n": 36},
+        "tier_eligible": "B",
+    },
+    # oddstrader BKN spread: 22-13 (62.9%) n=35 Wilson=0.474 — B-tier
+    {
+        "id": "oddstrader_spread_bkn",
+        "label": "OddsTrader spread BKN",
+        "exact_combo": "oddstrader",
+        "market_type": "spread",
+        "team": "BKN",
+        "hist": {"record": "22-13", "win_pct": 0.629, "n": 35},
+        "tier_eligible": "B",
+    },
+
+    # ── OddsTrader player prop UNDER patterns ────────────────────────────────
+    # Validated 2026-03-25. oddstrader source. Stat-specific patterns before generic.
+
+    # oddstrader rebounds UNDER: 22-10 (68.8%) n=32 Wilson=0.531 — A-tier
+    {
+        "id": "oddstrader_props_rebounds_under",
+        "label": "OddsTrader rebounds prop UNDER",
+        "exact_combo": "oddstrader",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "rebounds",
+        "hist": {"record": "22-10", "win_pct": 0.688, "n": 32},
+        "tier_eligible": "A",
+    },
+    # oddstrader assists UNDER: 23-11 (67.6%) n=34 Wilson=0.521 — A-tier
+    {
+        "id": "oddstrader_props_assists_under",
+        "label": "OddsTrader assists prop UNDER",
+        "exact_combo": "oddstrader",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "assists",
+        "hist": {"record": "23-11", "win_pct": 0.676, "n": 34},
+        "tier_eligible": "A",
+    },
+    # oddstrader reb+ast UNDER: 16-8 (66.7%) n=24 Wilson=0.484 — B-tier
+    {
+        "id": "oddstrader_props_reb_ast_under",
+        "label": "OddsTrader reb+ast prop UNDER",
+        "exact_combo": "oddstrader",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "reb_ast",
+        "hist": {"record": "16-8", "win_pct": 0.667, "n": 24},
+        "tier_eligible": "B",
+    },
+    # oddstrader pts+reb+ast UNDER: 30-18 (62.5%) n=48 Wilson=0.491 — B-tier
+    {
+        "id": "oddstrader_props_pts_reb_ast_under",
+        "label": "OddsTrader pts+reb+ast prop UNDER",
+        "exact_combo": "oddstrader",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "pts_reb_ast",
+        "hist": {"record": "30-18", "win_pct": 0.625, "n": 48},
+        "tier_eligible": "B",
+    },
+    # oddstrader points UNDER: 31-19 (62.0%) n=50 Wilson=0.491 — B-tier
+    {
+        "id": "oddstrader_props_points_under",
+        "label": "OddsTrader points prop UNDER",
+        "exact_combo": "oddstrader",
+        "market_type": "player_prop",
+        "direction": "UNDER",
+        "stat_type": "points",
+        "hist": {"record": "31-19", "win_pct": 0.620, "n": 50},
         "tier_eligible": "B",
     },
 
@@ -1111,10 +1281,6 @@ def _load_consensus_market(data: Dict) -> Dict[Tuple[str, str], Dict]:
         key = (row.get("consensus_strength", ""), row.get("market_type", ""))
         table[key] = _make_entry(row, 0)
     return table
-
-
-COMBO_RECORD_PATH = REPORTS_DIR / "by_sources_combo_record.json"
-COMBO_MARKET_SIGNALS_PATH = REPORTS_DIR / "by_sources_combo_market.json"
 
 
 def _load_combo_market_signals(data: Dict) -> Dict[Tuple[str, str], Dict]:
@@ -1541,6 +1707,12 @@ def filter_scorable(
         p for p in _registry
         if p.get("exact_combo") and (p.get("tier_eligible") == "B" or p.get("team"))
     ]
+    # Expert patterns: solo picks from a known A-tier expert are allowed through.
+    solo_expert_names = {
+        p["expert"]
+        for p in _registry
+        if p.get("expert") and p.get("tier_eligible") == "A"
+    }
 
     def _is_scorable(s: Dict[str, Any]) -> bool:
         if s.get("signal_type") in EXCLUDED_SIGNAL_TYPES:
@@ -1557,6 +1729,10 @@ def filter_scorable(
             return True
         # Allow single-source A-tier sources with no constraints (e.g. action, nukethebooks)
         if combo in solo_a_tier_unconditional:
+            return True
+        # Allow single-source picks from A-tier experts (e.g. Mike Barner, Larry Hartstein)
+        sig_experts = s.get("experts") or []
+        if any(e in solo_expert_names for e in sig_experts):
             return True
         # Allow single-source constrained patterns only when signal matches all constraints
         # (e.g. betql OKC spread only, betql UNDER props only)
@@ -1719,13 +1895,26 @@ def _check_exclusion(signal: Dict[str, Any], tables: Optional[Dict[str, Any]] = 
         except (TypeError, ValueError):
             pass
 
-    # High player prop lines
-    if market == "player_prop" and line is not None:
-        try:
-            if float(line) > MAX_PROP_LINE:
-                return f"high_prop_line:{line}"
-        except (TypeError, ValueError):
-            pass
+    # Player prop selection validation
+    if market == "player_prop":
+        sel = signal.get("selection") or ""
+        # Must have canonical format SPORT:<slug>::<stat>::OVER|UNDER
+        m = re.match(r"^[A-Z]+:([a-z0-9_]+)::[a-z_]+::(OVER|UNDER)$", sel)
+        if not m:
+            return f"invalid_prop_selection:{sel[:40]}"
+        slug = m.group(1)
+        # 1. Strip live_ prefix — real player prop, keep it
+        if slug.startswith("live_"):
+            slug = slug[5:]
+        # 2. Drop _projection / _total_projection suffix (covers artifacts)
+        if slug.endswith("_projection"):
+            return f"invalid_prop_selection:{sel[:40]}"
+        # 3. Drop covers scraper prefix garbage (cs_, sc_, jt_)
+        if _COVERS_GARBAGE_PREFIX.match(slug):
+            return f"invalid_prop_selection:{sel[:40]}"
+        # 4. Drop team name slugs and home/away total variants
+        if slug in TEAM_SLUGS:
+            return f"invalid_prop_selection:{sel[:40]}"
 
     # Hard-exclude proven losing combo × market (Wilson < 0.42 with n >= 30)
     # Try direction-aware table first, then fall back to direction-agnostic
@@ -2915,6 +3104,11 @@ def enrich_play_odds(
     falls back to primary_record win_pct.
     """
     expert_odds = signal.get("best_odds")
+    if expert_odds is not None:
+        try:
+            expert_odds = int(expert_odds)
+        except (ValueError, TypeError):
+            expert_odds = None
     market_odds = lookup_market_odds(signal, market_lines)
 
     # Determine win_pct: prefer matched pattern's validated hist record

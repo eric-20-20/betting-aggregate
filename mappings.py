@@ -145,11 +145,13 @@ def map_prop_stat(raw_pick_text: str) -> Optional[str]:
     composite_keys = {"pts_reb", "pts_ast", "reb_ast", "pts_reb_ast"}
 
     def match_alias(alias: str) -> Optional[str]:
+        raw_stat_key = data_store.prop_stat_alias_index[alias]
+        canonical = raw_stat_key if raw_stat_key == "threes_made" else normalize_stat_key(raw_stat_key)
         if f" {alias} " in f" {normalized} ":
-            return normalize_stat_key(data_store.prop_stat_alias_index[alias])
+            return canonical
         alias_tokens = alias.split()
         if len(alias_tokens) == 1 and alias_tokens[0] in normalized.split():
-            return normalize_stat_key(data_store.prop_stat_alias_index[alias])
+            return canonical
         return None
 
     composite_aliases = [a for a in aliases if normalize_stat_key(data_store.prop_stat_alias_index[a]) in composite_keys]

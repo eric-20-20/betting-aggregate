@@ -246,19 +246,6 @@ def sha256_digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def get_action_game_url(away_team: str, home_team: str, game_date: date) -> Optional[str]:
-    """
-    Hardcoded URL mapping for stub schedule games.
-    TODO: Replace with dynamic mapping once available.
-    """
-    key = (away_team, home_team, game_date.isoformat())
-    mapping = {
-        ("NYK", "GSW", "2026-01-15"): "https://www.actionnetwork.com/nba-game/knicks-warriors-score-odds-january-15-2026/263220",
-        ("OKC", "HOU", "2026-01-15"): "https://www.actionnetwork.com/nba-game/thunder-rockets-score-odds-january-15-2026/263216",
-    }
-    return mapping.get(key)
-
-
 def fetch_expert_picks_html(url: str) -> str:
     return fetch_html_playwright(url)
 
@@ -1108,12 +1095,6 @@ def ingest_action_games(schedule=None, sport: str = NBA_SPORT, debug: bool = Fal
         f"team_not_in_game_rejected={stats.get('team_not_in_game', 0)}"
     )
     print(f"[INGEST] wrote {sport} Action outputs to OUT_DIR={OUT_DIR}")
-
-
-# Backward compatibility alias
-def ingest_action_nba_games(schedule=None) -> None:
-    """Backward compatibility wrapper for ingest_action_games with NBA sport."""
-    ingest_action_games(schedule=schedule, sport=NBA_SPORT)
 
 
 if __name__ == "__main__":

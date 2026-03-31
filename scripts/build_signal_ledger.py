@@ -16,7 +16,7 @@ import hashlib
 import json
 import os
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -146,6 +146,118 @@ def is_valid_team_code(value: Optional[str], sport: str = NBA_SPORT) -> bool:
     if not re.match(r"^[A-Z]{2,5}$", val):
         return False
     return True
+
+
+def _parse_day_key_date(day_key: Optional[str]) -> Optional[date]:
+    if not day_key or not isinstance(day_key, str):
+        return None
+    try:
+        parts = day_key.split(":")
+        if len(parts) < 4:
+            return None
+        return date(int(parts[1]), int(parts[2]), int(parts[3]))
+    except Exception:
+        return None
+
+
+def _parse_event_key_date(event_key: Optional[str]) -> Optional[date]:
+    if not event_key or not isinstance(event_key, str):
+        return None
+    m = re.match(r"^[A-Z]+:(\d{4}):(\d{2}):(\d{2}):[A-Z]{2,5}@[A-Z]{2,5}(?::\d+)?$", event_key)
+    if not m:
+        return None
+    try:
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except Exception:
+        return None
+
+
+def _norm_team_selection(selection: Optional[str]) -> Optional[str]:
+    if not selection or not isinstance(selection, str):
+        return None
+    m = re.match(r"^([A-Z]{2,5})_(spread|ml|moneyline|total)$", selection, re.I)
+    return m.group(1).upper() if m else selection.upper()
+
+
+def _dedup_betql_adjacent_day_spreads(occurrences: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    BetQL backfill bug: the same spread pick can appear on day N and day N+1 when
+    the BetQL page spans midnight ET. Collapse adjacent-day duplicates by
+    (away_team, home_team, selection, line), keeping the row whose day_key aligns
+    with the event_key date when only one does; otherwise keep the earlier day.
+    """
+    groups: Dict[Tuple[str, str, str, float], List[Dict[str, Any]]] = defaultdict(list)
+    passthrough: List[Dict[str, Any]] = []
+
+    for occ in occurrences:
+        src = occ.get("source_id") or ""
+        mkt = (occ.get("market_type") or "").lower()
+        if src != "betql" or mkt != "spread":
+            passthrough.append(occ)
+            continue
+
+        away = occ.get("away_team")
+        home = occ.get("home_team")
+        selection = _norm_team_selection(occ.get("selection"))
+        line = occ.get("line")
+        if not away or not home or not selection or line is None:
+            passthrough.append(occ)
+            continue
+
+        try:
+            line = float(line)
+        except Exception:
+            passthrough.append(occ)
+            continue
+
+        groups[(away, home, selection, line)].append(occ)
+
+    kept: List[Dict[str, Any]] = list(passthrough)
+    removed = 0
+
+    for _, group in groups.items():
+        group.sort(
+            key=lambda occ: (
+                _parse_day_key_date(occ.get("day_key")) or date.max,
+                occ.get("run_id") or "",
+                occ.get("occurrence_id") or "",
+            )
+        )
+
+        survivors: List[Dict[str, Any]] = []
+        for occ in group:
+            if not survivors:
+                survivors.append(occ)
+                continue
+
+            prev = survivors[-1]
+            prev_day = _parse_day_key_date(prev.get("day_key"))
+            curr_day = _parse_day_key_date(occ.get("day_key"))
+            if not prev_day or not curr_day or (curr_day - prev_day).days != 1:
+                survivors.append(occ)
+                continue
+
+            prev_event_day = _parse_event_key_date(prev.get("event_key"))
+            curr_event_day = _parse_event_key_date(occ.get("event_key"))
+            prev_aligned = prev_event_day is not None and prev_event_day == prev_day
+            curr_aligned = curr_event_day is not None and curr_event_day == curr_day
+
+            if prev_aligned and not curr_aligned:
+                removed += 1
+                continue
+            if curr_aligned and not prev_aligned:
+                survivors[-1] = occ
+                removed += 1
+                continue
+
+            # fallback: keep earlier day
+            removed += 1
+            continue
+
+        kept.extend(survivors)
+
+    print(f"[ledger] BetQL adjacent-day spread dedup removed={removed}")
+    return kept
 
 
 def sanitize_team_code(value: Optional[str], sport: str = NBA_SPORT) -> Optional[str]:
@@ -1633,6 +1745,8 @@ def main() -> None:
     after = len(occurrences)
     removed = before - after
     print(f"Deduped occurrences (by occurrence_id): before={before} after={after} removed={removed}")
+
+    occurrences = _dedup_betql_adjacent_day_spreads(occurrences)
 
     # Cross-source consensus merging: merge sources_present for signals with same selection_key
     # on the SAME day. Scoping to day_key prevents a player's pick from a past game from

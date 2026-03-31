@@ -1,130 +1,115 @@
 # Betting Aggregate — System Context
 
-**Last updated:** 2026-03-24
+**Last updated:** 2026-03-25
 **Season:** 2025-26 NBA + NCAAB
 
 ---
 
-## 1. Supabase Tables — Current State
+## 1. Local Data State
 
-### `signals` — 42,242 rows
-One row per consensus signal (merged from picks across sources). The primary entity in the system.
+### `data/ledger/signals_latest.jsonl` — 28,688 rows
+One row per unique consensus signal (latest run per date). Primary scoring input.
 
-| Field | Value |
-|-------|-------|
-| Total rows | 42,242 |
-| Date range | NBA:2023:10:25 → NCAAB:2026:02:16 |
+| market_type | rows |
+|-------------|------|
+| player_prop | 23,883 |
+| spread | 2,601 |
+| total | 1,586 |
+| moneyline | 617 |
+| team_total | 1 |
+
+Date range: NBA:2023:11:12 → NBA:2026:03:25
+
+### `data/ledger/signals_occurrences.jsonl` — 444,686 rows
+Full occurrence history (one row per source × signal × run). Used for cross-source merging and pattern analysis.
+
+### `data/plays/plays_YYYY-MM-DD.json` — 385 days, 7,899 total plays
+Scored and tiered plays output by `score_signals.py`.
+
+| tier | total plays |
+|------|-------------|
+| A | 909 |
+| B | 4,258 |
+| C | 2,635 |
+| D | 97 |
+
+Date range: 2025-03-06 → 2026-03-25
+
+---
+
+## 2. Supabase Tables — Current State
+
+### `signals` — ~48,414 rows
+One row per consensus signal. Pushed from ledger via `push_to_supabase.py`.
 
 **By market_type:**
 
 | market_type | rows |
 |-------------|------|
-| player_prop | 27,514 |
-| spread | 7,245 |
-| total | 5,084 |
-| moneyline | 2,239 |
+| player_prop | 32,161 |
+| spread | 7,891 |
+| total | 5,655 |
+| moneyline | 2,547 |
 | NULL / other | 160 |
 
 Note: `sport` field on all rows is `NBA` due to backfill labeling; NCAAB signals are identified by their `day_key` prefix (`NCAAB:`).
 
 ---
 
-### `grades` — 42,242 rows
-Strict 1:1 with `signals` (same signal_id primary key). One row per graded signal.
+### `grades` — ~48,412 rows
+Strict 1:1 with `signals` (same signal_id primary key).
 
 | result | rows |
 |--------|------|
-| WIN | 17,590 |
-| LOSS | 17,488 |
-| PUSH | 160 |
-| NULL (pending) | 7,004 |
+| WIN | 21,124 |
+| LOSS | 20,099 |
+| PUSH | 275 |
+| NULL (pending/ungraded) | 6,914 |
 
-Overall graded win rate: **50.1%** (17,590W / 35,078 graded).
+Overall graded win rate: **51.2%** (21,124W / 41,223 W+L graded).
 
 ---
 
-### `signal_sources` — 44,519 rows
-Junction table: which source(s) fed each signal. A signal with 3 sources has 3 rows here.
+### `graded_occurrences` — ~84,559 rows
+Source-level occurrence table. Primary input to `build_pattern_analysis.py`. More rows than `signals` because each signal can have multiple per-source occurrences.
 
-**By source_id:**
+**Conflict key:** `signal_id` (changed from `occurrence_id` on 2026-03-25 — `occurrence_id` was unstable/timestamp-derived).
+
+Top sources by `occ_source_id`: betql (~38K), action (~13K), oddstrader (~3.5K), sportsline (~2.6K).
+
+---
+
+### `plays` — ~4,489+ rows
+Scored and tiered plays pushed from `data/plays/`. Date range: 2025-03-06 → 2026-03-25.
+
+---
+
+### `signal_sources` — ~49,823 rows
+Junction table: which source(s) fed each signal.
 
 | source_id | rows |
 |-----------|------|
-| betql | 23,382 |
-| action | 9,226 |
-| oddstrader | 3,611 |
-| sportsline | 2,670 |
-| bettingpros_experts | 1,264 |
-| dimers | 1,247 |
-| covers | 1,026 |
-| juicereel_sxebets | 659 |
-| juicereel_nukethebooks | 627 |
-| juicereel_unitvacuum | 616 |
-| vegasinsider | 149 |
-| bettingpros_5star | 21 |
-| bettingpros | 13 |
-| sportscapping | 8 |
-
----
-
-### `plays` — 4,588 rows
-Scored and tiered daily plays output by `score_signals.py`.
-
-| tier | rows |
-|------|------|
-| A | 496 |
-| B | 2,603 |
-| C | 1,485 |
-| D | 4 |
-
-Date range: 2025-03-06 → 2026-03-23.
+| betql | 24,234 |
+| action | 9,111 |
+| bettingpros_experts | 6,022 |
+| oddstrader | 3,575 |
+| sportsline | 2,601 |
+| dimers | 1,166 |
+| covers | 1,012 |
+| juicereel_sxebets | 680 |
+| juicereel_nukethebooks | 631 |
+| juicereel_unitvacuum | 617 |
+| vegasinsider | 144 |
 
 ---
 
 ### `expert_records` — 593 rows
-Aggregated W-L records per (source_id, expert_slug, market_type, atomic_stat). Rebuilt nightly by `build_pattern_analysis.py`.
-
-| market_type | rows |
-|-------------|------|
-| player_prop | 321 |
-| spread | 119 |
-| moneyline | 77 |
-| total | 76 |
-
-**50 rows** meet the threshold of win_pct ≥ 55% with n ≥ 20. Hot/cold flags are computed over a 30-day rolling window (requires ≥10 recent picks and ≥8pp deviation from career win rate). Currently: 8 hot, 5 cold.
-
----
+Aggregated W-L records per (source_id, expert_slug, market_type, atomic_stat). Rebuilt manually by `build_pattern_analysis.py` after major data corrections.
 
 ### `expert_pair_records` — 625 rows
-Aggregated W-L for every (expert A, expert B) combination that appeared on the same signal. Rebuilt nightly.
-
-| tier | rows |
-|------|------|
-| A (≥60%, n≥15) | 0 |
-| B (≥55%, n≥15) | 0 |
-| C (≥50%, n≥15) | 3 |
-| Unrated (n<15 or <50%) | 622 |
-
-Note: These tier thresholds apply to the **per-market** rows. When aggregated across all markets in the performance report, 2 A-tier and 1 B-tier pairs emerge (buckets_podcast+joe_dellera at 61.9%, bryan_fonseca+buckets_podcast at 60.0%, betql_model+sxebets at 57.6%).
-
----
-
-### `graded_occurrences` — 63,114 rows
-Source-level occurrence table used for pattern analysis. More rows than `signals` because each signal can have multiple per-source occurrences. Primary input to `build_pattern_analysis.py`.
-
-| result | rows |
-|--------|------|
-| WIN | 24,909 |
-| LOSS | 25,320 |
-| PUSH | 182 |
-| NULL | 12,703 |
-
-Top sources: betql (38,218), action (12,787), oddstrader (3,399), sportsline (2,647).
-
----
+Aggregated W-L for every (expert A, expert B) combination that appeared on the same signal.
 
 ### `sources` — 15 rows
-
 | id | name | tier | active |
 |----|------|------|--------|
 | action | Action Network | community | ✓ |
@@ -143,36 +128,12 @@ Top sources: betql (38,218), action (12,787), oddstrader (3,399), sportsline (2,
 | sportsline | SportsLine | expert | ✓ |
 | vegasinsider | Vegas Insider | expert | ✓ |
 
----
-
-### `experts` — 203 rows
-
-| source_id | count |
-|-----------|-------|
-| action | 67 |
-| sportsline | 46 |
-| vegasinsider | 30 |
-| bettingpros_experts | 26 |
-| covers | 19 |
-| sportscapping | 8 |
-| betql | 2 |
-| juicereel_* | 3 (1 each) |
-| dimers | 1 |
-| oddstrader | 1 |
-
----
-
 ### `picks` — 0 rows
-Table exists in schema for raw per-source normalized picks per day, but `push_to_supabase.py` does not currently populate it.
+Table exists in schema but `push_to_supabase.py` does not currently populate it.
 
 ---
 
-### `juicereel_history_archive` — 6,321 rows
-Stale JuiceReel backfill signals from the Mar 4 large backfill that are no longer in the live ledger (signal_ids changed after bug fixes). Kept for reference. 3,200W / 3,045L / 66P.
-
----
-
-## 2. Daily Pipeline — Scripts in Order
+## 3. Daily Pipeline — Scripts in Order
 
 ### Pre-flight
 | Script | Purpose |
@@ -191,14 +152,14 @@ Stale JuiceReel backfill signals from the Mar 4 large backfill that are no longe
 | `scripts/refresh_betql_token.py` | Refreshes BetQL auth token |
 | `scripts/refresh_juicereel_token.py` | Refreshes JuiceReel session token |
 
-#### Step 1 — Ingest (parallel, each with watchdog timeout)
+#### Step 2 — Ingest (parallel, each with watchdog timeout)
 All scrapers run simultaneously; each writes to its own output file.
 
 | Script | Timeout | Output |
 |--------|---------|--------|
 | `action_ingest.py` | 300s | `out/raw_action_nba.json` + `_meta.json` |
 | `covers_ingest.py` | 300s | `out/raw_covers_nba.json` + `_meta.json` |
-| `oddstrader_ingest.py --props` | 120s | `out/raw_oddstrader_nba.json` |
+| `oddstrader_ingest.py --props` | 120s | `out/normalized_oddstrader_nba.json` + `out/normalized_oddstrader_prop_nba.json` |
 | `sportsline_ingest.py` | 180s | `out/raw_sportsline_nba.json` |
 | `dimers_ingest.py` | 180s | `out/raw_dimers_nba.json` |
 | `scripts/probe_betql_spread_nba.py` | 120s | `out/raw_betql_spread_nba.json` |
@@ -214,57 +175,53 @@ Notes:
 - Action and Covers write **incrementally** after each game page (via `IncrementalJsonWriter`). A mid-run timeout still produces valid partial output with a companion `_meta.json` showing `games_completed/games_total`.
 - SportsLine, Dimers, BetQL, VegasInsider, JuiceReel, and BettingPros require storage state files and are silently skipped if absent.
 
-#### Step 2 — Normalize (`scripts/normalize_sources_nba.py`)
-Converts all raw scraped JSON to the standard normalized schema used by consensus. Runs freshness checks on Action and Covers: if a raw file's mtime is not today's ET date, it writes an empty `[]` to the normalized output and prints a loud warning instead of re-normalizing stale data.
+#### Step 3 — Normalize (`scripts/normalize_sources_nba.py`)
+Converts all raw scraped JSON to the standard normalized schema used by consensus. Runs freshness checks on Action and Covers: if a raw file's mtime is not today's ET date, it writes an empty `[]` and prints a loud warning.
 
 Also normalizes: juicereel, betql (spread/totals/sharp/props), sportsline expert picks, bettingpros, bettingpros_experts.
 
-**Validation gate** (inline in shell): counts records per source file; aborts the entire pipeline if all sources return zero picks.
+**Validation gate** (inline in shell): counts records per source file; aborts if all sources return zero picks.
 
-#### Step 3 — Consensus (`consensus_nba.py`)
-Merges normalized picks across sources by matchup + market + direction + line proximity. Produces consensus signals. Key behaviors:
-- Spread signs are encoded as `_neg`/`_pos` vote suffixes to prevent DET -1.5 and DET +1.5 from being treated as the same vote.
-- Player prop conflicts (same player, same stat, OVER+UNDER) are detected and one side is suppressed.
-- Cross-game source merges are scoped to `(selection_key, day_key)` to prevent stale historical merges.
+Normalized output schema uses nested sub-objects: `event` (event_key, away_team, home_team, day_key, sport), `market` (market_type, selection, direction, line, odds, stat_key), `provenance` (source_id, source_surface, expert_name, expert_handle, raw_block).
+
+#### Step 4 — Consensus (`consensus_nba.py`)
+Merges normalized picks across sources by matchup + market + direction + line proximity. Key behaviors:
+- Spread signs encoded as `_neg`/`_pos` vote suffixes to prevent DET -1.5 and DET +1.5 being treated as the same vote.
+- Player prop conflicts (same player, same stat, OVER+UNDER) detected and one side suppressed.
+- Cross-source merges scoped to `(selection_key, day_key)` — prevents stale cross-date merges.
+- Solo-source picks with `expert_strength >= 2 OR count_total >= 2` pass; others dropped.
 
 **Pre-ledger pruning** (inline): deletes all but the most recent run directory per date from `data/runs/`.
 
-#### Step 4 — Signal Ledger (`scripts/build_signal_ledger.py`)
-Merges today's consensus signals with the full historical backfill. Inputs:
-- Today's consensus output (`data/runs/{run_id}/`)
-- BetQL history (`data/history/betql_normalized/`, from 2025-02-09)
-- BetQL game props history (`data/history/betql_normalized/props/`)
-- Action history
-- OddsTrader history (from 2025-10-22)
-- Dimers backfill
-- JuiceReel backfill (sXeBets + nukethebooks)
-- BettingPros experts history
-- SportsLine backfill (expert picks + expert pages)
-- Covers backfill
-- Various other normalized JSONL files
+#### Step 5 — Signal Ledger (`scripts/build_signal_ledger.py`)
+Merges today's consensus signals with the full historical backfill. Writes:
+- `data/ledger/signals_latest.jsonl` (28,688 rows)
+- `data/ledger/signals_occurrences.jsonl` (444,686 rows)
 
-Evicts stale occurrences from superseded runs. Writes `data/ledger/signals_latest.jsonl` and `data/ledger/grades_latest.jsonl`.
+Evicts stale occurrences from superseded runs (uses `latest_run_per_day` map from `data/runs/`, evicts if `run_id` < latest for that day).
 
-#### Steps 5–7 — Grading & Reports *(skipped in `--quick` mode)*
+Inputs include: today's consensus, BetQL history (2025-02-09+), Action backfill, OddsTrader history (2025-10-22+), Dimers backfill, JuiceReel backfill (sXeBets + nukethebooks), BettingPros experts history, SportsLine backfill, Covers backfill.
+
+#### Steps 6–8 — Grading & Reports *(skipped in `--quick` mode)*
 
 | Script | Purpose |
 |--------|---------|
 | `scripts/grade_signals_nba.py` | Fetches NBA scores from CDN/NBA API/Basketball-Reference; computes WIN/LOSS/PUSH per signal. Handles pre-graded picks (SportsLine, Dimers). Uses `signal_id` matching (not tuple matching) to prevent ambiguity. |
 | `scripts/build_research_dataset_nba_occurrences.py` | Builds occurrence-level analysis dataset (one row per source×signal), joined with grades. |
 | `scripts/build_research_dataset_nba.py` | Builds signal-level joined dataset (signals + grades). |
-| `scripts/report_records.py` | Generates 18 JSON reports: `by_source_record`, `by_sources_combo_record`, `cross_tabulation`, `by_stat_type`, `by_line_bucket`, `by_score_bucket`, `by_expert`, `by_expert_record`, `coverage_summary`, and others. |
+| `scripts/report_records.py` | Generates 18 JSON reports to `data/reports/`. |
 | `scripts/report_trends.py` | Generates trend reports: by day of week, by month, by market type, consensus strength, consensus×market. |
 | `scripts/report_recent_trends.py` | Generates rolling recent-trend reports and lookup table. |
 | `scripts/discover_patterns.py` | Scans for new pattern candidates above Wilson threshold (non-fatal). |
 | `scripts/validate_patterns.py --phase 1` | Checks pattern registry integrity against current grade data; warns on FAIL-level issues. |
 
-#### Steps 8–11 — Scoring & Export
+#### Steps 9–12 — Scoring & Export
 
 | Script | Purpose |
 |--------|---------|
 | `scripts/fetch_current_lines.py` | Fetches live market lines from The Odds API (requires `ODDS_API_KEY`). |
-| `scripts/fetch_cdn_scoreboards.py` | Refreshes today's game schedule cache from NBA CDN — ensures `filter_wrong_date()` has a complete game list before scoring. |
-| `scripts/score_signals.py` | Applies the pattern registry + Wilson scores to today's signals. Assigns A/B/C tiers based on matched patterns. Filters wrong-date signals, prop conflicts, and exclusions. Writes `data/plays/plays_{DATE}.json`. |
+| `scripts/fetch_cdn_scoreboards.py` | Refreshes today's game schedule cache — ensures `filter_wrong_date()` has a complete game list before scoring. |
+| `scripts/score_signals.py` | Applies pattern registry + Wilson scores. Assigns A/B/C tiers. Filters wrong-date signals, prop conflicts, stat exclusions. Writes `data/plays/plays_{DATE}.json`. |
 | `scripts/audit_consensus.py` | Sanity-checks consensus output for anomalies (non-fatal). |
 | `scripts/export_web_data.py` | Exports picks, history index, and all reports to `web/public/data/` (public) and `web/data/private/` (authenticated). |
 
@@ -275,7 +232,7 @@ Evicts stale occurrences from superseded runs. Writes `data/ledger/signals_lates
 Mirrors NBA pipeline with differences:
 - **Sources:** Action, Covers, OddsTrader, SportsLine, Dimers, VegasInsider only (no BetQL, JuiceReel, BettingPros).
 - **Score provider:** ESPN API (free, no auth) via `src/results/ncaab_provider_espn.py`.
-- **Pattern registry:** `PATTERN_REGISTRY_NCAAB` is currently empty — no NCAAB patterns meet the Wilson ≥ 0.46 threshold yet. All NCAAB plays are untiered.
+- **Pattern registry:** `PATTERN_REGISTRY_NCAAB` is currently empty — no NCAAB patterns meet the Wilson ≥ 0.46 threshold yet.
 - **Grading** runs every day (not skipped in quick mode), because NCAAB tournament games need same-day grading.
 
 ---
@@ -284,7 +241,7 @@ Mirrors NBA pipeline with differences:
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/push_to_supabase.py` | Pushes signals, grades, signal_sources, plays, and graded_occurrences to Supabase. Non-blocking — pipeline completes even if Supabase is unavailable. |
+| `scripts/push_to_supabase.py` | Pushes signals, grades, signal_sources, plays, and graded_occurrences to Supabase. Non-blocking — pipeline completes even if Supabase is unavailable. Delta filter on `graded_at_utc`. Conflict key for `graded_occurrences` is `signal_id`. |
 
 ---
 
@@ -293,128 +250,249 @@ Mirrors NBA pipeline with differences:
 | Script | Purpose |
 |--------|---------|
 | `scripts/build_pattern_analysis.py` | Rebuilds `expert_records` and `expert_pair_records` tables. Run manually after major data corrections. |
-| `scripts/fix_juicereel_event_keys.py` | One-time migration: corrects JuiceReel signals with wrong event_key team order (ATL@MEM vs MEM@ATL). Supports `--dry-run`. |
+| `scripts/fix_juicereel_event_keys.py` | One-time migration: corrects JuiceReel signals with wrong event_key team order. Supports `--dry-run`. |
 | `scripts/generate_performance_report.py` | Generates `data/reports/performance_report_{DATE}.txt` from Supabase expert tables. |
-| `scripts/backfill_*.py` | Various one-time historical backfill scripts (BetQL, Dimers, Covers, SportsLine expert pages, etc.). |
+| `scripts/backfill_betql_history.py` | Re-scrapes BetQL spread/totals/sharps for historical dates. |
+| `scripts/normalize_betql_history.py` | Normalizes BetQL raw backfill files. Requires `--overwrite` to regenerate existing output files. |
+| `scripts/backfill_*.py` | Various one-time historical backfill scripts (Dimers, Covers, SportsLine expert pages, etc.). |
 
 ---
 
-## 3. Known Issues (Open)
+## 4. Pattern Registry — Current State (73 patterns)
+
+The pattern registry in `scripts/score_signals.py` (`PATTERN_REGISTRY`) drives all A/B tier assignments. As of 2026-03-25 there are **73 active patterns** (32 A-tier, 41 B-tier).
+
+**Critical ordering rule:** Expert-specific patterns MUST be placed before generic source-combo patterns (e.g. `sportsline_solo_props_over`) in the registry. The registry uses **first-match-wins** — a generic pattern listed earlier will fire before a more specific expert pattern listed later.
+
+**Solo-source pass rule (2026-03-25):** `filter_scorable()` allows solo-source picks through if:
+1. The `sources_combo` is in `solo_a_tier_unconditional` (A-tier exact_combo with no team constraint), OR
+2. The signal's `experts` list contains any name in `solo_expert_names` (all A-tier expert pattern names), OR
+3. The signal matches a constrained pattern (B-tier or team-specific exact_combo).
+
+Current `solo_expert_names`: Mike Barner, Larry Hartstein, Matt Severance, Prop Bet Guy, Kyle Murray, carmenciorra.
+
+**Stat exclusions:**
+- `EXCLUDED_STAT_TYPES` = `{steals, pts_reb, unknown}` — always dropped
+- `EXCLUDED_STAT_DIR` = `{(pts_reb_ast, OVER)}` — pts+reb+ast OVER is 45.1% negative edge; reb_ast OVER was removed from this set (2026-03-25) because Mike Barner's reb_ast OVER is 63.8% A-tier
+- `MAX_PROP_LINE` = 30.5 — props above this line are excluded
+
+### A-tier patterns (32 total)
+
+| Pattern ID | Record | Win% | n | Notes |
+|------------|--------|------|---|-------|
+| action_props_pts_reb_under | 144-52 | 73.5% | 196 | action pts+reb UNDER |
+| action_solo_props_under | 399-257 | 60.8% | 656 | action any prop UNDER |
+| betql_spread_okc | 85-36 | 70.2% | 121 | |
+| betql_spread_lac | 70-28 | 71.4% | 98 | |
+| betql_spread_bos | 63-33 | 65.6% | 96 | |
+| betql_spread_min | 59-27 | 68.6% | 86 | |
+| expert_kyle_murray_rebounds | 17-3 | 85.0% | 20 | small sample |
+| expert_kyle_murray_pts_reb_under | 50-13 | 79.4% | 63 | |
+| expert_larry_hartstein_assists_over | 20-6 | 76.9% | 26 | |
+| expert_matt_severance_points_under | 27-9 | 75.0% | 36 | |
+| expert_prop_bet_guy_pts_reb_ast_under | 34-16 | 68.0% | 50 | |
+| expert_mike_barner_assists_over | 17-8 | 68.0% | 25 | |
+| expert_prop_bet_guy_rebounds_over | 28-18 | 60.9% | 46 | |
+| expert_mike_barner_reb_ast_over | 37-21 | 63.8% | 58 | reb_ast OVER unblocked 2026-03-25 |
+| expert_mike_barner_points | 164-121 | 57.5% | 285 | |
+| expert_prop_bet_guy_pts_ast_over | 33-24 | 57.9% | 57 | |
+| bettingpros_experts_assists_over | 55-15 | 78.6% | 70 | |
+| bettingpros_experts_rebounds_over | 66-31 | 68.0% | 97 | |
+| bettingpros_experts_props | 381-207 | 64.8% | 588 | generic OVER |
+| bettingpros_experts_moneyline | 107-57 | 65.2% | 164 | |
+| expert_carmenciorra_moneyline | 63-34 | 65.0% | 97 | |
+| expert_carmenciorra_total | 56-30 | 65.1% | 86 | |
+| oddstrader_spread_sac | 41-8 | 83.7% | 49 | |
+| oddstrader_spread_nop | 34-7 | 82.9% | 41 | |
+| oddstrader_spread_ind | 26-7 | 78.8% | 33 | |
+| oddstrader_spread_cha | 20-6 | 76.9% | 26 | |
+| oddstrader_spread_mem | 21-7 | 75.0% | 28 | |
+| oddstrader_spread_was | 31-12 | 72.1% | 43 | |
+| oddstrader_spread_chi | 26-10 | 72.2% | 36 | |
+| oddstrader_spread_mil | 18-8 | 69.2% | 26 | |
+| oddstrader_props_rebounds_under | 22-10 | 68.8% | 32 | |
+| oddstrader_props_assists_under | 23-11 | 67.6% | 34 | |
+
+### B-tier patterns (selected highlights)
+
+| Pattern ID | Record | Win% | n |
+|------------|--------|------|---|
+| action_oddstrader_moneyline | 46-16 | 74.2% | 62 |
+| expert_markus_markets_pts_ast | 19-6 | 76.0% | 25 |
+| expert_mjaybrod | 20-9 | 69.0% | 29 |
+| oddstrader_ai_spread | 399-212 | 65.3% | 611 |
+| action_props_assists_under | 59-30 | 66.3% | 89 |
+| expert_matt_severance | 61-31 | 66.3% | 92 |
+| nukethebooks_rebounds_under | 19-11 | 63.3% | 30 |
+| oddstrader_props_reb_ast_under | 16-8 | 66.7% | 24 |
+| betql_sxebets_props_under | 11-5 | 68.8% | 16 |
+| sportsline_pts_reb_ast_under | 81-48 | 62.8% | 129 |
+| betql_spread_det | 62-39 | 61.4% | 101 |
+| betql_sportsline_spread | 209-143 | 59.4% | 352 |
+| nukethebooks_solo_props_under | 100-69 | 59.2% | 169 |
+| sportsline_solo_props_under | 189-130 | 59.2% | 319 |
+| expert_scott_rickenbach_spread | 118-74 | 61.5% | 192 |
+| betql_solo_props_under | 2832-2336 | 54.8% | 5172 |
+
+**NCAAB registry:** Empty. Insufficient data until post-2026 tournament.
+
+---
+
+## 5. Scoring Pipeline — Key Logic (`scripts/score_signals.py`)
+
+Flow: `load_signals()` → `filter_scorable()` → `filter_wrong_date()` → `apply_exclusion_filters()` → `score_signal()` → `build_output()`
+
+### `filter_scorable()`
+Passes signals that are either:
+- Multi-source (≥2 sources), OR
+- Solo-source matching an A-tier `exact_combo` unconditional pattern (e.g. `action`, `nukethebooks`), OR
+- Solo-source from an A-tier expert (Mike Barner, Larry Hartstein, etc.), OR
+- Solo-source matching a constrained B-tier or team-specific pattern
+
+### `filter_wrong_date()`
+Uses LGF cache → NBA API scoreboard cache to validate matchups. Returns:
+- `None` if no cache → keep all (can't validate)
+- Empty set if cache has 0 games → drop all (off day / All-Star break)
+- Set of `(away, home)` tuples → keep only signals whose event_key matchup is in the set
+
+### `score_signal()`
+Builds a Wilson-lower-bound score from the `combo_market_stat` lookup table (primary), adjusted by:
+- Recency trend (+/-3% over 14/30-day window)
+- Expert adjustment (+1.5% for high-performing experts)
+- Stat-type adjustment (+/-1% for known good/bad stats)
+- Line-bucket adjustment (+/-1% for favorable line ranges)
+- Pattern history override: if a pattern match has a better Wilson score than the combo lookup, uses pattern record
+
+### Tier assignment
+- **A-tier**: Wilson ≥ 0.490 AND matched pattern with `tier_eligible == "A"`
+- **B-tier**: Wilson ≥ 0.460 AND matched pattern with `tier_eligible == "B"`, OR Wilson ≥ 0.490 with no pattern
+
+---
+
+## 6. Known Issues (Open)
 
 ### High priority
 
-**JuiceReel player prop day-only event_keys**
-84 JuiceReel player prop signals in Supabase have a day-only `event_key` (e.g. `NBA:2026:03:17`) with no matchup suffix and NULL `away_team`/`home_team`. These are from the historical backfill where the API response had no matchup metadata. They are already graded (77/84 have WIN/LOSS results) and are not fixable via team-order correction. These will remain as-is; the normalizer fix prevents new occurrences.
-
 **`picks` table unpopulated**
-The `picks` table (raw per-source picks per day) is defined in the schema but `push_to_supabase.py` does not write to it. Currently a no-op.
+The `picks` Supabase table (raw per-source picks per day) is defined in the schema but `push_to_supabase.py` does not write to it.
 
 **NCAAB pattern registry empty**
-`PATTERN_REGISTRY_NCAAB` in `score_signals.py` has no entries. All NCAAB plays are untiered (no A/B signals). Target: accumulate to n≥50 per group after the 2026 CBB tournament, then re-analyze.
+`PATTERN_REGISTRY_NCAAB` has no entries. All NCAAB plays are untiered. Target: accumulate to n≥50 per group after the 2026 CBB tournament.
 
 **OddsTrader NCAAB event_key date offset**
-Some OddsTrader NCAAB signals have an event_key date 1 day off from the actual game date (normalizer bug in the OddsTrader NCAAB path). Not yet fixed.
+Some OddsTrader NCAAB signals have event_key date 1 day off from the actual game date (normalizer bug in OddsTrader NCAAB path).
 
 ### Medium priority
 
-**10 JuiceReel signals with game-not-in-cache skip**
-10 signals have a valid event_key but the game isn't in the local scoreboard cache for that date (cache was captured before all games populated). These were skipped by `fix_juicereel_event_keys.py`. Could be corrected by refreshing caches for those 7 dates, but all are already graded player props so impact is low.
+**`betql_totals` occasionally missing**
+`probe_betql_totals_nba.py` has timed out on some runs (confirmed MISSING on 2026-03-24 source health report). Monitor each run.
 
-**`expert_pair_records` tier thresholds not yet reached**
-No pair has reached A-tier (≥60%) or B-tier (≥55%) at the per-market grain stored in the table. The aggregated report shows 2 A-tier pairs, but the underlying table only has 3 C-tier rows. More historical data needed.
+**JuiceReel player prop day-only event_keys (84 signals)**
+84 JuiceReel historical backfill signals have a day-only `event_key` (e.g. `NBA:2026:03:17`) with no matchup suffix. Already graded (77/84 resolved). Not retroactively fixable.
 
 **`dimers_ncaab` source marked inactive**
-The `dimers_ncaab` source row has `active=false` in Supabase. Dimers NCAAB is ingested via `dimers_ingest.py --sport NCAAB` but the source_id in the normalized output may not match the inactive source.
+The `dimers_ncaab` source row has `active=false` in Supabase. Dimers NCAAB is ingested but the source_id may not match.
 
 ---
 
-## 4. Fixes Made This Week
+## 7. Fixes Made This Session (Mar 25, 2026)
 
-### Spread consensus sign bug (`consensus_nba.py`)
-**Problem:** `build_standard_directional_consensus()` treated DET -1.5 and DET +1.5 as the same vote because `_normalize_standard_selection()` returned only the team code with no sign.
-**Fix:** At vote accumulation, `vote_sel` is suffixed with `_neg` or `_pos` for spreads based on line sign. Suffix is stripped before writing to output fields. This prevented mixed-sign spread signals where one source picked the favorite and another picked the dog from being incorrectly merged into a single consensus signal.
-**Impact:** 27 corrupted mixed-sign spread signals were identified in Supabase and deleted (grades → signal_sources → plays → signals in FK order, since CASCADE was not configured).
+### `reb_ast OVER` unblocked from stat exclusion
+**Problem:** `EXCLUDED_STAT_DIR` contained `("reb_ast", "OVER")` with comment "35-32 (52%), small sample — not reliable". This hard-excluded all reb_ast OVER signals before pattern matching, meaning `expert_mike_barner_reb_ast_over` (37-21, 63.8%) could never fire.
+**Fix:** Removed `("reb_ast", "OVER")` from `EXCLUDED_STAT_DIR`. The Mike Barner A-tier pattern now fires correctly. Josh Giddey reb_ast OVER 18.5 correctly scored as #2 A-tier (Wilson=59.0%).
 
-### Action/Covers timeout increase (`run_daily.sh`)
-**Problem:** Action and Covers scrapers were hitting the 120s watchdog timeout. Both scrapers loop through individual game pages and need more time on high-game-count days.
-**Fix:** Timeout increased to 300s for both `action_ingest.py` and `covers_ingest.py` in both NBA and NCAAB sections.
+### Expert solo picks now pass `filter_scorable()`
+**Problem:** `filter_scorable()` only allowed solo-source signals through if their `sources_combo` matched an `exact_combo` in the registry. Expert patterns use the `expert` key (not `exact_combo`), so sportsline solo picks from Mike Barner were being dropped before scoring even though a matching A-tier pattern existed.
+**Fix:** Added `solo_expert_names` set in `filter_scorable()` — any solo-source signal whose `experts` list contains an A-tier expert name is allowed through.
 
-### Action/Covers incremental JSON writing (`action_ingest.py`, `covers_ingest.py`)
-**Problem:** Both scrapers accumulated all picks in memory and wrote output only at the end. A mid-run timeout produced zero output, forcing a full re-run.
-**Fix:** Added `IncrementalJsonWriter` class to `action_ingest.py`. Each game page's picks are flushed to disk immediately after scraping. A SIGTERM handler ensures the JSON array is properly closed and a `_meta.json` companion file is written even if killed by the watchdog. `covers_ingest.py` imports and uses the same class. A partial run now produces a valid (partial) JSON file.
+### `upsert_occurrences()` conflict key changed to `signal_id`
+**Problem:** `occurrence_id` is derived from a hash that includes the run timestamp — it changes on every run, causing Supabase upserts to always insert new rows instead of updating existing ones.
+**Fix:** Changed conflict key in `src/supabase_writer.py` from `occurrence_id` to `signal_id`. Also added `CREATE UNIQUE INDEX IF NOT EXISTS go_signal_id ON graded_occurrences(signal_id)` in `scripts/supabase_schema.sql`.
 
-### Freshness check for Action/Covers normalization (`scripts/normalize_sources_nba.py`)
-**Problem:** If Action or Covers ingest failed silently, `normalize_sources_nba.py` would re-normalize the previous day's stale raw file and inject yesterday's picks into today's consensus.
-**Fix:** `_check_freshness()` compares the raw file's mtime to today's ET date. If stale, normalization is skipped, an empty `[]` is written to the normalized output, and a warning is printed. Downstream pipeline steps see zero records from that source rather than stale data.
+### Pattern registry expanded to 73 patterns
+Added 27 new patterns: 10 OddsTrader team spreads (SAC, NOP, IND, CHA, MEM, WAS, CHI, MIL A-tier; DAL, BKN B-tier), 5 OddsTrader prop patterns (rebounds UNDER, assists UNDER A-tier; reb_ast UNDER, pts_reb_ast UNDER, points UNDER B-tier), 6 new SportsLine expert patterns (Larry Hartstein assists OVER, Matt Severance points UNDER A-tier; Mike Barner assists OVER, reb_ast OVER, points A-tier; catch-all B-tier), 3 Prop Bet Guy patterns (pts_ast OVER, rebounds OVER, pts_reb_ast UNDER A-tier), nukethebooks rebounds UNDER B-tier, betql spread updates (OKC, BOS, MIN, LAC, DET).
 
-### JuiceReel matchup order fix (`src/normalizer_juicereel_nba.py`)
-**Problem:** JuiceReel displays matchups as "Hawks @ Grizzlies" (visitor first), which parses to ATL@MEM. But the canonical NBA schedule order (from the NBA API scoreboard) is MEM@ATL (home team second). This caused JuiceReel signals to have incorrect event_keys that didn't match signals from other sources.
-**Fix:** Added `_validate_matchup_order()` helper. After `_parse_matchup()` resolves team codes, the function calls `get_games_for_date()` from the NBA API scoreboard provider to find the canonical away@home order for that date. If reversed, teams are swapped and a warning is logged. On lookup failure, parsed order is kept with a warning.
-**Migration:** `scripts/fix_juicereel_event_keys.py` was run to correct historical signals in Supabase: 826 signals were merged into correctly-keyed signals from other sources, 34 were corrected in place (JuiceReel-only signals), 94 were skipped (84 with day-only event_keys + 10 cache misses).
-
-### JuiceReel backfill rebuild + expert records rebuild
-After the event_key migration, `scripts/build_pattern_analysis.py` was re-run to rebuild `expert_records` and `expert_pair_records` with the corrected JuiceReel data merged into the right signals. Total rows after rebuild: 593 expert_records, 625 expert_pair_records.
+**Critical fix:** Moved all SportsLine expert patterns to BEFORE `sportsline_solo_props_over` in the registry (first-match-wins — generic pattern was firing first).
 
 ---
 
-## 5. Key Findings — Performance Report (2026-03-23)
+## 8. Fixes Made This Week (Mar 16–24, 2026)
+
+### BetQL spread selection bug — deleted + re-scraped (Mar 23–24)
+**Problem:** `betql_extractors.py` (introduced Jan 28, 2026) used sign-based logic to determine team selection: `selection = away if pick_txt.startswith("+") else home`. Wrong — the `+` sign indicates underdog, not recommendation.
+**Fix:** `_recommended_row_index()` detects the star-rating button row to determine which team row is recommended.
+**Scope:** 303 betql-only spread signals (Jan 28–Mar 23, 2026) deleted + re-scraped. New betql-only spread W-L: **269-257-4 (51.1%)**.
+
+### OddsTrader total `game_total` selection bug — deleted
+**Problem:** OddsTrader normalizer stored `selection="GAME_TOTAL"` instead of `"OVER"` or `"UNDER"` for 864 of 1,026 total signals. Direction field was correct but `selection` is used for pattern matching.
+**Fix:** Deleted 711 oddstrader-only `GAME_TOTAL` signals from Supabase + local ledger. Multi-source signals kept.
+
+### Spread consensus sign bug
+**Problem:** `build_standard_directional_consensus()` treated DET -1.5 and DET +1.5 as the same vote.
+**Fix:** Vote keys suffixed with `_neg`/`_pos` for spreads. 27 corrupted mixed-sign signals deleted.
+
+### Action/Covers incremental writing + timeout increase
+Timeout increased from 120s → 300s. `IncrementalJsonWriter` flushes picks after each game page. SIGTERM handler closes JSON array and writes `_meta.json`.
+
+### Freshness check for normalization
+`_check_freshness()` in `normalize_sources_nba.py` validates raw file mtime against today's ET date. Stale → writes empty `[]`, prints warning.
+
+---
+
+## 9. Key Findings — Performance Report (2026-03-23)
 
 Full report: `data/reports/performance_report_2026-03-23.txt`
-Data: 32,062 graded expert-pick occurrences across 165 unique experts, Season 2025-26.
 
 ### Top solo experts (min 20 picks, all markets)
 
-| Rank | Expert | Source | W | L | Win% | Note |
-|------|--------|--------|---|---|------|------|
-| 1 | John Feltman | action | 14 | 6 | 70.0% | props + spreads |
-| 2 | VegasIsMyBitch | action | 59 | 31 | 65.6% | ML/spread/total |
-| 3 | RankScore by Bet Labs | action | 30 | 16 | 65.2% | spread/total |
-| 4 | Michael Fiddle | action | 15 | 8 | 65.2% | ML/spread/total |
-| 5 | craig.r.trujillo | bettingpros_experts | 13 | 7 | 65.0% | ML/spread/total |
-| 8 | Mike Barner | sportsline | 63 | 40 | 61.2% | ML + props |
-| 9 | Markus Markets | action | 130 | 85 | 60.5% | props only |
-| 19 | OddsTrader AI | oddstrader | 1675 | 1420 | 54.1% | 🧊 cold |
-
-### Best by market
-
-**Spreads:** VegasIsMyBitch (action) 75.0% (39W-13L); OddsTrader AI 65.3% over 611 picks
-**Totals:** sXeBets (JuiceReel) 68.2% 🧊 cold; Brandon Kravitz (action) 67.9%
-**Moneylines:** Bryan Fonseca (action) 73.3%; MyPicksWithNoResearch (bettingpros_experts) 72.7%
-**Player props:** Mike Barner (sportsline) 76.2% (16W-5L); Markus Markets (action) 60.5% over 215 picks
+| Expert | Source | W | L | Win% |
+|--------|--------|---|---|------|
+| VegasIsMyBitch | action | 59 | 31 | 65.6% |
+| Mike Barner | sportsline | 63 | 40 | 61.2% |
+| Markus Markets | action | 130 | 85 | 60.5% |
+| OddsTrader AI | oddstrader | 1675 | 1420 | 54.1% 🧊 |
 
 ### Best by stat type
 
 | Stat | Expert | Source | W | L | Win% |
 |------|--------|--------|---|---|------|
-| Rebounds | Kyle Murray | action | 17 | 3 | **85.0%** |
-| Assists | Jon Metler | covers | 10 | 2 | **83.3%** |
-| pts_ast combo | Markus Markets | action | 19 | 6 | **76.0%** |
-| Points | Mike Barner | sportsline | 10 | 3 | **76.9%** |
-| pts_reb combo | Top Shelf Action | action | 8 | 3 | **72.7%** |
+| Rebounds | Kyle Murray | action | 17 | 3 | 85.0% |
+| Assists | Larry Hartstein | sportsline | 20 | 6 | 76.9% |
+| Points UNDER | Matt Severance | sportsline | 27 | 9 | 75.0% |
+| pts_ast | Markus Markets | action | 19 | 6 | 76.0% |
 
-Notable: Kyle Murray on rebounds (85%) is an outlier worth monitoring — sample is small (n=20) but Wilson lower bound still suggests edge. Jon Metler on assists (10W-2L) similarly small but striking.
+### Best expert pairs (min 15 agreements)
 
-### Best expert pairs (min 15 agreements, aggregated across markets)
-
-| Tier | Pair | W | L | Win% | Markets |
-|------|------|---|---|------|---------|
-| **A** | buckets_podcast + joe_dellera (action) | 13 | 8 | **61.9%** | player_prop |
-| **A** | bryan_fonseca + buckets_podcast (action) | 12 | 8 | **60.0%** | player_prop |
-| **B** | betql_model + sxebets | 19 | 14 | **57.6%** | prop/spread/total |
-| C | kyle_murray + betql_model | 12 | 10 | 54.5% | player_prop |
-
-### Volume vs accuracy tension
-- **BetQL Model** is the most prolific source (17,291 picks) but sits at 48.6% — below breakeven. It appears in many pairs because of volume, not edge.
-- **OddsTrader AI** is cold-flagged (🧊) despite a 54.1% career rate: recent 30-day window has dropped ≥8pp below career average. Use with caution on totals/spreads.
-- **sXeBets** leads the totals category (68.2%) but is also cold-flagged — this is likely a regression-to-mean signal.
-
-### Pattern registry status
-- **3 active patterns** in `PATTERN_REGISTRY`: `five_source_total_under`, `four_source_total_under`, `five_source_total_over`
-- **A-tier**: 5+ sources on totals (UNDER: 61.8% career; OVER: similar)
-- **B-tier**: 4+ sources on totals
-- Spreads are 42% in the plays pipeline and do not qualify for A-tier
-- NCAAB registry: empty (insufficient data until post-tournament 2026)
+| Tier | Pair | W | L | Win% |
+|------|------|---|---|------|
+| **A** | buckets_podcast + joe_dellera (action) | 13 | 8 | 61.9% |
+| **A** | bryan_fonseca + buckets_podcast (action) | 12 | 8 | 60.0% |
+| **B** | betql_model + sxebets | 19 | 14 | 57.6% |
 
 ---
 
-*This document is auto-generated. Re-run `scripts/generate_performance_report.py` and update sections 1, 4, and 5 after each major pipeline change.*
+## 10. Source Health — 2026-03-24 Run
+
+Full report: `data/reports/source_health_2026-03-24.txt`
+
+| Source | Total | Elig | Inelig | Odds% | Line% | Markets |
+|--------|-------|------|--------|-------|-------|---------|
+| action | 31 | 29 | 2 | 100% | 93% | prop:19 spread:8 total:3 |
+| covers | 15 | 13 | 2 | 100% | 93% | prop:14 spread:1 |
+| sportsline | 7 | 7 | 0 | 100% | 100% | prop:6 total:1 |
+| dimers | 17 | 17 | 0 | 100% | 82% | prop:6 spread:4 total:4 ml:3 |
+| betql_spread | 15 | 3 | 12 | 26% | 100% | spread:15 |
+| **betql_totals** | **MISSING** | — | — | — | — | — |
+| betql_sharp | 12 | 1 | 11 | 16% | 100% | spread:6 total:6 |
+| betql_prop | 27 | 27 | 0 | 100% | 100% | prop:27 |
+| oddstrader | 15 | 3 | 12 | 73% | 100% | total:7 ml:4 spread:4 |
+| vegasinsider | 7 | 7 | 0 | 100% | 100% | spread:4 total:2 prop:1 |
+| juicereel | 18 | 18 | 0 | 100% | 100% | prop:17 spread:1 |
+| bettingpros | 1 | 1 | 0 | 100% | 100% | ml:1 |
+| bettingpros_experts | 28 | 28 | 0 | 100% | 100% | prop:19 spread:5 ml:3 total:1 |
+
+Note: OddsTrader ran successfully on 2026-03-25 (40 game picks + 71 props) after timing out on 2026-03-24.
+
+---
+
+*Re-run `scripts/generate_performance_report.py` and update sections 2, 9, and 10 after each major pipeline change or weekly data correction.*

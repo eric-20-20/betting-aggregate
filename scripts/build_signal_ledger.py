@@ -1320,10 +1320,14 @@ def _history_date_range(start_str: str, end_str: str) -> List[date]:
     return days
 
 
-def _history_row_to_occurrence(row: Dict[str, Any], source_tag: str = "betql_history", run_id: Optional[str] = None, sport: str = NBA_SPORT) -> Dict[str, Any]:
+def _history_row_to_occurrence(row: Dict[str, Any], source_tag: str = "betql_history", run_id: Optional[str] = None, sport: str = NBA_SPORT) -> Optional[Dict[str, Any]]:
     ev = row.get("event") or {}
     mk = row.get("market") or {}
     prov = row.get("provenance") or {}
+    if row.get("eligible_for_consensus") is False:
+        return None
+    if (row.get("market") or {}).get("market_type") is None:
+        return None
     day_key = ev.get("day_key")
     event_key = ev.get("event_key")
     away = ev.get("away_team")
@@ -1459,7 +1463,8 @@ def _load_betql_history(
             for rec in read_jsonl(path):
                 try:
                     occ = _history_row_to_occurrence(rec, source_tag=source_tag, sport=sport)
-                    rows.append(occ)
+                    if occ is not None:
+                        rows.append(occ)
                 except Exception:
                     continue
     return rows
@@ -1482,7 +1487,8 @@ def _load_oddstrader_history(
         for rec in read_jsonl(path):
             try:
                 occ = _history_row_to_occurrence(rec, source_tag="oddstrader_history", sport=sport)
-                rows.append(occ)
+                if occ is not None:
+                    rows.append(occ)
             except Exception:
                 continue
     print(f"OddsTrader history: loaded {len(rows)} records from {sport_dir} ({start_str} to {end_str})")
@@ -1642,8 +1648,9 @@ def main() -> None:
         for row in read_jsonl(path):
             try:
                 occ = _history_row_to_occurrence(row, source_tag=source_tag, sport=sport)
-                occurrences.append(occ)
-                loaded += 1
+                if occ is not None:
+                    occurrences.append(occ)
+                    loaded += 1
             except Exception as e:
                 if args.debug:
                     print(f"[WARN] Failed to convert row: {e}")
@@ -1661,8 +1668,9 @@ def main() -> None:
             for row in read_jsonl(path):
                 try:
                     occ = _history_row_to_occurrence(row, source_tag="action_history", sport=sport)
-                    occurrences.append(occ)
-                    loaded += 1
+                    if occ is not None:
+                        occurrences.append(occ)
+                        loaded += 1
                 except Exception as e:
                     if args.debug:
                         print(f"[WARN] Failed to convert Action row: {e}")
@@ -1680,8 +1688,9 @@ def main() -> None:
             for row in read_jsonl(path):
                 try:
                     occ = _history_row_to_occurrence(row, source_tag="dimers_history", sport=sport)
-                    occurrences.append(occ)
-                    loaded += 1
+                    if occ is not None:
+                        occurrences.append(occ)
+                        loaded += 1
                 except Exception as e:
                     if args.debug:
                         print(f"[WARN] Failed to convert Dimers row: {e}")
@@ -1702,8 +1711,9 @@ def main() -> None:
             for row in jr_rows:
                 try:
                     occ = _history_row_to_occurrence(row, source_tag="juicereel_history", sport=sport)
-                    occurrences.append(occ)
-                    loaded += 1
+                    if occ is not None:
+                        occurrences.append(occ)
+                        loaded += 1
                 except Exception as e:
                     if args.debug:
                         print(f"[WARN] Failed to convert JuiceReel row: {e}")
@@ -1724,8 +1734,9 @@ def main() -> None:
             for row in bpe_normalized:
                 try:
                     occ = _history_row_to_occurrence(row, source_tag="bettingpros_experts_history", sport=sport)
-                    occurrences.append(occ)
-                    loaded += 1
+                    if occ is not None:
+                        occurrences.append(occ)
+                        loaded += 1
                 except Exception as e:
                     if args.debug:
                         print(f"[WARN] Failed to convert BettingPros experts row: {e}")

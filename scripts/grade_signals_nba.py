@@ -425,6 +425,14 @@ def _try_all_games_player_fallback(
         player_id = signal["selection"].split("::")[0]
     if not player_id:
         return None
+    away_team, home_team = derive_teams(signal)
+    if not (
+        isinstance(signal.get("event_key"), str)
+        and "@" in signal.get("event_key", "")
+        and away_team
+        and home_team
+    ):
+        return None
 
     # Try primary date first, then +/-1 day
     dates_to_try = [date_str]
@@ -443,6 +451,10 @@ def _try_all_games_player_fallback(
         except Exception:
             continue
         if result is not None:
+            matched_away = str(result.get("matched_away") or "").upper()
+            matched_home = str(result.get("matched_home") or "").upper()
+            if {away_team, home_team} != {matched_away, matched_home}:
+                continue
             return result
     return None
 
@@ -480,6 +492,7 @@ def grade_signal(
         if safe_event_key:
             row.setdefault("event_key_safe", safe_event_key)
             row.setdefault("canonical_event_key", safe_event_key)
+        row.setdefault("grade_notes", row.get("notes") or "")
         return row
 
     if not date_str:
@@ -1075,7 +1088,8 @@ def grade_signal(
         match_confidence = compute_player_match_confidence(match_method)
 
     # Determine ROI eligibility (never silently assume -110)
-    roi_eligible = is_roi_eligible(
+    signal_has_contract_odds = signal.get("odds") is not None
+    roi_eligible = signal_has_contract_odds and is_roi_eligible(
         status=status_val,
         odds=int(odds) if odds else None,
         player_match_confidence_val=match_confidence,
@@ -1631,6 +1645,8 @@ def main() -> None:
             if source_grades:
                 grade_row["source_grades"] = source_grades
 
+        grade_row.setdefault("grade_notes", grade_row.get("notes") or "")
+
         if prev and materially_equal(prev, grade_row):
             counters["unchanged"] += 1
             continue
@@ -1689,6 +1705,9 @@ def main() -> None:
     orphan_count = len(latest_by_signal) - len(pruned)
     if orphan_count:
         print(f"[grader] Pruned {orphan_count} orphaned grades (no matching signal in ledger)")
+
+    for row in pruned.values():
+        row.setdefault("grade_notes", row.get("notes") or "")
 
     if not args.dry_run:
         if new_rows:

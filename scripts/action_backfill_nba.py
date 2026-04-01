@@ -503,6 +503,7 @@ def ingest_game(
         canonical_url=url,
         observed_at_utc=observed_at,
         debug=debug,
+        sport=sport,
     )
 
     normalized: List[dict] = []

@@ -169,6 +169,10 @@ def fetch_game_result(event_key: str, away: str, home: str, date_str: str, refre
                 game_id = str(lgf_result["game_id"])
                 cdn_result, cdn_meta = nba_cdn.fetch_game_result(game_id, refresh_cache=refresh_cache)
                 if cdn_result and cdn_result.get("status") == "FINAL":
+                    if lgf_result.get("match_orientation") == "flipped":
+                        cdn_result["home_score"], cdn_result["away_score"] = cdn_result.get("away_score"), cdn_result.get("home_score")
+                        cdn_result["home_team"], cdn_result["away_team"] = cdn_result.get("away_team"), cdn_result.get("home_team")
+                        cdn_result["match_orientation"] = "flipped"
                     cdn_result["game_id"] = game_id
                     cdn_result["fallback_from"] = "auto_lgf_cdn"
                     return cdn_result

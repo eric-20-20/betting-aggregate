@@ -129,14 +129,16 @@ def _extract_player_alias(raw_pick_text: str) -> str:
     return candidate or normalized
 
 
-def map_player(raw_pick_text: str) -> str:
+def map_player(raw_pick_text: str, store=None) -> str:
+    from store import data_store as _default_store
+    _store = store if store is not None else _default_store
     candidate_alias = _extract_player_alias(raw_pick_text)
-    existing_player_key = data_store.lookup_player_key(candidate_alias)
+    existing_player_key = _store.lookup_player_key(candidate_alias)
     if existing_player_key:
         return existing_player_key
 
     full_name = " ".join(word.capitalize() for word in candidate_alias.split()) or raw_pick_text.strip()
-    return data_store.add_player(full_name=full_name, alias_text=candidate_alias, is_verified=False)
+    return _store.add_player(full_name=full_name, alias_text=candidate_alias, is_verified=False)
 
 
 def map_prop_stat(raw_pick_text: str) -> Optional[str]:

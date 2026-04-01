@@ -748,7 +748,8 @@ def parse_player_prop(raw_pick_text: str, sport: str = NBA_SPORT) -> dict:
             "player_key": None,
         }
 
-    player_key = map_player(raw_pick_text)
+    from store import get_data_store
+    player_key = map_player(raw_pick_text, store=get_data_store(sport))
     lower = raw_pick_text.lower()
     side = None
     if "over" in lower or " o " in lower:
@@ -815,7 +816,7 @@ def normalize_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, stat
             "away_team": away_team,
         }
     market_details = (
-        parse_player_prop(raw_pick.raw_pick_text)
+        parse_player_prop(raw_pick.raw_pick_text, sport=raw_pick.sport)
         if raw_pick.market_family == "player_prop"
         else parse_standard_market(raw_pick.raw_pick_text)
     )

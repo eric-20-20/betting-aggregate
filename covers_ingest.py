@@ -360,7 +360,7 @@ def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: date
     def validate_pick(pick_text: str) -> Optional[Tuple[str, str]]:
         # returns (normalized_pick, market_family) or None
         normalized_pick = clean_pick_string(pick_text)
-        prop_parsed = parse_player_prop(normalized_pick)
+        prop_parsed = parse_player_prop(normalized_pick, sport=sport)
         if prop_parsed.get("market_type") == "player_prop" and prop_parsed.get("selection") and prop_parsed.get("line"):
             return normalized_pick, "player_prop"
         std_parsed = parse_standard_market(normalized_pick)
@@ -487,7 +487,7 @@ def normalize_covers_pick(raw_pick: RawPickRecord, home_team: str, away_team: st
             "away_team": away_team,
         }
     market_details = (
-        parse_player_prop(raw_pick.raw_pick_text)
+        parse_player_prop(raw_pick.raw_pick_text, sport=sport)
         if raw_pick.market_family == "player_prop"
         else parse_standard_market(raw_pick.raw_pick_text)
     )

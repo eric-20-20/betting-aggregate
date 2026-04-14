@@ -1,3 +1,11 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Track Record | The Aggregate",
+  description: "Full transparency on our historical pick performance. All picks graded against final scores.",
+  alternates: { canonical: "/track-record" },
+};
+
 import {
   getConsensusStrengthRecords,
   getMarketTypeRecords,
@@ -18,7 +26,9 @@ import type {
   RecentTrendsReport,
   RecentWindowRecord,
   HotStreak,
+  Tier,
 } from "@/lib/types";
+import { TIER_COLORS } from "@/lib/types";
 import type { TierPerformance, PLDataPoint } from "@/lib/data";
 
 function PLChart({ data }: { data: PLDataPoint[] }) {
@@ -186,8 +196,8 @@ export default async function TrackRecordPage() {
             Picks are assigned tiers based on composite score. Higher tiers
             have stronger historical support.
           </p>
-          <div className="bg-gray-800/40 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="bg-gray-800/40 rounded-xl overflow-x-auto">
+            <table className="w-full text-sm min-w-[400px]">
               <thead>
                 <tr className="border-b border-gray-700/50">
                   <th className="text-left p-3 text-gray-400 font-medium">
@@ -226,8 +236,8 @@ export default async function TrackRecordPage() {
             When multiple independent sources agree on a pick, the win rate
             improves. More agreement = stronger signal.
           </p>
-          <div className="bg-gray-800/40 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="bg-gray-800/40 rounded-xl overflow-x-auto">
+            <table className="w-full text-sm min-w-[400px]">
               <thead>
                 <tr className="border-b border-gray-700/50">
                   <th className="text-left p-3 text-gray-400 font-medium">
@@ -260,8 +270,8 @@ export default async function TrackRecordPage() {
           <h2 className="text-xl font-bold text-white mb-4">
             Performance by Market Type
           </h2>
-          <div className="bg-gray-800/40 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="bg-gray-800/40 rounded-xl overflow-x-auto">
+            <table className="w-full text-sm min-w-[400px]">
               <thead>
                 <tr className="border-b border-gray-700/50">
                   <th className="text-left p-3 text-gray-400 font-medium">
@@ -299,8 +309,8 @@ export default async function TrackRecordPage() {
           <p className="text-gray-500 text-sm mb-4">
             How our picks perform across different statistical categories.
           </p>
-          <div className="bg-gray-800/40 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="bg-gray-800/40 rounded-xl overflow-x-auto">
+            <table className="w-full text-sm min-w-[400px]">
               <thead>
                 <tr className="border-b border-gray-700/50">
                   <th className="text-left p-3 text-gray-400 font-medium">
@@ -394,16 +404,11 @@ function BigStat({
 }
 
 function TierRow({ tier }: { tier: TierPerformance }) {
-  const tierColors: Record<string, string> = {
-    A: "text-emerald-400",
-    B: "text-blue-400",
-    C: "text-amber-400",
-    D: "text-red-400",
-  };
+  const colors = TIER_COLORS[tier.tier as Tier];
   return (
     <tr className="border-b border-gray-700/20 hover:bg-gray-700/20">
       <td className="p-3">
-        <span className={`font-semibold ${tierColors[tier.tier] || "text-gray-300"}`}>
+        <span className={`font-semibold ${colors?.text || "text-gray-300"}`}>
           Tier {tier.tier}
         </span>
       </td>
@@ -534,8 +539,8 @@ function RecentPerformanceSection({ report }: { report: RecentTrendsReport }) {
           <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
             By Agreement Level
           </h3>
-          <div className="bg-gray-800/40 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="bg-gray-800/40 rounded-xl overflow-x-auto">
+            <table className="w-full text-sm min-w-[400px]">
               <thead>
                 <tr className="border-b border-gray-700/50">
                   <th className="text-left p-3 text-gray-400 font-medium">
@@ -583,8 +588,8 @@ function RecentPerformanceSection({ report }: { report: RecentTrendsReport }) {
           <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
             By Market Type
           </h3>
-          <div className="bg-gray-800/40 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="bg-gray-800/40 rounded-xl overflow-x-auto">
+            <table className="w-full text-sm min-w-[400px]">
               <thead>
                 <tr className="border-b border-gray-700/50">
                   <th className="text-left p-3 text-gray-400 font-medium">

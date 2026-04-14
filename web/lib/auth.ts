@@ -56,7 +56,7 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       if (token.whopUserId) {
-        (session as any).whopUserId = token.whopUserId as string;
+        session.whopUserId = token.whopUserId as string;
       }
       return session;
     },

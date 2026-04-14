@@ -17,10 +17,15 @@ export default function PaywallPrompt({
       <h3 className="text-xl font-bold text-white mb-2">
         {lockedCount} More Picks Available
       </h3>
-      <p className="text-gray-400 mb-4 max-w-md mx-auto">
-        Get full access to all daily consensus picks with detailed factor
-        analysis, source breakdowns, and historical win rates.
+      <p className="text-gray-400 mb-3 max-w-md mx-auto">
+        Get full access to all daily consensus picks with detailed analysis.
       </p>
+      <ul className="text-gray-500 text-sm mb-4 space-y-1 max-w-sm mx-auto text-left">
+        <li>All A-tier picks with full factor breakdown</li>
+        <li>Multi-source consensus scoring across 7+ experts</li>
+        <li>Historical win rates and recent trend data</li>
+        <li>Full graded pick history with P&L tracking</li>
+      </ul>
 
       {session ? (
         // Logged in but not subscribed

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import type { Play, LockedPick, Tier } from "@/lib/types";
 import MarketTabs from "@/components/MarketTabs";
 import PickCard from "@/components/PickCard";
@@ -35,6 +35,18 @@ type Props = SubscriberProps | FreeProps;
 
 export default function PicksClientWrapper(props: Props) {
   const [activeTab, setActiveTab] = useState("all");
+  const tabsRef = useRef<HTMLDivElement>(null);
+
+  const handleTabChange = useCallback((tab: string) => {
+    setActiveTab(tab);
+    // Scroll tabs into view if they've scrolled off screen
+    if (tabsRef.current) {
+      const rect = tabsRef.current.getBoundingClientRect();
+      if (rect.top < 0) {
+        tabsRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+  }, []);
 
   if (props.isSubscriber) {
     return (
@@ -44,7 +56,8 @@ export default function PicksClientWrapper(props: Props) {
         marketCounts={props.marketCounts}
         tierOrder={props.tierOrder}
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
+        tabsRef={tabsRef}
       />
     );
   }
@@ -56,7 +69,8 @@ export default function PicksClientWrapper(props: Props) {
       marketCounts={props.marketCounts}
       tierOrder={props.tierOrder}
       activeTab={activeTab}
-      setActiveTab={setActiveTab}
+      setActiveTab={handleTabChange}
+      tabsRef={tabsRef}
     />
   );
 }
@@ -67,6 +81,7 @@ function SubscriberView({
   tierOrder,
   activeTab,
   setActiveTab,
+  tabsRef,
 }: {
   allPlays: Play[];
   playsByTier: Record<string, Play[]>;
@@ -74,6 +89,7 @@ function SubscriberView({
   tierOrder: Tier[];
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  tabsRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const filteredByTier: Record<string, Play[]> = {};
   for (const tier of tierOrder) {
@@ -87,7 +103,7 @@ function SubscriberView({
 
   return (
     <>
-      <div className="mb-6">
+      <div className="mb-6" ref={tabsRef}>
         <MarketTabs
           active={activeTab}
           onChange={setActiveTab}
@@ -122,6 +138,7 @@ function FreeView({
   tierOrder,
   activeTab,
   setActiveTab,
+  tabsRef,
 }: {
   teaserPicks: Play[];
   lockedByTier: Record<string, LockedPick[]>;
@@ -129,6 +146,7 @@ function FreeView({
   tierOrder: Tier[];
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  tabsRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const filteredTeasers =
     activeTab === "all"
@@ -152,7 +170,7 @@ function FreeView({
 
   return (
     <>
-      <div className="mb-6">
+      <div className="mb-6" ref={tabsRef}>
         <MarketTabs
           active={activeTab}
           onChange={setActiveTab}

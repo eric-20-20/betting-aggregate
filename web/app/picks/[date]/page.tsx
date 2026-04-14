@@ -2,31 +2,57 @@ import { getServerSession } from "next-auth";
 import { authOptions, isAuthEnabled } from "@/lib/auth";
 import { getPublicPicks, getFullPicks } from "@/lib/data";
 import { hasAccess } from "@/lib/whop";
+import { isAdminRequest } from "@/lib/admin";
+import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import type { Tier, Play } from "@/lib/types";
+import { TIER_COLORS } from "@/lib/types";
 import PicksClientWrapper from "./PicksClientWrapper";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ date: string }>;
+}): Promise<Metadata> {
+  const { date } = await params;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { title: "Invalid Date | The Aggregate" };
+  }
+  const picks = await getPublicPicks(date);
+  const total = picks?.meta.total_signals ?? 0;
+  const aTier = picks?.meta.tier_counts.A ?? 0;
+  const title = total > 0
+    ? `${date} NBA Picks (${total} picks, ${aTier} A-tier) | The Aggregate`
+    : `${date} NBA Picks | The Aggregate`;
+  const description = total > 0
+    ? `${total} consensus NBA picks for ${date}. ${aTier} top-tier selections backed by multi-source agreement.`
+    : `Consensus NBA picks for ${date}. Aggregated from 7+ expert sources.`;
+  return {
+    title,
+    description,
+    openGraph: { title, description },
+    alternates: { canonical: `/picks/${date}` },
+  };
+}
 
 export default async function PicksDatePage({
   params,
-  searchParams,
 }: {
   params: Promise<{ date: string }>;
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { date } = await params;
-  const query = await searchParams;
+
+  // Validate date format
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    notFound();
+  }
 
   // Determine if this is a subscriber
-  let isSubscriber = false;
-
-  // Owner bypass: ?admin=<ADMIN_SECRET>
-  const adminSecret = process.env.ADMIN_SECRET;
-  if (adminSecret && query.admin === adminSecret) {
-    isSubscriber = true;
-  }
+  let isSubscriber = await isAdminRequest();
 
   if (!isSubscriber && isAuthEnabled) {
     const session = await getServerSession(authOptions);
-    const whopUserId = (session as any)?.whopUserId as string | undefined;
+    const whopUserId = session?.whopUserId;
     if (whopUserId) {
       isSubscriber = await hasAccess(whopUserId);
     }
@@ -126,7 +152,7 @@ function PicksHeader({
         <span className="bg-gray-800 px-3 py-1 rounded-lg text-gray-400">
           {meta.total_signals} picks
         </span>
-        <span className="bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-lg">
+        <span className={`${TIER_COLORS.A.bg} ${TIER_COLORS.A.text} px-3 py-1 rounded-lg`}>
           {meta.tier_counts.A} A-tier
         </span>
       </div>
@@ -135,14 +161,23 @@ function PicksHeader({
 }
 
 function NoPicks({ date }: { date: string }) {
+  const checkoutUrl = process.env.NEXT_PUBLIC_WHOP_CHECKOUT_URL;
   return (
     <div className="max-w-6xl mx-auto px-4 py-16 text-center">
       <h1 className="text-2xl font-bold text-white mb-4">
         No picks available for {date}
       </h1>
-      <p className="text-gray-400">
+      <p className="text-gray-400 mb-6">
         Picks are generated daily when the pipeline runs. Check back later.
       </p>
+      {checkoutUrl && (
+        <a
+          href={checkoutUrl}
+          className="text-emerald-400 hover:text-emerald-300 text-sm transition-colors"
+        >
+          Subscribe to get notified when picks drop
+        </a>
+      )}
     </div>
   );
 }

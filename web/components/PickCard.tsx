@@ -215,11 +215,13 @@ export default function PickCard({ play, result }: { play: Play; result?: string
   const isATier = play.tier === "A";
 
   return (
-    <div className={`${
-      isATier
-        ? "bg-emerald-900/20 border-emerald-500/30 hover:border-emerald-400/50"
-        : "bg-gray-800/60 border-gray-700/50 hover:border-gray-600/60"
-    } border rounded-lg p-3 transition-colors flex flex-col gap-2`}>
+    <div
+      aria-label={`Tier ${play.tier} pick: ${main}${result ? `, result: ${result}` : ""}`}
+      className={`${
+        isATier
+          ? "bg-emerald-900/20 border-emerald-500/30 hover:border-emerald-400/50"
+          : "bg-gray-800/60 border-gray-700/50 hover:border-gray-600/60"
+      } border rounded-lg p-3 transition-colors flex flex-col gap-2`}>
       {/* Top: tier + result badge + matchup + game time */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

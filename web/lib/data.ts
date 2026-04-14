@@ -54,7 +54,7 @@ export async function getAvailableDates(): Promise<string[]> {
     return files
       .filter((f) => f.startsWith("public_") && f.endsWith(".json"))
       .map((f) => f.replace("public_", "").replace(".json", ""))
-      .filter((d) => d >= "2025-10-01")
+      .filter((d) => d >= (process.env.DATA_START_DATE || "2025-01-01"))
       .sort()
       .reverse();
   } catch {
@@ -208,7 +208,7 @@ export async function getAggregatedTimeline(tiers: string[] = ["A"]): Promise<Ti
         selection: sig.selection,
         market_type: sig.market_type,
         line: sig.line,
-        best_odds: (sig.expert_odds ?? sig.best_odds) as number | null,
+        best_odds: sig.expert_odds,
         pattern_label: play.matched_pattern?.label
           ? sanitizePatternLabel(play.matched_pattern.label)
           : null,

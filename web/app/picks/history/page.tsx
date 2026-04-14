@@ -2,27 +2,24 @@ import { getServerSession } from "next-auth";
 import { authOptions, isAuthEnabled } from "@/lib/auth";
 import { getHistoryIndex, getAggregatedTimeline } from "@/lib/data";
 import { hasAccess } from "@/lib/whop";
+import { isAdminRequest } from "@/lib/admin";
 import HistoryClientWrapper from "./HistoryClientWrapper";
 import Link from "next/link";
+import type { Metadata } from "next";
 
-export default async function HistoryPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
-}) {
-  const query = await searchParams;
+export const metadata: Metadata = {
+  title: "Pick History | The Aggregate",
+  description: "See how our past consensus picks performed — full graded results for every pick.",
+  alternates: { canonical: "/picks/history" },
+};
 
+export default async function HistoryPage() {
   // Auth check — identical to picks/[date] page
-  let isSubscriber = false;
-
-  const adminSecret = process.env.ADMIN_SECRET;
-  if (adminSecret && query.admin === adminSecret) {
-    isSubscriber = true;
-  }
+  let isSubscriber = await isAdminRequest();
 
   if (!isSubscriber && isAuthEnabled) {
     const session = await getServerSession(authOptions);
-    const whopUserId = (session as any)?.whopUserId as string | undefined;
+    const whopUserId = session?.whopUserId;
     if (whopUserId) {
       isSubscriber = await hasAccess(whopUserId);
     }
@@ -32,9 +29,14 @@ export default async function HistoryPage({
     return (
       <div className="max-w-6xl mx-auto px-4 py-16 text-center">
         <h1 className="text-2xl font-bold text-white mb-4">Pick History</h1>
-        <p className="text-gray-400 mb-6">
-          See how our past consensus picks performed — available to subscribers only.
+        <p className="text-gray-400 mb-4">
+          Full graded results for every past pick — available to subscribers.
         </p>
+        <ul className="text-gray-500 text-sm mb-6 space-y-1">
+          <li>Every A-tier pick graded against final scores</li>
+          <li>Win/loss records and cumulative P&L tracking</li>
+          <li>Full factor breakdown for every historical pick</li>
+        </ul>
         <div className="flex justify-center gap-4">
           {process.env.NEXT_PUBLIC_WHOP_CHECKOUT_URL && (
             <a
@@ -127,7 +129,6 @@ export default async function HistoryPage({
 
       <HistoryClientWrapper
         dates={historyIndex.dates}
-        adminParam={query.admin as string | undefined}
         timeline={timeline}
       />
     </div>

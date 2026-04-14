@@ -82,6 +82,8 @@ def sanitize_play(play: dict) -> dict:
     # Replace named sources with anonymous count
     source_count = len(sig.get("sources_present", []))
     strength_label = _consensus_label(source_count)
+    # Save expert names before clearing (needed for pattern label sanitization)
+    original_experts = [e for e in sig.get("experts", []) if isinstance(e, str) and e]
     sig["sources_count"] = source_count
     sig["consensus_strength"] = strength_label
     sig.pop("sources_combo", None)
@@ -130,9 +132,8 @@ def sanitize_play(play: dict) -> dict:
             safe_label = re.sub(re.escape(src), "source", safe_label, flags=re.IGNORECASE)
         # Strip [source_id] tags like [sportsline], [covers], [oddstrader]
         safe_label = re.sub(r"\s*\[.*?\]\s*", " ", safe_label).strip()
-        # Strip expert names (from the play's own expert list) — longest first
-        expert_list = [e for e in sig.get("experts", []) if isinstance(e, str) and e]
-        for expert_name in sorted(expert_list, key=len, reverse=True):
+        # Strip expert names (from the play's original expert list) — longest first
+        for expert_name in sorted(original_experts, key=len, reverse=True):
             safe_label = re.sub(re.escape(expert_name), "source", safe_label, flags=re.IGNORECASE)
         # Deduplicate repeated "source" words (e.g. "source+source" → "multi-source")
         safe_label = re.sub(r"source\+source", "multi-source", safe_label)

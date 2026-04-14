@@ -31,6 +31,7 @@ NUM_TEASER_PICKS = 3
 SOURCE_NAMES = {
     "action", "betql", "covers", "dimers", "sportsline",
     "oddstrader", "vegasinsider", "sportscapping",
+    "juicereel", "nukethebooks", "sxebets", "unitvacuum", "bettingpros",
 }
 
 # Fields to strip from all exported data (incomplete ROI data)
@@ -121,14 +122,26 @@ def sanitize_play(play: dict) -> dict:
             "role": ed.get("role"),
         }
 
-    # Sanitize matched_pattern — strip source names from label, keep hist
+    # Sanitize matched_pattern — strip source AND expert names from label
     mp = play.get("matched_pattern")
     if mp:
         safe_label = mp.get("label", "")
         for src in SOURCE_NAMES:
             safe_label = re.sub(re.escape(src), "source", safe_label, flags=re.IGNORECASE)
+        # Strip [source_id] tags like [sportsline], [covers], [oddstrader]
+        safe_label = re.sub(r"\s*\[.*?\]\s*", " ", safe_label).strip()
+        # Strip expert names (from the play's own expert list) — longest first
+        expert_list = [e for e in sig.get("experts", []) if isinstance(e, str) and e]
+        for expert_name in sorted(expert_list, key=len, reverse=True):
+            safe_label = re.sub(re.escape(expert_name), "source", safe_label, flags=re.IGNORECASE)
         # Deduplicate repeated "source" words (e.g. "source+source" → "multi-source")
         safe_label = re.sub(r"source\+source", "multi-source", safe_label)
+        # Clean up "source AI", "source source", leftover "(expert)" tags
+        safe_label = re.sub(r"source\s+AI\b", "source", safe_label)
+        safe_label = re.sub(r"source\s+source", "source", safe_label)
+        safe_label = re.sub(r"\s*\(expert\)", "", safe_label)
+        # Clean up double spaces
+        safe_label = re.sub(r"\s{2,}", " ", safe_label).strip()
         play["matched_pattern"] = {
             "label": safe_label,
             "tier_eligible": mp.get("tier_eligible"),

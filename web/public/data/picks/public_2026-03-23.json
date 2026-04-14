@@ -1,17 +1,17 @@
 {
   "meta": {
-    "generated_at_utc": "2026-03-23T22:18:21.365689+00:00",
+    "generated_at_utc": "2026-03-25T17:22:19.878325+00:00",
     "date": "2026-03-23",
     "day_of_week": "Monday",
-    "total_signals": 218,
-    "scorable_signals": 78,
-    "excluded_count": 16,
+    "total_signals": 325,
+    "scorable_signals": 147,
+    "excluded_count": 22,
     "filtered_count": 2,
-    "exported_count": 57,
+    "exported_count": 103,
     "tier_counts": {
-      "A": 6,
-      "B": 35,
-      "C": 16,
+      "A": 38,
+      "B": 37,
+      "C": 28,
       "D": 2
     }
   },
@@ -19,265 +19,290 @@
     {
       "rank": 1,
       "tier": "A",
-      "wilson_score": 0.6368,
-      "composite_score": 0.6368,
+      "wilson_score": 0.6232,
+      "composite_score": 0.6232,
       "confidence": "high",
-      "confidence_score": 93,
-      "a_tier_eligible": false,
-      "positive_dimensions": 2,
-      "negative_dimensions": 0,
-      "total_dimensions": 2,
+      "confidence_score": 86,
+      "a_tier_eligible": true,
+      "positive_dimensions": 0,
+      "negative_dimensions": 2,
+      "total_dimensions": 3,
       "signal": {
-        "signal_id": "15ac6aab750670c91c16c1d948525e20e5292dbaa4161f47f34e03ee8208bfb9",
-        "selection": "DET",
-        "market_type": "spread",
-        "line": -1.5,
-        "score": 100,
-        "direction": "DET",
-        "atomic_stat": null,
+        "signal_id": "8e2c6425e938f912bf9e21499a7ba2e91f9cdbc412c15defdcecfaafb78d06e2",
+        "selection": "NBA:cason_wallace::assists::OVER",
+        "market_type": "player_prop",
+        "line": 2.0,
+        "score": null,
+        "direction": "OVER",
+        "atomic_stat": "assists",
         "experts": [],
-        "best_odds": null,
-        "away_team": "LAL",
-        "home_team": "DET",
-        "event_key": "NBA:2026:03:23:LAL@DET",
+        "expert_odds": null,
+        "away_team": "OKC",
+        "home_team": "PHI",
+        "event_key": "NBA:2026:03:23:OKC@PHI",
         "day_key": "NBA:2026:03:23",
-        "line_min": -1.5,
-        "line_max": 2.0,
-        "market_line": 1.0,
-        "line_diff": -2.5,
-        "sources_count": 4,
-        "consensus_strength": "3+_source",
+        "line_min": null,
+        "line_max": null,
+        "market_line": null,
+        "line_diff": null,
+        "sources_count": 1,
+        "consensus_strength": "1_source",
         "game_time_et": "7:00 pm ET"
       },
       "primary_record": {
-        "wilson_lower": 0.4027,
-        "win_pct": 0.5057,
-        "n": 89,
-        "wins": 44,
-        "losses": 45,
-        "lookup_level": "consensus_market",
-        "label": "4+_sources / spread"
+        "wilson_lower": 0.6375,
+        "win_pct": 0.7363,
+        "n": 93,
+        "wins": 67,
+        "losses": 26,
+        "lookup_level": "combo_market_stat",
+        "label": "1_source / player_prop / assists"
       },
       "historical_record": {
-        "wins": 44,
-        "losses": 45,
-        "n": 89,
-        "win_pct": 0.5057,
-        "source": "consensus_market",
-        "label": "4+_sources / spread"
+        "wins": 67,
+        "losses": 26,
+        "n": 93,
+        "win_pct": 0.7363,
+        "source": "combo_market_stat",
+        "label": "1_source / player_prop / assists"
       },
       "factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / spread",
-          "win_pct": 0.5057,
-          "n": 89,
-          "wilson_lower": 0.4027
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.4923,
+          "n": 20230,
+          "wilson_lower": 0.4854
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "assists",
+          "win_pct": 0.5039,
+          "n": 2303,
+          "wilson_lower": 0.4835
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "spread / 0-2.5",
-          "win_pct": 0.5133,
-          "n": 1096,
-          "wilson_lower": 0.4836
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4851,
+          "n": 11028,
+          "wilson_lower": 0.4758
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
-          "lookup_key": "4+_sources / spread",
-          "win_pct": 0.5057,
-          "n": 89,
-          "wilson_lower": 0.4027
+          "lookup_key": "1_source / player_prop",
+          "win_pct": 0.4923,
+          "n": 20230,
+          "wilson_lower": 0.4854
+        },
+        {
+          "dimension": "stat_type",
+          "lookup_key": "assists",
+          "win_pct": 0.5039,
+          "n": 2303,
+          "wilson_lower": 0.4835
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "spread / 0-2.5",
-          "win_pct": 0.5133,
-          "n": 1096,
-          "wilson_lower": 0.4836
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4851,
+          "n": 11028,
+          "wilson_lower": 0.4758
         }
       ],
-      "summary": "50.6% win rate in 89 similar spread picks (Wilson: 40.3%) [analyst: -1.5% | line: +1.0%]",
+      "summary": "73.6% win rate in 93 similar assists player_prop picks (Wilson: 63.7%) [hot: +3%]",
       "small_sample": false,
-      "recency_adjustment": 0.0,
-      "expert_adjustment": -0.015,
+      "recency_adjustment": 0.03,
+      "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
-      "line_bucket_adjustment": 0.01,
-      "total_adjustment": -0.005,
-      "expert_detail": {
-        "win_pct": 0.4449,
-        "n": 1045,
-        "adjustment": -0.015,
-        "role": "penalty"
+      "line_bucket_adjustment": 0.0,
+      "total_adjustment": 0.03,
+      "matched_pattern": {
+        "label": "source experts assists OVER",
+        "tier_eligible": "A",
+        "hist": {
+          "record": "55-15",
+          "win_pct": 0.786,
+          "n": 70
+        }
+      },
+      "odds": {
+        "expert_odds": null,
+        "market_odds": null,
+        "odds_source": null,
+        "ev_pct": null,
+        "expert_ev_pct": null
       },
       "recent_trend": {
-        "wins": 10,
-        "losses": 10,
-        "n": 21,
-        "win_pct": 0.5,
+        "wins": 56,
+        "losses": 17,
+        "n": 73,
+        "win_pct": 0.7671,
         "window": 14,
-        "source": "consensus_market_stat",
-        "label": "4+_sources / spread / all"
+        "source": "combo_market_stat",
+        "label": "1_source / player_prop / assists"
       }
     },
     {
       "rank": 2,
       "tier": "A",
-      "wilson_score": 0.5682,
-      "composite_score": 0.5682,
+      "wilson_score": 0.6221,
+      "composite_score": 0.6221,
       "confidence": "high",
-      "confidence_score": 57,
+      "confidence_score": 85,
       "a_tier_eligible": true,
       "positive_dimensions": 0,
-      "negative_dimensions": 3,
+      "negative_dimensions": 2,
       "total_dimensions": 3,
       "signal": {
-        "signal_id": "8154888c39f72a218303edecb79b02c4b68f1697e26b9dde879f884813f1a238",
-        "selection": "NBA:dominick_barlow::rebounds::UNDER",
+        "signal_id": "b841dff1f2789a7c1dedb1bca82932c819f89efc8f58420d26b037f455b36dc2",
+        "selection": "NBA:ty_jerome::assists::OVER",
         "market_type": "player_prop",
-        "line": 5.5,
-        "score": 10,
-        "direction": "UNDER",
-        "atomic_stat": "rebounds",
+        "line": 6.5,
+        "score": null,
+        "direction": "OVER",
+        "atomic_stat": "assists",
         "experts": [],
-        "best_odds": -130,
-        "away_team": "PHI",
-        "home_team": "OKC",
-        "event_key": "NBA:2026:03:23:PHI@OKC",
+        "expert_odds": null,
+        "away_team": "MEM",
+        "home_team": "ATL",
+        "event_key": "NBA:2026:03:23:MEM@ATL",
         "day_key": "NBA:2026:03:23",
-        "line_min": 5.5,
-        "line_max": 5.5,
+        "line_min": null,
+        "line_max": null,
         "market_line": null,
         "line_diff": null,
         "sources_count": 1,
         "consensus_strength": "1_source",
-        "game_time_et": "7:00 pm ET"
+        "game_time_et": "7:30 pm ET"
       },
       "primary_record": {
-        "wilson_lower": 0.5093,
-        "win_pct": 0.6379,
-        "n": 58,
-        "wins": 37,
-        "losses": 21,
+        "wilson_lower": 0.6375,
+        "win_pct": 0.7363,
+        "n": 93,
+        "wins": 67,
+        "losses": 26,
         "lookup_level": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / rebounds"
+        "label": "1_source / player_prop / assists"
       },
       "historical_record": {
-        "wins": 37,
-        "losses": 21,
-        "n": 58,
-        "win_pct": 0.6379,
+        "wins": 67,
+        "losses": 26,
+        "n": 93,
+        "win_pct": 0.7363,
         "source": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / rebounds"
+        "label": "1_source / player_prop / assists"
       },
       "factors": [
         {
           "dimension": "consensus_market",
           "lookup_key": "1_source / player_prop",
-          "win_pct": 0.4913,
-          "n": 19848,
-          "wilson_lower": 0.4844
+          "win_pct": 0.4923,
+          "n": 20230,
+          "wilson_lower": 0.4854
         },
         {
           "dimension": "stat_type",
-          "lookup_key": "rebounds",
-          "win_pct": 0.4844,
-          "n": 3313,
-          "wilson_lower": 0.4674
+          "lookup_key": "assists",
+          "win_pct": 0.5039,
+          "n": 2303,
+          "wilson_lower": 0.4835
         },
         {
           "dimension": "line_bucket",
           "lookup_key": "player_prop / 0-10.5",
-          "win_pct": 0.484,
-          "n": 10800,
-          "wilson_lower": 0.4746
+          "win_pct": 0.4851,
+          "n": 11028,
+          "wilson_lower": 0.4758
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
           "lookup_key": "1_source / player_prop",
-          "win_pct": 0.4913,
-          "n": 19848,
-          "wilson_lower": 0.4844
+          "win_pct": 0.4923,
+          "n": 20230,
+          "wilson_lower": 0.4854
         },
         {
           "dimension": "stat_type",
-          "lookup_key": "rebounds",
-          "win_pct": 0.4844,
-          "n": 3313,
-          "wilson_lower": 0.4674
+          "lookup_key": "assists",
+          "win_pct": 0.5039,
+          "n": 2303,
+          "wilson_lower": 0.4835
         },
         {
           "dimension": "line_bucket",
           "lookup_key": "player_prop / 0-10.5",
-          "win_pct": 0.484,
-          "n": 10800,
-          "wilson_lower": 0.4746
+          "win_pct": 0.4851,
+          "n": 11028,
+          "wilson_lower": 0.4758
         }
       ],
-      "summary": "63.8% win rate in 58 similar rebounds player_prop picks (Wilson: 50.9%) [hot: +3% | analyst: +1.5%]",
+      "summary": "73.6% win rate in 93 similar assists player_prop picks (Wilson: 63.7%) [hot: +3%]",
       "small_sample": false,
       "recency_adjustment": 0.03,
-      "expert_adjustment": 0.015,
+      "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
       "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.045,
-      "expert_detail": {
-        "win_pct": 0.5703,
-        "n": 506,
-        "adjustment": 0.015,
-        "role": "boost"
-      },
+      "total_adjustment": 0.03,
       "matched_pattern": {
-        "label": "nukethebooks player prop UNDER",
+        "label": "source experts assists OVER",
         "tier_eligible": "A",
         "hist": {
-          "record": "100-69",
-          "win_pct": 0.592,
-          "n": 169
+          "record": "55-15",
+          "win_pct": 0.786,
+          "n": 70
         }
       },
+      "odds": {
+        "expert_odds": null,
+        "market_odds": null,
+        "odds_source": null,
+        "ev_pct": null,
+        "expert_ev_pct": null
+      },
       "recent_trend": {
-        "wins": 11,
-        "losses": 6,
-        "n": 17,
-        "win_pct": 0.6471,
+        "wins": 56,
+        "losses": 17,
+        "n": 73,
+        "win_pct": 0.7671,
         "window": 14,
         "source": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / rebounds"
+        "label": "1_source / player_prop / assists"
       }
     },
     {
       "rank": 3,
       "tier": "A",
-      "wilson_score": 0.5587,
-      "composite_score": 0.5587,
+      "wilson_score": 0.6221,
+      "composite_score": 0.6221,
       "confidence": "high",
-      "confidence_score": 52,
+      "confidence_score": 85,
       "a_tier_eligible": true,
-      "positive_dimensions": 2,
-      "negative_dimensions": 1,
+      "positive_dimensions": 0,
+      "negative_dimensions": 2,
       "total_dimensions": 3,
       "signal": {
-        "signal_id": "5ab50cfac7797cf1616fa38fd097cbf81ea9c81ca12e87c878fc9dc66037a0b1",
-        "selection": "NBA:p_larsson::points::UNDER",
+        "signal_id": "180784a67ab7fa5c2ddb93ed1310d5e32a302d190231db038df8e66a331c4b67",
+        "selection": "NBA:ausar_thompson::assists::OVER",
         "market_type": "player_prop",
-        "line": 11.5,
-        "score": 10,
-        "direction": "UNDER",
-        "atomic_stat": "points",
+        "line": 2.5,
+        "score": null,
+        "direction": "OVER",
+        "atomic_stat": "assists",
         "experts": [],
-        "best_odds": -120,
-        "away_team": "MIA",
-        "home_team": "SAS",
-        "event_key": "NBA:2026:03:23:MIA@SAS",
+        "expert_odds": null,
+        "away_team": "LAL",
+        "home_team": "DET",
+        "event_key": "NBA:2026:03:23:LAL@DET",
         "day_key": "NBA:2026:03:23",
-        "line_min": 11.5,
-        "line_max": 11.5,
+        "line_min": null,
+        "line_max": null,
         "market_line": null,
         "line_diff": null,
         "sources_count": 1,
@@ -285,99 +310,100 @@
         "game_time_et": "7:00 pm ET"
       },
       "primary_record": {
-        "wilson_lower": 0.5215,
-        "win_pct": 0.5944,
-        "n": 180,
-        "wins": 107,
-        "losses": 73,
+        "wilson_lower": 0.6375,
+        "win_pct": 0.7363,
+        "n": 93,
+        "wins": 67,
+        "losses": 26,
         "lookup_level": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / points"
+        "label": "1_source / player_prop / assists"
       },
       "historical_record": {
-        "wins": 107,
-        "losses": 73,
-        "n": 180,
-        "win_pct": 0.5944,
+        "wins": 67,
+        "losses": 26,
+        "n": 93,
+        "win_pct": 0.7363,
         "source": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / points"
+        "label": "1_source / player_prop / assists"
       },
       "factors": [
         {
           "dimension": "consensus_market",
           "lookup_key": "1_source / player_prop",
-          "win_pct": 0.4913,
-          "n": 19848,
-          "wilson_lower": 0.4844
+          "win_pct": 0.4923,
+          "n": 20230,
+          "wilson_lower": 0.4854
         },
         {
           "dimension": "stat_type",
-          "lookup_key": "points",
-          "win_pct": 0.5134,
-          "n": 8330,
-          "wilson_lower": 0.5026
+          "lookup_key": "assists",
+          "win_pct": 0.5039,
+          "n": 2303,
+          "wilson_lower": 0.4835
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "player_prop / 11-20.5",
-          "win_pct": 0.509,
-          "n": 5806,
-          "wilson_lower": 0.4961
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4851,
+          "n": 11028,
+          "wilson_lower": 0.4758
         }
       ],
       "supporting_factors": [
         {
           "dimension": "consensus_market",
           "lookup_key": "1_source / player_prop",
-          "win_pct": 0.4913,
-          "n": 19848,
-          "wilson_lower": 0.4844
+          "win_pct": 0.4923,
+          "n": 20230,
+          "wilson_lower": 0.4854
         },
         {
           "dimension": "stat_type",
-          "lookup_key": "points",
-          "win_pct": 0.5134,
-          "n": 8330,
-          "wilson_lower": 0.5026
+          "lookup_key": "assists",
+          "win_pct": 0.5039,
+          "n": 2303,
+          "wilson_lower": 0.4835
         },
         {
           "dimension": "line_bucket",
-          "lookup_key": "player_prop / 11-20.5",
-          "win_pct": 0.509,
-          "n": 5806,
-          "wilson_lower": 0.4961
+          "lookup_key": "player_prop / 0-10.5",
+          "win_pct": 0.4851,
+          "n": 11028,
+          "wilson_lower": 0.4758
         }
       ],
-      "summary": "59.4% win rate in 180 similar points player_prop picks (Wilson: 52.1%) [hot: +2% | analyst: +1.5%]",
+      "summary": "73.6% win rate in 93 similar assists player_prop picks (Wilson: 63.7%) [hot: +3%]",
       "small_sample": false,
-      "recency_adjustment": 0.02,
-      "expert_adjustment": 0.015,
+      "recency_adjustment": 0.03,
+      "expert_adjustment": 0.0,
       "stat_adjustment": 0.0,
       "day_adjustment": 0.0,
       "line_bucket_adjustment": 0.0,
-      "total_adjustment": 0.035,
-      "expert_detail": {
-        "win_pct": 0.5703,
-        "n": 506,
-        "adjustment": 0.015,
-        "role": "boost"
-      },
+      "total_adjustment": 0.03,
       "matched_pattern": {
-        "label": "nukethebooks player prop UNDER",
+        "label": "source experts assists OVER",
         "tier_eligible": "A",
         "hist": {
-          "record": "100-69",
-          "win_pct": 0.592,
-          "n": 169
+          "record": "55-15",
+          "win_pct": 0.786,
+          "n": 70
         }
       },
+      "odds": {
+        "expert_odds": null,
+        "market_odds": null,
+        "odds_source": null,
+        "ev_pct": null,
+        "expert_ev_pct": null
+      },
       "recent_trend": {
-        "wins": 25,
-        "losses": 18,
-        "n": 43,
-        "win_pct": 0.5814,
+        "wins": 56,
+        "losses": 17,
+        "n": 73,
+        "win_pct": 0.7671,
         "window": 14,
         "source": "combo_market_stat",
-        "label": "juicereel_nukethebooks / player_prop / points"
+        "label": "1_source / player_prop / assists"
       }
     }
   ],
@@ -386,58 +412,355 @@
       "rank": 4,
       "tier": "A",
       "market_type": "player_prop",
-      "matchup": "PHI@OKC",
+      "matchup": "SAS@MIA",
       "confidence": "high",
-      "confidence_score": 48,
-      "positive_dimensions": 1
+      "confidence_score": 85,
+      "positive_dimensions": 0
     },
     {
       "rank": 5,
       "tier": "A",
       "market_type": "player_prop",
-      "matchup": "POR@BKN",
+      "matchup": "SAS@MIA",
       "confidence": "high",
-      "confidence_score": 48,
+      "confidence_score": 81,
       "positive_dimensions": 0
     },
     {
       "rank": 6,
       "tier": "A",
       "market_type": "player_prop",
-      "matchup": "None@None",
+      "matchup": "LAL@DET",
       "confidence": "high",
-      "confidence_score": 33,
-      "positive_dimensions": 3
+      "confidence_score": 81,
+      "positive_dimensions": 0
     },
     {
       "rank": 7,
-      "tier": "B",
-      "market_type": "spread",
-      "matchup": "MEM@ATL",
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
       "confidence": "high",
-      "confidence_score": 77,
-      "positive_dimensions": 2
+      "confidence_score": 80,
+      "positive_dimensions": 0
     },
     {
       "rank": 8,
-      "tier": "B",
+      "tier": "A",
       "market_type": "player_prop",
-      "matchup": "ATL@MEM",
+      "matchup": "OKC@PHI",
       "confidence": "high",
-      "confidence_score": 57,
+      "confidence_score": 80,
       "positive_dimensions": 0
     },
     {
       "rank": 9,
-      "tier": "B",
+      "tier": "A",
       "market_type": "player_prop",
-      "matchup": "PHI@OKC",
+      "matchup": "SAS@MIA",
       "confidence": "high",
-      "confidence_score": 57,
+      "confidence_score": 80,
       "positive_dimensions": 0
     },
     {
       "rank": 10,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "LAL@DET",
+      "confidence": "high",
+      "confidence_score": 80,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 11,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "MEM@ATL",
+      "confidence": "high",
+      "confidence_score": 80,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 12,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "LAL@DET",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 13,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 14,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 15,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 16,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 17,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 18,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 19,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 20,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 21,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 22,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 23,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "high",
+      "confidence_score": 77,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 24,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "MEM@ATL",
+      "confidence": "high",
+      "confidence_score": 77,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 25,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 26,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "LAL@DET",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 27,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 28,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 29,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 30,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "LAL@DET",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 31,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 32,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 33,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 34,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "LAL@DET",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 35,
+      "tier": "A",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "high",
+      "confidence_score": 73,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 36,
+      "tier": "A",
+      "market_type": "moneyline",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 29,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 37,
+      "tier": "A",
+      "market_type": "spread",
+      "matchup": "MIL@LAC",
+      "confidence": "high",
+      "confidence_score": 21,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 38,
+      "tier": "A",
+      "market_type": "moneyline",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 8,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 39,
+      "tier": "B",
+      "market_type": "total",
+      "matchup": "SAS@MIA",
+      "confidence": "high",
+      "confidence_score": 63,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 40,
+      "tier": "B",
+      "market_type": "player_prop",
+      "matchup": "ATL@MEM",
+      "confidence": "high",
+      "confidence_score": 56,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 41,
+      "tier": "B",
+      "market_type": "player_prop",
+      "matchup": "PHI@OKC",
+      "confidence": "high",
+      "confidence_score": 56,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 42,
+      "tier": "B",
+      "market_type": "player_prop",
+      "matchup": "PHI@OKC",
+      "confidence": "high",
+      "confidence_score": 56,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 43,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "ATL@MEM",
@@ -446,7 +769,16 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 11,
+      "rank": 44,
+      "tier": "B",
+      "market_type": "player_prop",
+      "matchup": "MIA@SAS",
+      "confidence": "high",
+      "confidence_score": 52,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 45,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "DAL@GSW",
@@ -455,7 +787,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 12,
+      "rank": 46,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "MIL@LAC",
@@ -464,16 +796,25 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 13,
+      "rank": 47,
       "tier": "B",
       "market_type": "player_prop",
-      "matchup": "SAS@MIA",
+      "matchup": "PHI@OKC",
       "confidence": "high",
-      "confidence_score": 49,
+      "confidence_score": 48,
       "positive_dimensions": 1
     },
     {
-      "rank": 14,
+      "rank": 48,
+      "tier": "B",
+      "market_type": "player_prop",
+      "matchup": "POR@BKN",
+      "confidence": "high",
+      "confidence_score": 48,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 49,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "SAS@MIA",
@@ -482,34 +823,70 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 15,
+      "rank": 50,
       "tier": "B",
-      "market_type": "spread",
-      "matchup": "IND@ORL",
-      "confidence": "low",
-      "confidence_score": 32,
+      "market_type": "player_prop",
+      "matchup": "None@None",
+      "confidence": "high",
+      "confidence_score": 45,
+      "positive_dimensions": 3
+    },
+    {
+      "rank": 51,
+      "tier": "B",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "high",
+      "confidence_score": 45,
       "positive_dimensions": 2
     },
     {
-      "rank": 16,
+      "rank": 52,
+      "tier": "B",
+      "market_type": "spread",
+      "matchup": "LAL@DET",
+      "confidence": "high",
+      "confidence_score": 41,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 53,
       "tier": "B",
       "market_type": "spread",
       "matchup": "TOR@UTA",
       "confidence": "low",
-      "confidence_score": 18,
+      "confidence_score": 34,
       "positive_dimensions": 2
     },
     {
-      "rank": 17,
+      "rank": 54,
       "tier": "B",
       "market_type": "spread",
-      "matchup": "SAS@MIA",
+      "matchup": "MEM@ATL",
+      "confidence": "high",
+      "confidence_score": 26,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 55,
+      "tier": "B",
+      "market_type": "total",
+      "matchup": "IND@ORL",
       "confidence": "low",
-      "confidence_score": 17,
+      "confidence_score": 26,
       "positive_dimensions": 2
     },
     {
-      "rank": 18,
+      "rank": 56,
+      "tier": "B",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "low",
+      "confidence_score": 23,
+      "positive_dimensions": 3
+    },
+    {
+      "rank": 57,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "LAL@DET",
@@ -518,16 +895,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 19,
-      "tier": "B",
-      "market_type": "player_prop",
-      "matchup": "LAL@DET",
-      "confidence": "high",
-      "confidence_score": 8,
-      "positive_dimensions": 1
-    },
-    {
-      "rank": 20,
+      "rank": 58,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "OKC@PHI",
@@ -536,25 +904,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 21,
-      "tier": "B",
-      "market_type": "player_prop",
-      "matchup": "OKC@PHI",
-      "confidence": "high",
-      "confidence_score": 8,
-      "positive_dimensions": 2
-    },
-    {
-      "rank": 22,
-      "tier": "B",
-      "market_type": "player_prop",
-      "matchup": "OKC@PHI",
-      "confidence": "high",
-      "confidence_score": 8,
-      "positive_dimensions": 2
-    },
-    {
-      "rank": 23,
+      "rank": 59,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "OKC@PHI",
@@ -563,7 +913,7 @@
       "positive_dimensions": 1
     },
     {
-      "rank": 24,
+      "rank": 60,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "IND@ORL",
@@ -572,7 +922,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 25,
+      "rank": 61,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "IND@ORL",
@@ -581,25 +931,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 26,
-      "tier": "B",
-      "market_type": "player_prop",
-      "matchup": "IND@ORL",
-      "confidence": "high",
-      "confidence_score": 8,
-      "positive_dimensions": 2
-    },
-    {
-      "rank": 27,
-      "tier": "B",
-      "market_type": "player_prop",
-      "matchup": "IND@ORL",
-      "confidence": "high",
-      "confidence_score": 8,
-      "positive_dimensions": 2
-    },
-    {
-      "rank": 28,
+      "rank": 62,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "IND@ORL",
@@ -608,7 +940,7 @@
       "positive_dimensions": 1
     },
     {
-      "rank": 29,
+      "rank": 63,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "MEM@ATL",
@@ -617,7 +949,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 30,
+      "rank": 64,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "TOR@UTA",
@@ -626,7 +958,7 @@
       "positive_dimensions": 1
     },
     {
-      "rank": 31,
+      "rank": 65,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "TOR@UTA",
@@ -635,7 +967,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 32,
+      "rank": 66,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "TOR@UTA",
@@ -644,7 +976,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 33,
+      "rank": 67,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "TOR@UTA",
@@ -653,7 +985,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 34,
+      "rank": 68,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "TOR@UTA",
@@ -662,7 +994,7 @@
       "positive_dimensions": 1
     },
     {
-      "rank": 35,
+      "rank": 69,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "GSW@DAL",
@@ -671,7 +1003,7 @@
       "positive_dimensions": 1
     },
     {
-      "rank": 36,
+      "rank": 70,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "GSW@DAL",
@@ -680,7 +1012,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 37,
+      "rank": 71,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "BKN@POR",
@@ -689,7 +1021,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 38,
+      "rank": 72,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "BKN@POR",
@@ -698,7 +1030,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 39,
+      "rank": 73,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "BKN@POR",
@@ -707,7 +1039,7 @@
       "positive_dimensions": 1
     },
     {
-      "rank": 40,
+      "rank": 74,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "MIL@LAC",
@@ -716,7 +1048,7 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 41,
+      "rank": 75,
       "tier": "B",
       "market_type": "player_prop",
       "matchup": "MIL@LAC",
@@ -725,25 +1057,133 @@
       "positive_dimensions": 2
     },
     {
-      "rank": 42,
+      "rank": 76,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "high",
+      "confidence_score": 85,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 77,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 78,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 79,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 80,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 81,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "MEM@ATL",
+      "confidence": "high",
+      "confidence_score": 79,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 82,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 76,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 83,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "high",
+      "confidence_score": 73,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 84,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "LAL@DET",
+      "confidence": "high",
+      "confidence_score": 73,
+      "positive_dimensions": 0
+    },
+    {
+      "rank": 85,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "medium",
+      "confidence_score": 48,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 86,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "OKC@PHI",
+      "confidence": "medium",
+      "confidence_score": 48,
+      "positive_dimensions": 2
+    },
+    {
+      "rank": 87,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "IND@ORL",
+      "confidence": "medium",
+      "confidence_score": 48,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 88,
+      "tier": "C",
+      "market_type": "player_prop",
+      "matchup": "SAS@MIA",
+      "confidence": "medium",
+      "confidence_score": 48,
+      "positive_dimensions": 1
+    },
+    {
+      "rank": 89,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "DET@LAL",
       "confidence": "medium",
-      "confidence_score": 26,
+      "confidence_score": 25,
       "positive_dimensions": 0
     },
     {
-      "rank": 43,
-      "tier": "C",
-      "market_type": "spread",
-      "matchup": "OKC@PHI",
-      "confidence": "high",
-      "confidence_score": 20,
-      "positive_dimensions": 2
-    },
-    {
-      "rank": 44,
+      "rank": 90,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "IND@ORL",
@@ -752,7 +1192,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 45,
+      "rank": 91,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "IND@ORL",
@@ -761,7 +1201,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 46,
+      "rank": 92,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "SAS@MIA",
@@ -770,7 +1210,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 47,
+      "rank": 93,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "SAS@MIA",
@@ -779,7 +1219,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 48,
+      "rank": 94,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "MEM@ATL",
@@ -788,7 +1228,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 49,
+      "rank": 95,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "TOR@UTA",
@@ -797,7 +1237,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 50,
+      "rank": 96,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "TOR@UTA",
@@ -806,7 +1246,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 51,
+      "rank": 97,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "TOR@UTA",
@@ -815,7 +1255,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 52,
+      "rank": 98,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "GSW@DAL",
@@ -824,7 +1264,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 53,
+      "rank": 99,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "GSW@DAL",
@@ -833,7 +1273,7 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 54,
+      "rank": 100,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "BKN@POR",
@@ -842,30 +1282,30 @@
       "positive_dimensions": 0
     },
     {
-      "rank": 55,
+      "rank": 101,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "SAS@MIA",
       "confidence": "high",
-      "confidence_score": 4,
+      "confidence_score": 3,
       "positive_dimensions": 1
     },
     {
-      "rank": 56,
+      "rank": 102,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "GSW@DAL",
       "confidence": "high",
-      "confidence_score": 4,
+      "confidence_score": 3,
       "positive_dimensions": 0
     },
     {
-      "rank": 57,
+      "rank": 103,
       "tier": "C",
       "market_type": "player_prop",
       "matchup": "BKN@POR",
       "confidence": "high",
-      "confidence_score": 4,
+      "confidence_score": 3,
       "positive_dimensions": 1
     }
   ]

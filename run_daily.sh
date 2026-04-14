@@ -39,6 +39,14 @@ SKIP_INGEST=false
 QUICK=false
 RUN_NBA=true
 RUN_NCAAB=true
+ENABLE_JUICEREEL="${ENABLE_JUICEREEL:-false}"
+
+is_truthy() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 for arg in "$@"; do
     case "$arg" in
@@ -55,6 +63,11 @@ DATE=$(date +%Y-%m-%d)
 echo "========================================="
 echo "  Daily Pipeline — $DATE"
 echo "========================================="
+if is_truthy "$ENABLE_JUICEREEL"; then
+    echo "  JuiceReel: enabled"
+else
+    echo "  JuiceReel: disabled"
+fi
 
 # Track timing
 SECONDS=0
@@ -90,7 +103,11 @@ if [ "$SKIP_INGEST" = false ]; then
     python3 scripts/refresh_sportsline_token.py 2>&1 | tail -2 || echo "  ⚠ SportsLine token refresh failed"
     python3 scripts/refresh_dimers_token.py 2>&1 | tail -2 || echo "  ⚠ Dimers token refresh failed"
     python3 scripts/refresh_betql_token.py 2>&1 | tail -2 || echo "  ⚠ BetQL token refresh failed"
-    python3 scripts/refresh_juicereel_token.py 2>&1 | tail -2 || echo "  ⚠ JuiceReel token refresh failed"
+    if is_truthy "$ENABLE_JUICEREEL"; then
+        python3 scripts/refresh_juicereel_token.py 2>&1 | tail -2 || echo "  ⚠ JuiceReel token refresh failed"
+    else
+        echo "  • JuiceReel refresh skipped (disabled)"
+    fi
 
     echo ""
     echo "── NBA Step 1: Ingesting picks (parallel) ──"
@@ -135,13 +152,16 @@ if [ "$SKIP_INGEST" = false ]; then
     else
         echo "  ⚠ VegasInsider skipped (no storage state)"
     fi
-    if [ -f data/juicereel_storage_state.json ]; then
+    if is_truthy "$ENABLE_JUICEREEL" && [ -f data/juicereel_storage_state.json ]; then
         _run_ingest_bg "juicereel"    180  python3 juicereel_ingest.py --storage data/juicereel_storage_state.json $DEBUG
-    else
+    elif is_truthy "$ENABLE_JUICEREEL"; then
         echo "  ⚠ JuiceReel skipped (no storage state)"
+    else
+        echo "  • JuiceReel skipped (disabled)"
     fi
     if [ -f data/bettingpros_storage_state.json ]; then
         _run_ingest_bg "bettingpros"  180  python3 bettingpros_ingest.py --storage data/bettingpros_storage_state.json $DEBUG
+        _run_ingest_bg "bettingpros_props"  180  python3 scripts/bettingpros_prop_bets_ingest.py --storage data/bettingpros_storage_state.json $DEBUG
         _run_ingest_bg "bettingpros_experts"  300  python3 scripts/bettingpros_experts_ingest.py --storage data/bettingpros_storage_state.json $DEBUG
     else
         echo "  ⚠ BettingPros skipped (no storage state — run scripts/create_bettingpros_storage.py)"
@@ -182,6 +202,7 @@ sources = {
     'sportsline': 'out/normalized_sportsline_nba.json',
     'oddstrader': 'out/normalized_oddstrader_nba.json',
     'vegasinsider': 'out/normalized_vegasinsider_nba.json',
+    'bettingpros_props': 'out/normalized_bettingpros_prop_bets_nba.json',
 }
 empty, active = [], []
 for name, path in sources.items():
@@ -211,6 +232,10 @@ echo "── NBA Step 3: Running consensus ──"
 python3 consensus_nba.py $DEBUG 2>&1 | tail -5
 
 echo ""
+echo "── NBA Step 3b: Auditing consensus integrity ──"
+python3 scripts/audit_consensus.py 2>&1 || echo "  (audit found issues — non-fatal)"
+
+echo ""
 echo "── Pre-ledger: Pruning superseded run directories ──"
 python3 -c "
 import shutil
@@ -232,8 +257,8 @@ if deleted:
 
 echo ""
 echo "── NBA Step 4: Building signal ledger ──"
-python3 scripts/build_signal_ledger.py $DEBUG \
-    --include-betql-history \
+NBA_LEDGER_ARGS=(
+    --include-betql-history
     --history-root data/history/betql_normalized \
     --history-start 2025-02-09 \
     --history-end "$DATE" \
@@ -246,7 +271,6 @@ python3 scripts/build_signal_ledger.py $DEBUG \
     --oddstrader-history-start 2025-10-22 \
     --oddstrader-history-end "$DATE" \
     --include-dimers-history \
-    --include-juicereel-history \
     --include-bettingpros-experts-history \
     --bettingpros-experts-history-path out/raw_bettingpros_experts_history_nba.json \
     --include-normalized-jsonl data/latest/normalized_sportsline_nba_expert_picks.jsonl \
@@ -255,7 +279,11 @@ python3 scripts/build_signal_ledger.py $DEBUG \
     --include-normalized-jsonl out/normalized_dimers_backfill.jsonl \
     --include-normalized-jsonl out/normalized_sportsline_expert_pages_combined.jsonl \
     --include-normalized-jsonl out/normalized_sportsline_expert_pages_all_combined.jsonl \
-    2>&1 | tail -10
+)
+if is_truthy "$ENABLE_JUICEREEL"; then
+    NBA_LEDGER_ARGS+=(--include-juicereel-history)
+fi
+python3 scripts/build_signal_ledger.py $DEBUG "${NBA_LEDGER_ARGS[@]}" 2>&1 | tail -10
 
 if [ "$QUICK" = false ]; then
     echo ""
@@ -263,19 +291,58 @@ if [ "$QUICK" = false ]; then
     python3 scripts/grade_signals_nba.py $DEBUG 2>&1 | tail -10
 
     echo ""
-    echo "── NBA Step 6: Building research dataset ──"
-    python3 scripts/build_research_dataset_nba_occurrences.py 2>&1 | tail -5
-    python3 scripts/build_research_dataset_nba.py 2>&1 | tail -5
+    echo "── NBA Step 6: Building research datasets + refreshing market data (parallel) ──"
+    (
+        python3 scripts/build_research_dataset_nba_occurrences.py 2>&1 | tail -5
+    ) &
+    NBA_OCC_PID=$!
+    (
+        python3 scripts/build_research_dataset_nba.py 2>&1 | tail -5
+    ) &
+    NBA_DATASET_PID=$!
+    if [ -n "${ODDS_API_KEY:-}" ]; then
+        (
+            python3 scripts/fetch_current_lines.py 2>&1 | tail -5 || echo "  ⚠ Line fetch failed (continuing without market lines)"
+        ) &
+        NBA_LINES_PID=$!
+    else
+        echo "  ⚠ ODDS_API_KEY not set (skipping market line fetch)"
+        NBA_LINES_PID=""
+    fi
+    (
+        python3 scripts/fetch_cdn_scoreboards.py "$DATE" 2>&1 | tail -3 || echo "  ⚠ Scoreboard cache refresh failed (continuing)"
+    ) &
+    NBA_SCOREBOARD_PID=$!
+
+    wait "$NBA_OCC_PID"
+    wait "$NBA_DATASET_PID"
+    if [ -n "${NBA_LINES_PID:-}" ]; then
+        wait "$NBA_LINES_PID"
+    fi
+    wait "$NBA_SCOREBOARD_PID"
 
     echo ""
-    echo "── NBA Step 7: Generating reports ──"
-    python3 scripts/report_records.py 2>&1 | tail -5
-    python3 scripts/report_trends.py 2>&1 | tail -5
-    python3 scripts/report_recent_trends.py 2>&1 | tail -5
+    echo "── NBA Step 7: Generating reports (parallel) ──"
+    (
+        python3 scripts/report_records.py 2>&1 | tail -5
+    ) &
+    NBA_REPORT_RECORDS_PID=$!
+    (
+        python3 scripts/report_trends.py 2>&1 | tail -5
+    ) &
+    NBA_REPORT_TRENDS_PID=$!
+    (
+        python3 scripts/report_recent_trends.py 2>&1 | tail -5
+    ) &
+    NBA_REPORT_RECENT_PID=$!
+    wait "$NBA_REPORT_RECORDS_PID"
+    wait "$NBA_REPORT_TRENDS_PID"
+    wait "$NBA_REPORT_RECENT_PID"
 
     echo ""
     echo "── NBA Step 7b: Pattern health check ──"
     python3 scripts/discover_patterns.py 2>&1 | tail -20 || echo "  (pattern check non-fatal)"
+    python3 scripts/build_pattern_registry_candidates.py 2>&1 | tail -20 || echo "  (pattern candidate build non-fatal)"
 
     echo ""
     echo "── NBA Step 7c: Pattern registry integrity check ──"
@@ -286,24 +353,8 @@ else
 fi
 
 echo ""
-echo "── NBA Step 8: Fetching current market lines ──"
-if [ -n "${ODDS_API_KEY:-}" ]; then
-    python3 scripts/fetch_current_lines.py 2>&1 | tail -5 || echo "  ⚠ Line fetch failed (continuing without market lines)"
-else
-    echo "  ⚠ ODDS_API_KEY not set (skipping market line fetch)"
-fi
-
-echo ""
-echo "── NBA Step 8b: Refreshing game schedule cache ──"
-python3 scripts/fetch_cdn_scoreboards.py "$DATE" 2>&1 | tail -3 || echo "  ⚠ Scoreboard cache refresh failed (continuing)"
-
-echo ""
 echo "── NBA Step 9: Scoring today's signals ──"
 python3 scripts/score_signals.py 2>&1 | tail -20
-
-echo ""
-echo "── NBA Step 10: Auditing consensus integrity ──"
-python3 scripts/audit_consensus.py 2>&1 || echo "  (audit found issues — non-fatal)"
 
 echo ""
 echo "── NBA Step 11: Exporting web data ──"
@@ -377,10 +428,18 @@ echo "── NCAAB Step 2: Running consensus ──"
 python3 consensus_nba.py --sport NCAAB $DEBUG 2>&1 | tail -5
 
 echo ""
+echo "── NCAAB Step 2b: Auditing consensus integrity ──"
+NCAAB_LATEST_RUN=$(find data/runs_ncaab -maxdepth 1 -mindepth 1 -type d | sort | tail -1)
+if [ -n "${NCAAB_LATEST_RUN:-}" ]; then
+    python3 scripts/audit_consensus.py --run-dir "$NCAAB_LATEST_RUN" 2>&1 || echo "  (audit found issues — non-fatal)"
+else
+    echo "  ⚠ No NCAAB run directories found (audit skipped)"
+fi
+
+echo ""
 echo "── NCAAB Step 3: Building signal ledger ──"
-python3 scripts/build_signal_ledger.py --sport NCAAB \
-  --include-juicereel-history \
-  --juicereel-history-path out/normalized_juicereel_backfill_ncaab.json \
+NCAAB_LEDGER_ARGS=(
+  --sport NCAAB
   --include-oddstrader-history \
   --oddstrader-history-root data/history/oddstrader \
   --oddstrader-history-start 2024-11-01 \
@@ -388,30 +447,42 @@ python3 scripts/build_signal_ledger.py --sport NCAAB \
   --include-normalized-jsonl out/normalized_sportsline_ncaab_expert_picks.jsonl \
   --include-normalized-jsonl out/normalized_sportsline_expert_pages_ncaab_combined.jsonl \
   --include-normalized-jsonl out/normalized_action_ncaab_backfill.jsonl \
-  --include-normalized-jsonl out/normalized_dimers_ncaab_backfill.jsonl \
-  --include-normalized-jsonl out/normalized_juicereel_ncaab.json \
-  $DEBUG 2>&1 | tail -10
+  --include-normalized-jsonl out/normalized_dimers_ncaab_backfill.jsonl
+)
+if is_truthy "$ENABLE_JUICEREEL"; then
+  NCAAB_LEDGER_ARGS+=(
+    --include-juicereel-history
+    --juicereel-history-path out/normalized_juicereel_backfill_ncaab.json
+    --include-normalized-jsonl out/normalized_juicereel_ncaab.json
+  )
+fi
+python3 scripts/build_signal_ledger.py "${NCAAB_LEDGER_ARGS[@]}" $DEBUG 2>&1 | tail -10
 
 echo ""
 echo "── NCAAB Step 4: Grading signals ──"
 python3 scripts/grade_signals_nba.py --sport NCAAB $DEBUG 2>&1 | tail -10
 
 echo ""
-echo "── NCAAB Step 4b: Building research dataset (signal+grade join) ──"
-python3 scripts/build_research_dataset_nba.py \
-  --signals data/ledger/ncaab/signals_occurrences.jsonl \
-  --grades data/ledger/ncaab/grades_occurrences.jsonl \
-  --out data/analysis/ncaab/graded_signals_latest.jsonl \
-  2>&1 | tail -5
-
-echo ""
-echo "── NCAAB Step 4c: Building occurrence-level research dataset ──"
-python3 scripts/build_research_dataset_nba_occurrences.py \
-  --signals data/ledger/ncaab/signals_occurrences.jsonl \
-  --grades data/ledger/ncaab/grades_occurrences.jsonl \
-  --ledger data/ledger/ncaab/signals_latest.jsonl \
-  --out data/analysis/ncaab/graded_occurrences_latest.jsonl \
-  2>&1 | tail -5
+echo "── NCAAB Step 4b: Building research datasets (parallel) ──"
+(
+  python3 scripts/build_research_dataset_nba.py \
+    --signals data/ledger/ncaab/signals_occurrences.jsonl \
+    --grades data/ledger/ncaab/grades_occurrences.jsonl \
+    --out data/analysis/ncaab/graded_signals_latest.jsonl \
+    2>&1 | tail -5
+) &
+NCAAB_DATASET_PID=$!
+(
+  python3 scripts/build_research_dataset_nba_occurrences.py \
+    --signals data/ledger/ncaab/signals_occurrences.jsonl \
+    --grades data/ledger/ncaab/grades_occurrences.jsonl \
+    --ledger data/ledger/ncaab/signals_latest.jsonl \
+    --out data/analysis/ncaab/graded_occurrences_latest.jsonl \
+    2>&1 | tail -5
+) &
+NCAAB_OCC_PID=$!
+wait "$NCAAB_DATASET_PID"
+wait "$NCAAB_OCC_PID"
 
 echo ""
 echo "── NCAAB Step 5: Generating reports ──"
@@ -460,3 +531,16 @@ echo "========================================="
 echo ""
 echo "Pushing to Supabase..."
 python3 scripts/push_to_supabase.py || echo "  Supabase push skipped (credentials not set)"
+
+# ─── Git commit & push web data (triggers Vercel redeploy) ──────────
+echo ""
+echo "── Deploying web data ──"
+if git diff --quiet web/ && [ -z "$(git ls-files --others --exclude-standard web/)" ]; then
+    echo "  No web data changes to deploy"
+else
+    TODAY=$(date +%Y-%m-%d)
+    git add web/public/data/ web/data/private/
+    git commit -m "Auto: update web data for ${TODAY}" || echo "  Nothing to commit"
+    git push origin main || echo "  Git push failed (will retry next run)"
+    echo "  Web data deployed — Vercel redeploy triggered"
+fi

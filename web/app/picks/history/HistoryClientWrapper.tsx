@@ -8,13 +8,14 @@ import { formatOdds, formatPickSelection } from "@/lib/format";
 
 interface Props {
   dates: HistoryDay[];
-  adminParam?: string;
   timeline: TimelineEntry[];
 }
 
 interface ExpandedDay {
   plays: GradedPlay[];
   loading: boolean;
+  error?: string;
+  visible: boolean;
 }
 
 function ResultBadge({ result }: { result: string }) {
@@ -48,12 +49,12 @@ function TimelineRow({ entry }: { entry: TimelineEntry }) {
     line_max: null,
     signal_id: "",
     score: 0,
-    expert_odds: (entry.expert_odds ?? entry.best_odds) as number | null,
+    expert_odds: entry.best_odds as number | null,
     sources_count: 0,
     consensus_strength: "",
   };
   const { main, detail } = formatPickSelection(fakeSignal);
-  const odds = formatOdds((entry.expert_odds ?? entry.best_odds) as number | null);
+  const odds = formatOdds(entry.best_odds);
 
   return (
     <div className="grid grid-cols-[80px_1fr_auto] md:grid-cols-[100px_72px_1fr_auto] items-center gap-2 px-3 py-2.5 rounded-lg border border-gray-700/40 bg-gray-800/40 hover:bg-gray-800/60 transition-colors">
@@ -133,31 +134,41 @@ function TimelineView({ entries }: { entries: TimelineEntry[] }) {
   );
 }
 
-export default function HistoryClientWrapper({ dates, adminParam, timeline }: Props) {
+export default function HistoryClientWrapper({ dates, timeline }: Props) {
   const [tab, setTab] = useState<"timeline" | "byDay">("timeline");
   const [expanded, setExpanded] = useState<Record<string, ExpandedDay>>({});
 
   async function toggleDate(date: string) {
-    if (expanded[date] && !expanded[date].loading) {
-      setExpanded((prev) => { const next = { ...prev }; delete next[date]; return next; });
+    const existing = expanded[date];
+    // If already loaded, just toggle visibility
+    if (existing && !existing.loading && !existing.error && existing.plays.length > 0) {
+      setExpanded((prev) => ({
+        ...prev,
+        [date]: { ...prev[date], visible: !prev[date].visible },
+      }));
       return;
     }
-    setExpanded((prev) => ({ ...prev, [date]: { plays: [], loading: true } }));
+    // If collapsed with no data or has error, (re)fetch
+    setExpanded((prev) => ({ ...prev, [date]: { plays: [], loading: true, visible: true } }));
     try {
-      const url = adminParam
-        ? `/api/history/${date}?admin=${adminParam}`
-        : `/api/history/${date}`;
-      const res = await fetch(url);
+      const res = await fetch(`/api/history/${date}`);
+      if (res.status === 401) {
+        setExpanded((prev) => ({
+          ...prev,
+          [date]: { plays: [], loading: false, error: "Your session has expired. Please sign in again.", visible: true },
+        }));
+        return;
+      }
       if (!res.ok) throw new Error("Failed to load");
       const data = await res.json();
       setExpanded((prev) => ({
         ...prev,
-        [date]: { plays: data.plays || [], loading: false },
+        [date]: { plays: data.plays || [], loading: false, visible: true },
       }));
     } catch {
       setExpanded((prev) => ({
         ...prev,
-        [date]: { plays: [], loading: false },
+        [date]: { plays: [], loading: false, error: "Failed to load picks. Tap to retry.", visible: true },
       }));
     }
   }
@@ -194,12 +205,15 @@ export default function HistoryClientWrapper({ dates, adminParam, timeline }: Pr
             const isWinning = winPct !== null && winPct >= 50;
             const exp = expanded[day.date];
 
+            const isOpen = exp?.visible;
+
             return (
               <div key={day.date}>
                 <button
                   onClick={() => toggleDate(day.date)}
+                  aria-expanded={!!isOpen}
                   className={`w-full text-left px-4 py-3 rounded-lg border transition-colors ${
-                    exp
+                    isOpen
                       ? "bg-gray-800/80 border-gray-600/60"
                       : "bg-gray-800/40 border-gray-700/40 hover:border-gray-600/50"
                   }`}
@@ -224,14 +238,38 @@ export default function HistoryClientWrapper({ dates, adminParam, timeline }: Pr
                         <span className="text-emerald-400/70 text-xs">A: {day.a_wins}-{day.a_losses}</span>
                       )}
                       <span className="text-gray-600 text-xs">{day.total_picks} picks</span>
-                      <span className="text-gray-500 text-xs">{exp ? "▼" : "▶"}</span>
+                      <span className="text-gray-500 text-xs">{isOpen ? "▼" : "▶"}</span>
                     </div>
                   </div>
                 </button>
-                {exp && (
-                  <div className="mt-2 ml-4 mb-4">
+                {isOpen && exp && (
+                  <div className="mt-2 ml-4 mb-4" role="region" aria-label={`Picks for ${day.date}`}>
                     {exp.loading ? (
-                      <div className="text-gray-500 text-sm py-4 text-center">Loading picks...</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {Array.from({ length: 4 }).map((_, i) => (
+                          <div key={i} className="bg-gray-800/40 border border-gray-700/30 rounded-lg p-3 space-y-3">
+                            <div className="flex justify-between">
+                              <div className="h-5 w-16 bg-gray-700/40 rounded animate-pulse" />
+                              <div className="h-4 w-24 bg-gray-700/40 rounded animate-pulse" />
+                            </div>
+                            <div className="h-6 w-3/4 bg-gray-700/40 rounded animate-pulse" />
+                            <div className="h-4 w-1/2 bg-gray-700/40 rounded animate-pulse" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : exp.error ? (
+                      <div className="text-center py-4">
+                        <p className="text-red-400 text-sm mb-2">{exp.error}</p>
+                        <button
+                          onClick={() => {
+                            setExpanded((prev) => { const next = { ...prev }; delete next[day.date]; return next; });
+                            toggleDate(day.date);
+                          }}
+                          className="text-sm text-gray-400 hover:text-white transition-colors underline"
+                        >
+                          Retry
+                        </button>
+                      </div>
                     ) : exp.plays.length === 0 ? (
                       <div className="text-gray-500 text-sm py-4 text-center">No graded picks for this date</div>
                     ) : (

@@ -2,7 +2,7 @@
 
 import { useSession, signIn } from "next-auth/react";
 
-const WHOP_CHECKOUT_URL = process.env.NEXT_PUBLIC_WHOP_CHECKOUT_URL || "#";
+const WHOP_CHECKOUT_URL = process.env.NEXT_PUBLIC_WHOP_CHECKOUT_URL;
 
 export default function PaywallPrompt({
   lockedCount,
@@ -29,15 +29,21 @@ export default function PaywallPrompt({
 
       {session ? (
         // Logged in but not subscribed
-        <a
-          href={WHOP_CHECKOUT_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-6 py-3 rounded-lg transition-colors"
-        >
-          Subscribe Now
-          <ArrowIcon />
-        </a>
+        WHOP_CHECKOUT_URL ? (
+          <a
+            href={WHOP_CHECKOUT_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-6 py-3 rounded-lg transition-colors"
+          >
+            Subscribe Now
+            <ArrowIcon />
+          </a>
+        ) : (
+          <span className="text-gray-500 text-sm">
+            Subscriptions are not yet available.
+          </span>
+        )
       ) : (
         // Not logged in
         <div className="flex flex-col items-center gap-3">
@@ -48,17 +54,19 @@ export default function PaywallPrompt({
             Sign In to Unlock
             <ArrowIcon />
           </button>
-          <span className="text-gray-500 text-sm">
-            or{" "}
-            <a
-              href={WHOP_CHECKOUT_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-emerald-400 hover:text-emerald-300 transition-colors"
-            >
-              subscribe on Whop
-            </a>
-          </span>
+          {WHOP_CHECKOUT_URL && (
+            <span className="text-gray-500 text-sm">
+              or{" "}
+              <a
+                href={WHOP_CHECKOUT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-400 hover:text-emerald-300 transition-colors"
+              >
+                subscribe on Whop
+              </a>
+            </span>
+          )}
         </div>
       )}
     </div>

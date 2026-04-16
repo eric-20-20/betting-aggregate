@@ -1,8 +1,5 @@
-import { getServerSession } from "next-auth";
-import { authOptions, isAuthEnabled } from "@/lib/auth";
 import { getHistoryIndex, getAggregatedTimeline } from "@/lib/data";
-import { hasAccess } from "@/lib/whop";
-import { isAdminRequest } from "@/lib/admin";
+import { requireSubscriber } from "@/lib/access";
 import HistoryClientWrapper from "./HistoryClientWrapper";
 import Link from "next/link";
 import type { Metadata } from "next";
@@ -14,16 +11,7 @@ export const metadata: Metadata = {
 };
 
 export default async function HistoryPage() {
-  // Auth check — identical to picks/[date] page
-  let isSubscriber = await isAdminRequest();
-
-  if (!isSubscriber && isAuthEnabled) {
-    const session = await getServerSession(authOptions);
-    const whopUserId = session?.whopUserId;
-    if (whopUserId) {
-      isSubscriber = await hasAccess(whopUserId);
-    }
-  }
+  const isSubscriber = await requireSubscriber();
 
   if (!isSubscriber) {
     return (

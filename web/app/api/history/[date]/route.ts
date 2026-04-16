@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions, isAuthEnabled } from "@/lib/auth";
-import { hasAccess } from "@/lib/whop";
-import { isAdminRequest } from "@/lib/admin";
+import { requireSubscriber } from "@/lib/access";
 import { getHistoryDay } from "@/lib/data";
 
 export async function GET(
@@ -11,17 +8,7 @@ export async function GET(
 ) {
   const { date } = await params;
 
-  // Auth check
-  let isSubscriber = await isAdminRequest();
-
-  if (!isSubscriber && isAuthEnabled) {
-    const session = await getServerSession(authOptions);
-    const whopUserId = session?.whopUserId;
-    if (whopUserId) {
-      isSubscriber = await hasAccess(whopUserId);
-    }
-  }
-
+  const isSubscriber = await requireSubscriber();
   if (!isSubscriber) {
     return NextResponse.json(
       { error: "Subscription required", message: "Sign in and subscribe to view pick history." },

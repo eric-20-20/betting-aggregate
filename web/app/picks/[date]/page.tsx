@@ -1,8 +1,5 @@
-import { getServerSession } from "next-auth";
-import { authOptions, isAuthEnabled } from "@/lib/auth";
 import { getPublicPicks, getFullPicks } from "@/lib/data";
-import { hasAccess } from "@/lib/whop";
-import { isAdminRequest } from "@/lib/admin";
+import { requireSubscriber } from "@/lib/access";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { Tier, Play } from "@/lib/types";
@@ -47,16 +44,7 @@ export default async function PicksDatePage({
     notFound();
   }
 
-  // Determine if this is a subscriber
-  let isSubscriber = await isAdminRequest();
-
-  if (!isSubscriber && isAuthEnabled) {
-    const session = await getServerSession(authOptions);
-    const whopUserId = session?.whopUserId;
-    if (whopUserId) {
-      isSubscriber = await hasAccess(whopUserId);
-    }
-  }
+  const isSubscriber = await requireSubscriber();
 
   // Subscriber view: load full picks from private JSON
   if (isSubscriber) {

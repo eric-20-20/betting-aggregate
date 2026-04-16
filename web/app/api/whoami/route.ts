@@ -8,7 +8,7 @@ export async function GET() {
   if (!session) {
     return NextResponse.json({ authenticated: false });
   }
-  const whopUserId = (session as any).whopUserId as string | undefined;
+  const whopUserId = session.whopUserId;
   const access = whopUserId ? await hasAccess(whopUserId) : false;
   return NextResponse.json({
     authenticated: true,

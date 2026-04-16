@@ -29,8 +29,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple, TypedDict, Union
 
 NBA_SPORT = "NBA"
 NCAAB_SPORT = "NCAAB"
+MLB_SPORT = "MLB"
 
-VALID_SPORTS = {NBA_SPORT, NCAAB_SPORT}
+VALID_SPORTS = {NBA_SPORT, NCAAB_SPORT, MLB_SPORT}
 VALID_MARKET_TYPES = {"spread", "total", "moneyline", "player_prop"}
 VALID_MARKET_FAMILIES = {"standard", "player_prop"}
 VALID_STANDARD_SIDES = {"OVER", "UNDER"}  # For totals
@@ -48,26 +49,26 @@ CANONICAL_STAT_KEYS = {
 TEAM_CODE_PATTERN = re.compile(r"^[A-Z]{2,5}$")
 
 # Event key pattern: SPORT:YYYY:MM:DD:AWAY@HOME (canonical format)
-EVENT_KEY_PATTERN = re.compile(r"^(NBA|NCAAB):\d{4}:\d{2}:\d{2}:[A-Z]{2,5}@[A-Z]{2,5}$")
+EVENT_KEY_PATTERN = re.compile(r"^(NBA|NCAAB|MLB):\d{4}:\d{2}:\d{2}:[A-Z]{2,5}@[A-Z]{2,5}$")
 
 # Legacy event key pattern: SPORT:YYYYMMDD:AWAY@HOME:HHMM (from event_resolution.py)
 LEGACY_EVENT_KEY_PATTERN = re.compile(
-    r"^(NBA|NCAAB):(\d{4})(\d{2})(\d{2}):([A-Z]{2,5})@([A-Z]{2,5}):(\d{4})$"
+    r"^(NBA|NCAAB|MLB):(\d{4})(\d{2})(\d{2}):([A-Z]{2,5})@([A-Z]{2,5}):(\d{4})$"
 )
 
 # Flexible event key pattern: accepts both canonical and legacy formats
 FLEXIBLE_EVENT_KEY_PATTERN = re.compile(
-    r"^(NBA|NCAAB):"
+    r"^(NBA|NCAAB|MLB):"
     r"(\d{4}:\d{2}:\d{2}|\d{8})"  # YYYY:MM:DD or YYYYMMDD
     r":[A-Z]{2,5}@[A-Z]{2,5}"
     r"(:\d{4})?$"  # Optional :HHMM suffix
 )
 
 # Day key pattern: SPORT:YYYY:MM:DD
-DAY_KEY_PATTERN = re.compile(r"^(NBA|NCAAB):\d{4}:\d{2}:\d{2}$")
+DAY_KEY_PATTERN = re.compile(r"^(NBA|NCAAB|MLB):\d{4}:\d{2}:\d{2}$")
 
 # Player key pattern: SPORT:player_slug
-PLAYER_KEY_PATTERN = re.compile(r"^(NBA|NCAAB):[a-z_]+$")
+PLAYER_KEY_PATTERN = re.compile(r"^(NBA|NCAAB|MLB):[a-z_]+$")
 
 
 # =============================================================================

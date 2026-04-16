@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from store import SPORT
+from store import SPORT, NBA_SPORT
 
 
 @dataclass
@@ -17,14 +17,14 @@ class ScheduledGame:
     canonical_event_key: str  # New: canonical format
 
 
-def build_event_key(start_time_utc: datetime, away_team: str, home_team: str) -> str:
+def build_event_key(start_time_utc: datetime, away_team: str, home_team: str, sport: str = SPORT) -> str:
     """Build legacy event key with timestamp (for backward compatibility)."""
-    return f"{SPORT}:{start_time_utc:%Y%m%d}:{away_team}@{home_team}:{start_time_utc:%H%M}"
+    return f"{sport}:{start_time_utc:%Y%m%d}:{away_team}@{home_team}:{start_time_utc:%H%M}"
 
 
-def build_canonical_event_key(start_time_utc: datetime, away_team: str, home_team: str) -> str:
+def build_canonical_event_key(start_time_utc: datetime, away_team: str, home_team: str, sport: str = SPORT) -> str:
     """Build canonical event key: SPORT:YYYY:MM:DD:AWAY@HOME."""
-    return f"{SPORT}:{start_time_utc:%Y}:{start_time_utc:%m}:{start_time_utc:%d}:{away_team}@{home_team}"
+    return f"{sport}:{start_time_utc:%Y}:{start_time_utc:%m}:{start_time_utc:%d}:{away_team}@{home_team}"
 
 
 def load_nba_schedule() -> List[ScheduledGame]:
@@ -47,8 +47,8 @@ def load_nba_schedule() -> List[ScheduledGame]:
                 home_team=home,
                 away_team=away,
                 start_time_utc=start_dt,
-                event_key=build_event_key(start_dt, away_team=away, home_team=home),
-                canonical_event_key=build_canonical_event_key(start_dt, away_team=away, home_team=home),
+                event_key=build_event_key(start_dt, away_team=away, home_team=home, sport=NBA_SPORT),
+                canonical_event_key=build_canonical_event_key(start_dt, away_team=away, home_team=home, sport=NBA_SPORT),
             )
         )
 
@@ -65,7 +65,10 @@ def resolve_event(
     observed_at_utc: datetime,
     schedule: Optional[List[ScheduledGame]] = None,
 ) -> Optional[dict]:
-    if sport != SPORT:
+    # Only NBA has a built-in schedule (SCHEDULE/load_nba_schedule).
+    # NCAAB and MLB callers synthesize event payloads in their ingest fallbacks
+    # when this returns None.
+    if sport != NBA_SPORT:
         return None
 
     games = schedule if schedule is not None else SCHEDULE

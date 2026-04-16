@@ -24,13 +24,14 @@ from zoneinfo import ZoneInfo
 from playwright.sync_api import Page, sync_playwright
 
 from action_ingest import dedupe_normalized_bets, json_default, sha256_digest
-from store import NBA_SPORT, NCAAB_SPORT
+from store import NBA_SPORT, NCAAB_SPORT, MLB_SPORT
 
 OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
 
 URLS = {
     NBA_SPORT: "https://www.oddstrader.com/nba/picks/",
     NCAAB_SPORT: "https://www.oddstrader.com/ncaa-college-basketball/picks/",
+    MLB_SPORT: "https://www.oddstrader.com/mlb/picks/",
 }
 
 PROP_URLS = {
@@ -734,7 +735,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ingest OddsTrader AI picks.")
     parser.add_argument(
         "--sport",
-        choices=["NBA", "NCAAB"],
+        choices=["NBA", "NCAAB", "MLB"],
         default="NBA",
         help="Sport to ingest (default: NBA)",
     )

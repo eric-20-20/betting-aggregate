@@ -1,7 +1,7 @@
 import re
 from typing import Optional, Tuple
 
-from store import data_store
+from store import MLB_SPORT, data_store
 from utils import normalize_text
 
 
@@ -141,8 +141,18 @@ def map_player(raw_pick_text: str, store=None) -> str:
     return _store.add_player(full_name=full_name, alias_text=candidate_alias, is_verified=False)
 
 
-def map_prop_stat(raw_pick_text: str) -> Optional[str]:
+def map_prop_stat(raw_pick_text: str, sport: Optional[str] = None) -> Optional[str]:
     normalized = normalize_text(raw_pick_text)
+    if sport == MLB_SPORT:
+        # MLB team codes are 2-3 uppercase letters (KC, SF, TB, SD, NYY, LAD, ...).
+        # Tightening to {3} would let 2-letter team totals/MLs fall through to the
+        # alias matcher and risk mis-classifying them as player props.
+        if re.match(r"^[A-Z]{2,3}\s+(?:over|under|o|u)\b", raw_pick_text):
+            return None
+        if re.match(r"^[A-Z]{2,3}\s+[+-]\d", raw_pick_text):
+            return None
+        if not re.search(r"\b(over|under|o|u)\b", normalized):
+            return None
     aliases = sorted(data_store.prop_stat_alias_index.keys(), key=len, reverse=True)
     composite_keys = {"pts_reb", "pts_ast", "reb_ast", "pts_reb_ast"}
 

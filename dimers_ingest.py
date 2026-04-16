@@ -35,7 +35,7 @@ from src.dimers_extractors import (
     scroll_to_load_all,
 )
 from src.normalizer_dimers_nba import normalize_dimers_records
-from store import NBA_SPORT, NCAAB_SPORT, write_json
+from store import NBA_SPORT, NCAAB_SPORT, MLB_SPORT, write_json
 
 OUT_DIR = Path(os.getenv("NBA_OUT_DIR", "out"))
 
@@ -50,6 +50,10 @@ DIMERS_URLS = {
     NCAAB_SPORT: {
         "best_bets": "https://www.dimers.com/best-bets/cbb",
         "best_props": "https://www.dimers.com/best-props/cbb",
+    },
+    MLB_SPORT: {
+        "best_bets": "https://www.dimers.com/best-bets/mlb",
+        "best_props": "https://www.dimers.com/best-props/mlb",
     },
 }
 
@@ -339,7 +343,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
     parser.add_argument(
         "--sport",
-        choices=["NBA", "NCAAB"],
+        choices=["NBA", "NCAAB", "MLB"],
         default="NBA",
         help="Sport to ingest (default: NBA)",
     )

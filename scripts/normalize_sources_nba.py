@@ -16,6 +16,14 @@ from src.normalizer_betql_nba import normalize_props_file as normalize_betql_pro
 from src.normalizer_juicereel_nba import normalize_file as normalize_juicereel
 from src.normalizer_bettingpros_nba import normalize_file as normalize_bettingpros
 from src.normalizer_bettingpros_experts_nba import normalize_file as normalize_bettingpros_experts
+from src.normalizer_bettingpros_props_nba import normalize_file as normalize_bettingpros_props
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value in {"1", "true", "TRUE", "yes", "YES", "on", "ON"}
 
 
 def _check_freshness(raw_path: Path, source_label: str, today: str) -> bool:
@@ -67,8 +75,11 @@ def main(out_dir: Path, debug: bool = False) -> None:
     norm_juicereel_ncaab = out_dir / base / "normalized_juicereel_ncaab.json"
     raw_bettingpros = out_dir / base / "raw_bettingpros_nba.json"
     norm_bettingpros = out_dir / base / "normalized_bettingpros_nba.json"
+    raw_bettingpros_props = out_dir / base / "raw_bettingpros_prop_bets_nba.json"
+    norm_bettingpros_props = out_dir / base / "normalized_bettingpros_prop_bets_nba.json"
     raw_bpe = out_dir / base / "raw_bettingpros_experts_nba.json"
     norm_bpe = out_dir / base / "normalized_bettingpros_experts_nba.json"
+    juicereel_enabled = _env_flag("ENABLE_JUICEREEL", default=False)
 
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -91,8 +102,15 @@ def main(out_dir: Path, debug: bool = False) -> None:
     betql_total_records = normalize_betql(str(raw_betql_total), str(norm_betql_total), debug=debug)
     betql_sharp_records = normalize_betql(str(raw_betql_sharp), str(norm_betql_sharp), debug=debug)
     betql_prop_records = normalize_betql_props(str(raw_betql_prop), str(norm_betql_prop), debug=debug)
-    juicereel_records = normalize_juicereel(str(raw_juicereel), str(norm_juicereel), debug=debug, sport="NBA")
+    if juicereel_enabled and _check_freshness(raw_juicereel, "JuiceReel", _today_date):
+        juicereel_records = normalize_juicereel(str(raw_juicereel), str(norm_juicereel), debug=debug, sport="NBA")
+    else:
+        if not juicereel_enabled:
+            print("⚠️  Skipping JuiceReel normalization — source disabled by ENABLE_JUICEREEL")
+        _wj(str(norm_juicereel), [])
+        juicereel_records = []
     bettingpros_records = normalize_bettingpros(str(raw_bettingpros), str(norm_bettingpros), debug=debug)
+    bettingpros_prop_records = normalize_bettingpros_props(str(raw_bettingpros_props), str(norm_bettingpros_props), debug=debug)
     bpe_records = normalize_bettingpros_experts(str(raw_bpe), str(norm_bpe), debug=debug, target_date=_today_date)
 
     # Also normalize JuiceReel NCAAB picks from the same raw file (picks are mixed by sport)
@@ -100,7 +118,7 @@ def main(out_dir: Path, debug: bool = False) -> None:
     # Pre-filter to only NCAAB-tagged raw records so NBA and NCAAB outputs are cleanly separated.
     import json as _json
     _raw_jr_path = str(raw_juicereel)
-    if os.path.exists(_raw_jr_path):
+    if juicereel_enabled and os.path.exists(_raw_jr_path):
         with open(_raw_jr_path) as _f:
             _raw_jr_all = _json.load(_f) if _f.readable() else []
         _raw_jr_ncaab = [r for r in _raw_jr_all if isinstance(r, dict) and r.get("sport") == "NCAAB"]
@@ -116,7 +134,6 @@ def main(out_dir: Path, debug: bool = False) -> None:
             _wj(str(norm_juicereel_ncaab), [])
             juicereel_ncaab_records = []
     else:
-        from store import write_json as _wj
         _wj(str(norm_juicereel_ncaab), [])
         juicereel_ncaab_records = []
 
@@ -209,6 +226,13 @@ def main(out_dir: Path, debug: bool = False) -> None:
 
     print("BettingPros")
     total, eligible, ineligible, reasons = summarize(bettingpros_records)
+    print(f"  total={total} eligible={eligible} ineligible={ineligible}")
+    if ineligible:
+        for reason, count in reasons.most_common():
+            print(f"    {reason}: {count}")
+
+    print("BettingPros Props")
+    total, eligible, ineligible, reasons = summarize(bettingpros_prop_records)
     print(f"  total={total} eligible={eligible} ineligible={ineligible}")
     if ineligible:
         for reason, count in reasons.most_common():

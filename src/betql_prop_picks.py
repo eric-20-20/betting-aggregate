@@ -442,7 +442,11 @@ def extract_prop_picks(page: Page, canonical_url: str = CANONICAL_URL, debug: bo
             visited_cards.add(card_key)
 
             snapshot = _props_snapshot(page)
-            _click_card_and_wait(page, card, snapshot, debug=debug)
+            try:
+                _click_card_and_wait(page, card, snapshot, debug=debug)
+            except TimeoutError as e:
+                logger.warning("[betql-props] Skipping game %s — props failed to load: %s", card_key, e)
+                continue
             for sec_abbrev, sec_side, sec_team_name, card_indexes in _iter_team_sections(
                 page, away_abbrev, home_abbrev, debug=debug
             ):

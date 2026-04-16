@@ -42,6 +42,7 @@ DEFAULT_STORAGE_STATE = "data/sportsline_storage_state.json"
 PICKS_URLS = {
     "NBA": "https://www.sportsline.com/nba/picks/experts/?sc=p",
     "NCAAB": "https://www.sportsline.com/college-basketball/picks/experts/?sc=p",
+    "MLB": "https://www.sportsline.com/mlb/picks/experts/?sc=p",
 }
 PICKS_URL = PICKS_URLS["NBA"]  # backward compatibility
 
@@ -255,7 +256,7 @@ EXTRACT_EXPERT_PICKS_JS = """() => {
 
         // Must have a market keyword in second child
         const pickText = childTexts[1] || '';
-        const hasMarket = /^(Spread|Over\\/Under|Money Line|1st Half|Home Team Total|Away Team Total|Points|Rebounds|Assists|Steals|Blocks|Threes|PTS|REB|AST|STL|BLK)/i.test(pickText);
+        const hasMarket = /^(Spread|Over\\/Under|Money Line|1st Half|Home Team Total|Away Team Total|Points|Rebounds|Assists|Steals|Blocks|Threes|PTS|REB|AST|STL|BLK|Pitcher|Batter|Hits|Runs|RBIs|Home Runs|Strikeouts|Total Bases|Earned Runs|Walks|Stolen Bases)/i.test(pickText);
         if (!hasMarket) continue;
 
         cards.push({
@@ -765,10 +766,18 @@ def ingest_sportsline_nba(
         try:
             page = context.new_page()
             print(f"[INGEST] SportsLine: fetching {picks_url}")
-            page.goto(picks_url, wait_until="networkidle", timeout=30000)
-
-            # Wait for React hydration
-            page.wait_for_timeout(3000)
+            # Per-sport load strategy:
+            #   NBA/NCAAB: legacy networkidle + 3s hydration (known-good in prod).
+            #   MLB: newer domcontentloaded + 5s hydration — MLB page structure
+            #   appears to hydrate with less XHR activity, and networkidle can
+            #   time out. Keep MLB separate until the legacy strategy is tested
+            #   against MLB and shown equivalent.
+            if sport == "MLB":
+                page.goto(picks_url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(5000)
+            else:
+                page.goto(picks_url, wait_until="networkidle", timeout=30000)
+                page.wait_for_timeout(3000)
 
             # Extract all expert picks from the page
             records = extract_expert_picks(
@@ -793,7 +802,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ingest SportsLine picks")
     parser.add_argument(
         "--sport",
-        choices=["NBA", "NCAAB"],
+        choices=["NBA", "NCAAB", "MLB"],
         default="NBA",
         help="Sport to ingest (default: NBA)",
     )

@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { isAdminRequest } from "@/lib/admin";
 import { listEntitlements } from "@/lib/entitlements";
@@ -16,7 +16,7 @@ function formatDate(iso: string | null | undefined): string {
 
 export default async function AdminEntitlementsPage() {
   const isAdmin = await isAdminRequest();
-  if (!isAdmin) notFound();
+  if (!isAdmin) redirect("/admin");
 
   const supabaseOn = isSupabaseConfigured();
   const rows = supabaseOn ? await listEntitlements(200) : [];

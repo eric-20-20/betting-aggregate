@@ -1,13 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 export default function AdminLoginForm() {
   const [secret, setSecret] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -24,8 +22,7 @@ export default function AdminLoginForm() {
         setLoading(false);
         return;
       }
-      router.push("/admin");
-      router.refresh();
+      window.location.assign("/admin");
     } catch {
       setError("Something went wrong");
       setLoading(false);

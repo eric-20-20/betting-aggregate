@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { isAdminRequest } from "@/lib/admin";
 import { listRecentWebhookEvents } from "@/lib/entitlements";
@@ -31,7 +31,7 @@ function statusTone(status: string): string {
 
 export default async function AdminWebhooksPage() {
   const isAdmin = await isAdminRequest();
-  if (!isAdmin) notFound();
+  if (!isAdmin) redirect("/admin");
 
   const supabaseOn = isSupabaseConfigured();
   const events = supabaseOn ? await listRecentWebhookEvents(100) : [];

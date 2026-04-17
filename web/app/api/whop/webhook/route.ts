@@ -18,6 +18,19 @@ export async function GET() {
   return NextResponse.json({ ok: true, endpoint: "whop-webhook", method: "GET" });
 }
 
+export async function HEAD() {
+  return new NextResponse(null, { status: 200 });
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      Allow: "GET,HEAD,OPTIONS,POST",
+    },
+  });
+}
+
 function verifySignature(
   body: string,
   signature: string,

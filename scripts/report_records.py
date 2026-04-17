@@ -38,6 +38,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from build_expert_pick_outcomes import (
+    apply_deduplication as build_expert_outcome_deduplication,
+    build_rows as build_expert_outcome_rows,
+    read_jsonl as read_ledger_jsonl,
+    write_jsonl as write_ledger_jsonl,
+)
+from build_expert_support_reports_from_outcomes import (
+    build_reports_from_outcomes,
+    write_reports as write_trusted_reports,
+)
+
 # Sport constants
 NBA_SPORT = "NBA"
 NCAAB_SPORT = "NCAAB"
@@ -1410,6 +1421,13 @@ def main() -> None:
     by_line_bucket_path = report_dir / "by_line_bucket.json"
     cross_tab_path = report_dir / "cross_tabulation.json"
     by_expert_supports_path = report_dir / "by_expert_supports.json"
+    by_expert_supports_live_path = report_dir / "by_expert_supports_live.json"
+    by_expert_supports_pregraded_path = report_dir / "by_expert_supports_pregraded.json"
+    by_expert_agreement_path = report_dir / "by_expert_agreement.json"
+    by_expert_agreement_live_path = report_dir / "by_expert_agreement_live.json"
+    by_expert_agreement_pregraded_path = report_dir / "by_expert_agreement_pregraded.json"
+    expert_record_trust_audit_path = report_dir / "expert_record_trust_audit.json"
+    expert_pick_outcomes_path = Path("data/ledger/ncaab/expert_pick_outcomes_latest.jsonl") if sport == NCAAB_SPORT else Path("data/ledger/expert_pick_outcomes_latest.jsonl")
 
     print(f"Processing {sport} reports...")
     rows = read_jsonl(dataset_path)
@@ -1476,16 +1494,26 @@ def main() -> None:
     cross_tab_data = cross_tabulation(rows_occ)
     write_json(cross_tab_path, {"meta": meta_occ, **cross_tab_data})
 
-    ledger_signals_path = Path("data/ledger/signals_latest.jsonl")
-    ledger_grades_path = Path("data/ledger/grades_latest.jsonl")
-    expert_supports_data = by_expert_supports(ledger_signals_path, ledger_grades_path)
-    write_json(
-        by_expert_supports_path,
-        {
-            "meta": expert_supports_data.get("meta", {}),
-            "rows": expert_supports_data.get("rows", []),
-            "rows_filtered": expert_supports_data.get("rows_filtered", []),
-        },
+    ledger_signals_path = Path("data/ledger/ncaab/signals_latest.jsonl") if sport == NCAAB_SPORT else Path("data/ledger/signals_latest.jsonl")
+    ledger_grades_path = Path("data/ledger/ncaab/grades_latest.jsonl") if sport == NCAAB_SPORT else Path("data/ledger/grades_latest.jsonl")
+    ledger_signals = read_ledger_jsonl(ledger_signals_path)
+    ledger_grades = read_ledger_jsonl(ledger_grades_path)
+    expert_outcome_rows = build_expert_outcome_deduplication(build_expert_outcome_rows(ledger_signals, ledger_grades))
+    write_ledger_jsonl(expert_pick_outcomes_path, expert_outcome_rows)
+    trusted_reports = build_reports_from_outcomes(
+        expert_outcome_rows,
+        sport=sport,
+        min_sample_size=MIN_SAMPLE_SIZE_EXPERT,
+    )
+    write_trusted_reports(trusted_reports, sport=sport, report_dir=report_dir)
+    print(
+        "[expert_supports] Using trusted support-level outcomes "
+        f"({len(expert_outcome_rows):,} rows -> {trusted_reports['supports_live']['meta'].get('included_primary_rows', 0):,} live primary rows)."
+    )
+    print(
+        "[expert_agreement] Using trusted pair records "
+        f"({trusted_reports['agreement_live']['meta'].get('total_pairs', 0):,} pairs; "
+        f"splits={trusted_reports['agreement_live']['meta'].get('split_pairs', 0):,})."
     )
 
     print(f"Reports written to {report_dir}:")
@@ -1511,6 +1539,16 @@ def main() -> None:
         by_line_bucket_path,
         cross_tab_path,
         by_expert_supports_path,
+        by_expert_agreement_path,
+        expert_record_trust_audit_path,
+    ]:
+        print(f"  - {path}")
+    for path in [
+        by_expert_supports_live_path,
+        by_expert_supports_pregraded_path,
+        by_expert_agreement_live_path,
+        by_expert_agreement_pregraded_path,
+        expert_pick_outcomes_path,
     ]:
         print(f"  - {path}")
 

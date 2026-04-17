@@ -6,9 +6,10 @@ Reads data/reports/by_sources_combo_market_direction.json (updated every daily r
 and cross-references against the current PATTERN_REGISTRY in score_signals.py.
 
 Modes:
-  Default (report only):   print health of existing patterns + new candidates
+  Default (report only):   print health of existing patterns + active/watchlist candidates
   --apply:                 auto-update PATTERN_REGISTRY hist blocks with fresh stats
-  --min-n N:               minimum n for candidate consideration (default: 50)
+  --watchlist-min-n N:     minimum n for watchlist consideration (default: 35)
+  --active-min-n N:        minimum n for active candidate consideration (default: 50)
   --min-wilson FLOAT:      minimum Wilson lower bound for B-tier (default: 0.46)
   --sport SPORT:           NBA (default) or NCAAB
 
@@ -162,10 +163,16 @@ def _recent_wilson(
 WARN_WILSON = 0.40       # Pattern wilson below this → warning
 REMOVE_WILSON = 0.35     # Pattern wilson below this → recommend removal
 REMOVE_WINPCT = 0.45     # Pattern win_pct below this → recommend removal
-B_TIER_WILSON = 0.46     # Minimum Wilson for B-tier candidate
-A_TIER_WILSON = 0.50     # Minimum Wilson for A-tier candidate
-MIN_N_DEFAULT = 50       # Minimum sample for any candidate
-A_TIER_MIN_N = 75        # Minimum n for A-tier candidate
+B_TIER_WILSON = 0.46        # Minimum Wilson for B-tier candidate
+A_TIER_WILSON = 0.50        # Minimum Wilson for A-tier candidate
+WATCHLIST_MIN_N_DEFAULT = 35
+ACTIVE_MIN_N_DEFAULT = 50
+# A-tier is a separate, stricter gate from "active candidate".
+# ACTIVE_MIN_N (50) promotes a row from watchlist to active candidate for review.
+# A_TIER_MIN_N (75) is the sample-size gate for actually assigning A-tier.
+# Lowering A_TIER_MIN_N materially changes tier assignments in production;
+# do not lower without a written rationale and measured impact analysis.
+A_TIER_MIN_N = 75           # Minimum n for A-tier candidate
 
 
 def check_health(
@@ -227,7 +234,8 @@ def find_candidates(
     rows: List[Dict[str, Any]],
     registry: List[Dict[str, Any]],
     recent: Dict[str, Any],
-    min_n: int = MIN_N_DEFAULT,
+    watchlist_min_n: int = WATCHLIST_MIN_N_DEFAULT,
+    active_min_n: int = ACTIVE_MIN_N_DEFAULT,
     min_wilson: float = B_TIER_WILSON,
 ) -> List[Dict[str, Any]]:
     """Find report rows that qualify as new patterns but aren't in the registry yet."""
@@ -256,7 +264,7 @@ def find_candidates(
         wins = row.get("wins", 0)
         n = row.get("n", 0)
 
-        if n < min_n:
+        if n < watchlist_min_n:
             continue
 
         live_wilson = wilson_lower(wins, n)
@@ -283,12 +291,14 @@ def find_candidates(
             window=30,
         )
 
+        status = "active" if n >= active_min_n else "watchlist"
         tier = "A" if (live_wilson >= A_TIER_WILSON and n >= A_TIER_MIN_N) else "B"
         candidates.append({
             "row": row,
             "live_wilson": live_wilson,
             "recent_wilson": recent_w,
             "suggested_tier": tier,
+            "candidate_status": status,
             "is_team_specific": is_team,
         })
 
@@ -354,9 +364,12 @@ def print_report(
                   f"Wilson={info['live_wilson']:.3f}{rw_str}")
         print()
 
-    if candidates:
-        print(f"  NEW CANDIDATES — {len(candidates)} pattern(s) qualifying for registry:")
-        for c in candidates:
+    active_candidates = [c for c in candidates if c.get("candidate_status") == "active"]
+    watchlist_candidates = [c for c in candidates if c.get("candidate_status") == "watchlist"]
+
+    if active_candidates:
+        print(f"  NEW ACTIVE CANDIDATES — {len(active_candidates)} pattern(s) qualifying for registry:")
+        for c in active_candidates:
             row = c["row"]
             rw = c.get("recent_wilson")
             rw_str = f"  30d={rw:.3f}" if rw is not None else "  30d=n/a"
@@ -368,7 +381,23 @@ def print_report(
             print(f"        {row.get('wins',0)}-{row.get('losses',0)}  n={row.get('n',0)}  "
                   f"win={row.get('win_pct',0):.1%}  Wilson={c['live_wilson']:.3f}{rw_str}")
         print()
-    else:
+
+    if watchlist_candidates:
+        print(f"  WATCHLIST CANDIDATES — {len(watchlist_candidates)} pattern(s) at n>={WATCHLIST_MIN_N_DEFAULT} but below active threshold:")
+        for c in watchlist_candidates:
+            row = c["row"]
+            rw = c.get("recent_wilson")
+            rw_str = f"  30d={rw:.3f}" if rw is not None else "  30d=n/a"
+            direction = row.get("direction", "?")
+            is_team = c.get("is_team_specific", False)
+            dir_label = f"team={direction}" if is_team else direction
+            print(f"    · [{c['suggested_tier']}] {row.get('sources_combo')} / "
+                  f"{row.get('market_type')} / {dir_label}")
+            print(f"        {row.get('wins',0)}-{row.get('losses',0)}  n={row.get('n',0)}  "
+                  f"win={row.get('win_pct',0):.1%}  Wilson={c['live_wilson']:.3f}{rw_str}")
+        print()
+
+    if not active_candidates and not watchlist_candidates:
         print("  No new candidates above threshold.")
         print()
 
@@ -492,12 +521,29 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Pattern health check and candidate discovery.")
     parser.add_argument("--apply", action="store_true",
                         help="Update hist blocks in PATTERN_REGISTRY with fresh stats.")
-    parser.add_argument("--min-n", type=int, default=MIN_N_DEFAULT,
-                        help=f"Min sample size for candidates (default: {MIN_N_DEFAULT})")
+    parser.add_argument("--watchlist-min-n", type=int, default=WATCHLIST_MIN_N_DEFAULT,
+                        help=f"Min sample size for watchlist candidates (default: {WATCHLIST_MIN_N_DEFAULT})")
+    parser.add_argument("--active-min-n", type=int, default=ACTIVE_MIN_N_DEFAULT,
+                        help=f"Min sample size for active candidates (default: {ACTIVE_MIN_N_DEFAULT})")
+    # Backward-compatibility shim (Q5): the legacy --min-n flag is mapped to
+    # --active-min-n with a stderr deprecation notice. Existing automation
+    # that passes --min-n keeps working; new code should use --active-min-n.
+    parser.add_argument("--min-n", type=int, default=None, dest="legacy_min_n",
+                        help="[deprecated] alias for --active-min-n")
     parser.add_argument("--min-wilson", type=float, default=B_TIER_WILSON,
                         help=f"Min Wilson lower bound for B-tier (default: {B_TIER_WILSON})")
     parser.add_argument("--sport", choices=["NBA", "NCAAB"], default="NBA")
     args = parser.parse_args()
+
+    if args.legacy_min_n is not None:
+        print(
+            f"[discover_patterns] WARNING: --min-n is deprecated; use --active-min-n. "
+            f"Mapping --min-n={args.legacy_min_n} to --active-min-n.",
+            file=sys.stderr,
+        )
+        # Only override if the user didn't also pass --active-min-n explicitly.
+        if args.active_min_n == ACTIVE_MIN_N_DEFAULT:
+            args.active_min_n = args.legacy_min_n
 
     rows = load_combo_direction_report(args.sport)
     if not rows:
@@ -508,7 +554,7 @@ def main() -> None:
     registry = load_registry(args.sport)
 
     healthy, warnings, critical = check_health(registry, rows, recent)
-    candidates = find_candidates(rows, registry, recent, args.min_n, args.min_wilson)
+    candidates = find_candidates(rows, registry, recent, args.watchlist_min_n, args.active_min_n, args.min_wilson)
 
     if args.apply:
         print(f"\n  Applying hist updates for {args.sport} PATTERN_REGISTRY...")

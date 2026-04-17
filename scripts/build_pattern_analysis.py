@@ -1,9 +1,12 @@
 """
 Build expert_records and expert_pair_records tables in Supabase.
 
-Reads directly from Supabase:
-  - signal_sources (expert_result for player_prop)
-  - signals + grades (result for spread/total/moneyline)
+Default source is the trusted local NBA expert-pick layer:
+  - data/ledger/expert_pick_outcomes_latest.jsonl
+  - data/reports/by_expert_agreement.json
+
+This keeps the Supabase pattern tables aligned with the support-level grading,
+deduplication, and live/pregraded split used by report_records.py.
 
 Usage:
     python3 scripts/build_pattern_analysis.py            # build + upsert
@@ -13,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import math
 import sys
@@ -23,6 +27,8 @@ from typing import Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+
+OUTCOMES_PATH = REPO_ROOT / "data" / "ledger" / "expert_pick_outcomes_latest.jsonl"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("build_pattern_analysis")
@@ -80,8 +86,179 @@ def _parse_day_key_date(day_key: str) -> Optional[datetime]:
 
 
 # ──────────────────────────────────────────────────────────────
-# Fetch occurrences from Supabase
+# Trusted local loaders
 # ──────────────────────────────────────────────────────────────
+
+def _read_jsonl(path: Path) -> List[dict]:
+    rows: List[dict] = []
+    if not path.exists():
+        return rows
+    with path.open() as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def _expert_slug(name: str) -> str:
+    return name.lower().replace(" ", "_").replace(".", "")
+
+
+def load_trusted_occurrences() -> List[dict]:
+    """
+    Load solo expert occurrences from trusted expert_pick_outcomes_latest.jsonl.
+    Uses only primary live rows with support-level results.
+    """
+    rows = _read_jsonl(OUTCOMES_PATH)
+    occs: List[dict] = []
+    for row in rows:
+        if row.get("sport") != "NBA":
+            continue
+        if not row.get("is_primary_record"):
+            continue
+        if row.get("grade_mode") != "live":
+            continue
+        result = row.get("support_result")
+        if result not in ("WIN", "LOSS", "PUSH"):
+            continue
+        market_type = row.get("market_type")
+        if market_type not in SUPPORTED_MARKETS:
+            continue
+        expert_name = str(row.get("expert_name") or "unknown")
+        atomic_stat = row.get("atomic_stat") or ""
+        if market_type != "player_prop":
+            atomic_stat = ""
+        occs.append({
+            "source_id": str(row.get("source_id") or "unknown"),
+            "expert_slug": _expert_slug(expert_name),
+            "expert_name": expert_name,
+            "result": result,
+            "market_type": market_type,
+            "atomic_stat": atomic_stat,
+            "day_key": row.get("day_key") or "",
+            "signal_id": row.get("signal_id") or "",
+        })
+    logger.info("Loaded %d trusted expert occurrences from %s", len(occs), OUTCOMES_PATH)
+    return occs
+
+
+def _pair_base_key(row: dict) -> Tuple[str, str]:
+    market = row.get("market_type") or "unknown"
+    event_key = row.get("canonical_event_key") or row.get("event_key") or row.get("day_key") or "unknown"
+    if market == "player_prop":
+        return (
+            json.dumps([
+                event_key,
+                market,
+                row.get("player_id") or row.get("player_key") or row.get("selection"),
+                row.get("atomic_stat") or "unknown",
+                row.get("support_direction") or row.get("direction") or "unknown",
+            ], ensure_ascii=False, separators=(",", ":")),
+            str(row.get("atomic_stat") or ""),
+        )
+    if market in {"spread", "moneyline"}:
+        return (
+            json.dumps([
+                event_key,
+                market,
+                row.get("support_selection") or row.get("selection") or "unknown",
+            ], ensure_ascii=False, separators=(",", ":")),
+            "",
+        )
+    if market == "total":
+        return (
+            json.dumps([
+                event_key,
+                market,
+                row.get("support_direction") or row.get("direction") or "unknown",
+            ], ensure_ascii=False, separators=(",", ":")),
+            "",
+        )
+    return (
+        json.dumps([
+            event_key,
+            market,
+            row.get("support_selection") or row.get("selection") or "unknown",
+            row.get("support_direction") or row.get("direction") or "unknown",
+        ], ensure_ascii=False, separators=(",", ":")),
+        "",
+    )
+
+
+def load_trusted_pair_rows() -> List[dict]:
+    rows = _read_jsonl(OUTCOMES_PATH)
+    support_rows = [
+        row for row in rows
+        if row.get("sport") == "NBA"
+        and row.get("is_primary_record")
+        and row.get("grade_mode") == "live"
+        and row.get("support_result") in ("WIN", "LOSS", "PUSH")
+        and row.get("market_type") in SUPPORTED_MARKETS
+    ]
+
+    grouped: Dict[Tuple[str, str, str], List[dict]] = defaultdict(list)
+    for row in support_rows:
+        base_key, atomic_stat = _pair_base_key(row)
+        grouped[(base_key, str(row.get("market_type") or ""), atomic_stat)].append(row)
+
+    pair_groups: Dict[Tuple[str, str, str, str, str, str], dict] = {}
+    ts = datetime.now(tz=timezone.utc).isoformat()
+
+    for (_, market_type, atomic_stat), bucket in grouped.items():
+        by_expert: Dict[Tuple[str, str], dict] = {}
+        for row in bucket:
+            key = (str(row.get("source_id") or "unknown"), _expert_slug(str(row.get("expert_name") or "unknown")))
+            by_expert[key] = row
+        if len(by_expert) < 2:
+            continue
+
+        expert_items = sorted(by_expert.items())
+        for idx in range(len(expert_items)):
+            for jdx in range(idx + 1, len(expert_items)):
+                (source_a, slug_a), row_a = expert_items[idx]
+                (source_b, slug_b), row_b = expert_items[jdx]
+                ra = row_a.get("support_result")
+                rb = row_b.get("support_result")
+                if ra != rb or ra not in ("WIN", "LOSS", "PUSH"):
+                    continue
+                key = (source_a, slug_a, source_b, slug_b, market_type, atomic_stat)
+                if key not in pair_groups:
+                    pair_groups[key] = {"wins": 0, "losses": 0, "pushes": 0}
+                group = pair_groups[key]
+                if ra == "WIN":
+                    group["wins"] += 1
+                elif ra == "LOSS":
+                    group["losses"] += 1
+                else:
+                    group["pushes"] += 1
+
+    output: List[dict] = []
+    for (source_a, slug_a, source_b, slug_b, market_type, atomic_stat), group in pair_groups.items():
+        wins = group["wins"]
+        losses = group["losses"]
+        pushes = group["pushes"]
+        n = wins + losses + pushes
+        denom = wins + losses
+        win_pct = round(wins / denom, 4) if denom > 0 else None
+        output.append({
+            "source_a": source_a,
+            "expert_slug_a": slug_a,
+            "source_b": source_b,
+            "expert_slug_b": slug_b,
+            "market_type": market_type,
+            "atomic_stat": atomic_stat,
+            "n": n,
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "win_pct": win_pct,
+            "wilson_lower": wilson_lower(wins, denom) if denom > 0 else None,
+            "tier": _assign_tier(win_pct, denom),
+            "updated_at": ts,
+        })
+    logger.info("Loaded %d trusted expert pair rows from %s", len(output), OUTCOMES_PATH)
+    return output
 
 def _fetch_all(client, table: str, select: str, filters: list = None) -> List[dict]:
     """Paginate through a Supabase table query."""
@@ -414,14 +591,8 @@ def main() -> None:
                     help="Override today's date key (NBA:YYYY:MM:DD)")
     args = ap.parse_args()
 
-    from src.supabase_writer import get_client
-    client = get_client()
-
-    # Fetch all graded expert occurrences from Supabase
-    prop_occs    = fetch_prop_occurrences(client)
-    nonprop_occs = fetch_nonprop_occurrences(client)
-    occurrences  = prop_occs + nonprop_occs
-    logger.info("Total graded expert occurrences: %d", len(occurrences))
+    occurrences = load_trusted_occurrences()
+    logger.info("Total trusted expert occurrences: %d", len(occurrences))
 
     # Determine today for hot/cold window
     if args.today:
@@ -436,8 +607,8 @@ def main() -> None:
         expert_rows = [r for r in expert_rows if r["n"] >= args.min_n]
     logger.info("  %d expert_records rows", len(expert_rows))
 
-    logger.info("Building expert_pair_records...")
-    pair_rows = build_pair_records(occurrences)
+    logger.info("Building expert_pair_records from trusted agreement report...")
+    pair_rows = load_trusted_pair_rows()
     if args.min_n > 1:
         pair_rows = [r for r in pair_rows if r["n"] >= args.min_n]
     logger.info("  %d expert_pair_records rows", len(pair_rows))
@@ -486,6 +657,9 @@ def main() -> None:
         return
 
     # Write to Supabase
+    from src.supabase_writer import get_client
+    client = get_client()
+
     logger.info("Upserting %d expert_records rows...", len(expert_rows))
     n1 = _upsert(client, "expert_records", expert_rows,
                  "source_id,expert_slug,market_type,atomic_stat")

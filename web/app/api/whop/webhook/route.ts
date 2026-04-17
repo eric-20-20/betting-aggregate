@@ -14,6 +14,10 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 const WEBHOOK_KEY = process.env.WHOP_WEBHOOK_KEY || "";
 const limiter = rateLimit({ interval: 60_000, limit: 60 });
 
+export async function GET() {
+  return NextResponse.json({ ok: true, endpoint: "whop-webhook", method: "GET" });
+}
+
 function verifySignature(
   body: string,
   signature: string,

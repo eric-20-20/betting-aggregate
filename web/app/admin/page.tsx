@@ -1,60 +1,49 @@
-"use client";
+import Link from "next/link";
+import { isAdminRequest } from "@/lib/admin";
+import AdminLoginForm from "./AdminLoginForm";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+export const dynamic = "force-dynamic";
+export const metadata = { title: "Admin" };
 
-export default function AdminLoginPage() {
-  const [secret, setSecret] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const router = useRouter();
+export default async function AdminIndexPage() {
+  const isAdmin = await isAdminRequest();
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-
-    try {
-      const res = await fetch("/api/admin/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret }),
-      });
-
-      if (!res.ok) {
-        setError("Invalid secret");
-        setLoading(false);
-        return;
-      }
-
-      router.push("/picks");
-    } catch {
-      setError("Something went wrong");
-      setLoading(false);
-    }
+  if (!isAdmin) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center px-4">
+        <AdminLoginForm />
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-[60vh] flex items-center justify-center px-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
-        <h1 className="text-xl font-bold text-white text-center">Admin Access</h1>
-        <input
-          type="password"
-          value={secret}
-          onChange={(e) => setSecret(e.target.value)}
-          placeholder="Enter admin secret"
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500"
-          autoFocus
-        />
-        {error && <p className="text-red-400 text-sm text-center">{error}</p>}
-        <button
-          type="submit"
-          disabled={loading || !secret}
-          className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white py-2.5 rounded-lg transition-colors"
+    <div className="max-w-3xl mx-auto px-4 py-10">
+      <h1 className="text-2xl font-bold text-white mb-6">Admin</h1>
+      <p className="text-gray-400 mb-8 text-sm">
+        Signed in. Operational surfaces:
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Link
+          href="/admin/entitlements"
+          className="block rounded-lg border border-gray-800 bg-gray-900 hover:border-emerald-500/40 hover:bg-gray-900/80 transition-colors p-5"
         >
-          {loading ? "Verifying..." : "Sign In"}
-        </button>
-      </form>
+          <div className="text-lg font-semibold text-white">Entitlements</div>
+          <p className="text-gray-400 text-sm mt-1">
+            Runtime access table — who has access, from what source, and when
+            it expires.
+          </p>
+        </Link>
+        <Link
+          href="/admin/webhooks"
+          className="block rounded-lg border border-gray-800 bg-gray-900 hover:border-emerald-500/40 hover:bg-gray-900/80 transition-colors p-5"
+        >
+          <div className="text-lg font-semibold text-white">Webhooks</div>
+          <p className="text-gray-400 text-sm mt-1">
+            Last 100 Whop webhook events — status, signature check, any
+            processing errors.
+          </p>
+        </Link>
+      </div>
     </div>
   );
 }

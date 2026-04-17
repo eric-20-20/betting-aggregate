@@ -2,14 +2,16 @@
 BettingPros user-expert picks ingestion script (daily).
 
 Dynamically discovers active experts from the BettingPros NBA accuracy leaderboard
-(monthly + season + all-time periods), then fetches their upcoming/live picks.
+(season + all-time periods), then fetches their upcoming/live picks.
 On first encounter, also backfills full pick history (all sports, all time).
 
 Strategy:
-  1. Discover experts from three leaderboard periods (monthly → season → all-time):
+  1. Discover experts from two leaderboard periods (season → all-time):
        - Each period is fully paginated via API replay (not just scroll-triggered pages)
-       - Union of all three periods is built; experts with ≥MIN_ACTIVE_PICKS_PRIORITY
+       - Union of the periods is built; experts with ≥MIN_ACTIVE_PICKS_PRIORITY
          active picks are placed at the front of the run queue
+     (The monthly period is intentionally excluded — too-small samples surface
+     fluky streaks. Re-enable only with a written rationale.)
   2. Merge discovered experts with previously known experts (data/bettingpros_experts_known.json)
   3. For each expert:
      - New expert: fetch full scored history (all pages, all sports) + upcoming/live
@@ -25,7 +27,6 @@ Usage:
     python3 scripts/bettingpros_experts_ingest.py [--debug]
     python3 scripts/bettingpros_experts_ingest.py --user matthewnoonan --debug
     python3 scripts/bettingpros_experts_ingest.py --no-discovery        # use known file only
-    python3 scripts/bettingpros_experts_ingest.py --monthly-only        # skip season/all-time
 """
 
 from __future__ import annotations
@@ -57,13 +58,16 @@ from store import write_json
 OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
 DEFAULT_STORAGE_STATE = "data/bettingpros_storage_state.json"
 KNOWN_EXPERTS_FILE = "data/bettingpros_experts_known.json"
+RUN_SUMMARY_FILE = os.path.join(OUT_DIR, "bettingpros_experts_run_summary.json")
 
-# Leaderboard URLs — period=739 is March 2026 NBA game-picks
-# Multiple periods are loaded in order: monthly (current) → season → all-time
-# Period IDs: monthly periods increment each month; season/all-time use special slugs.
+# Leaderboard URLs.
+# Multiple periods are loaded in order: season → all-time.
 # The leaderboard page URL controls which period the site loads by default.
 LEADERBOARD_PERIODS = [
-    # (label, url) — monthly period dropped (too short, surfaces fluky streaks)
+    # (label, url) — monthly period intentionally excluded.
+    # Prior analysis showed the current-month leaderboard surfaces fluky
+    # streaks (too-small samples) and inflates experts with a hot few weeks.
+    # Re-enable only with a written rationale and a fresh sample-size analysis.
     ("season",   "https://www.bettingpros.com/nba/accuracy/game-picks/?period=season"),
     ("all_time", "https://www.bettingpros.com/nba/accuracy/game-picks/?period=all"),
 ]
@@ -139,6 +143,44 @@ def sha256_digest(text: str) -> str:
 
 def ensure_out_dir() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
+
+
+def _bucket_record(record: "RawExpertPickRecord") -> str:
+    sport = (record.sport or "").upper()
+    is_history = record.pregraded_result in {"WIN", "LOSS", "PUSH"}
+    has_date = bool(record.game_date or record.event_start_time_utc)
+
+    if record.parlay_id:
+        return "parlays"
+    if not has_date:
+        return "undated"
+    if sport != "NBA":
+        return "non_nba_history" if is_history else "non_nba_upcoming"
+    return "nba_history" if is_history else "nba_upcoming"
+
+
+def _bucket_file_map() -> Dict[str, str]:
+    return {
+        "nba_upcoming": os.path.join(OUT_DIR, "raw_bettingpros_experts_nba.json"),
+        "nba_history": os.path.join(OUT_DIR, "raw_bettingpros_experts_history_nba.json"),
+        "non_nba_upcoming": os.path.join(OUT_DIR, "raw_bettingpros_experts_non_nba_upcoming.json"),
+        "non_nba_history": os.path.join(OUT_DIR, "raw_bettingpros_experts_non_nba_history.json"),
+        "parlays": os.path.join(OUT_DIR, "raw_bettingpros_experts_parlays.json"),
+        "undated": os.path.join(OUT_DIR, "raw_bettingpros_experts_undated.json"),
+    }
+
+
+def _write_bucketed_records(records: List["RawExpertPickRecord"]) -> Dict[str, int]:
+    ensure_out_dir()
+    file_map = _bucket_file_map()
+    bucketed: Dict[str, List["RawExpertPickRecord"]] = {name: [] for name in file_map}
+    for record in records:
+        bucketed[_bucket_record(record)].append(record)
+
+    for bucket, path in file_map.items():
+        write_json(path, [asdict(r) for r in bucketed[bucket]])
+
+    return {bucket: len(rows) for bucket, rows in bucketed.items()}
 
 
 def _load_known_experts() -> Dict[str, Any]:
@@ -362,12 +404,10 @@ def _scrape_leaderboard_period(
     """
     all_entries: List[Dict] = []
     total_pages = 1  # updated after first response
-
-    # Capture the raw XHR URL from page 1 so we can replay it for pages 2..N
-    first_xhr_url: Optional[str] = None
+    next_path: Optional[str] = None
 
     def capture(resp):
-        nonlocal total_pages, first_xhr_url
+        nonlocal total_pages, next_path
         resp_url = resp.url
         if "/v3/accuracy/picks" not in resp_url:
             return
@@ -376,11 +416,14 @@ def _scrape_leaderboard_period(
             entries = data.get("accuracy") or []
             all_entries.extend(entries)
             pg = data.get("_pagination") or {}
-            if first_xhr_url is None:
-                first_xhr_url = resp_url
+            if not next_path:
                 total_pages = pg.get("total_pages") or 1
+                next_path = pg.get("next") or ""
                 if debug:
-                    print(f"  [{label}] page=1 got={len(entries)} total_items={pg.get('total_items')} total_pages={total_pages}")
+                    print(
+                        f"  [{label}] page=1 got={len(entries)} "
+                        f"total_items={pg.get('total_items')} total_pages={total_pages}"
+                    )
             else:
                 if debug:
                     print(f"  [{label}] page={pg.get('page')} got={len(entries)}")
@@ -397,23 +440,27 @@ def _scrape_leaderboard_period(
     finally:
         page.remove_listener("response", capture)
 
-    # Fetch remaining pages by replaying the XHR with page=N
-    if first_xhr_url and total_pages > 1:
-        for pg_num in range(2, total_pages + 1):
-            # Replace page=1 (or page=<anything>) in the URL
-            next_url = re.sub(r"[&?]page=\d+", "", first_xhr_url)
-            sep = "&" if "?" in next_url else "?"
-            next_url = f"{next_url}{sep}page={pg_num}"
+    # Fetch remaining pages by following the API-provided next links.
+    if next_path and total_pages > 1:
+        seen_next: Set[str] = set()
+        page_num = 2
+        cur_next = next_path
+        while cur_next and page_num <= total_pages and cur_next not in seen_next:
+            seen_next.add(cur_next)
+            next_url = cur_next if cur_next.startswith("http") else f"{API_BASE}{cur_next}"
             try:
                 resp = page.request.get(next_url, timeout=15000)
                 data = resp.json()
                 entries = data.get("accuracy") or []
                 all_entries.extend(entries)
+                pg = data.get("_pagination") or {}
+                cur_next = pg.get("next") or ""
                 if debug:
-                    print(f"  [{label}] page={pg_num} got={len(entries)}")
+                    print(f"  [{label}] page={page_num} got={len(entries)}")
+                page_num += 1
             except Exception as e:
                 if debug:
-                    print(f"  [{label}] page={pg_num} fetch error: {e}")
+                    print(f"  [{label}] page={page_num} fetch error: {e}")
                 break
 
     # Deduplicate and normalise
@@ -431,6 +478,7 @@ def _scrape_leaderboard_period(
             "display_name": usr.get("name") or usr.get("username") or slug,
             "user_id": usr.get("id"),
             "active_pick_count": usr.get("active_pick_count", 0),
+            "periods_seen": [label],
             # Quality gate fields — try multiple possible field names from the API
             "wins":    entry.get("wins") or entry.get("correct") or usr.get("wins") or 0,
             "losses":  entry.get("losses") or entry.get("incorrect") or usr.get("losses") or 0,
@@ -466,14 +514,26 @@ def _discover_experts(page: Any, debug: bool = False) -> List[Dict[str, Any]]:
             if slug not in all_experts:
                 all_experts[slug] = e
             else:
+                periods = set(all_experts[slug].get("periods_seen") or [])
+                periods.update(e.get("periods_seen") or [])
+                all_experts[slug]["periods_seen"] = sorted(periods)
                 # Keep higher active_pick_count; merge quality stats (take max n_picks)
                 if e["active_pick_count"] > all_experts[slug]["active_pick_count"]:
                     all_experts[slug]["active_pick_count"] = e["active_pick_count"]
+                if (e.get("win_pct") or 0) > (all_experts[slug].get("win_pct") or 0):
+                    all_experts[slug]["win_pct"] = e["win_pct"]
                 if (e.get("n_picks") or 0) > (all_experts[slug].get("n_picks") or 0):
                     all_experts[slug]["n_picks"] = e["n_picks"]
                     all_experts[slug]["wins"] = e["wins"]
                     all_experts[slug]["losses"] = e["losses"]
-                    all_experts[slug]["win_pct"] = e["win_pct"]
+            all_experts[slug]["best_win_pct"] = max(
+                e.get("win_pct") or 0,
+                all_experts[slug].get("best_win_pct") or 0,
+            )
+            all_experts[slug]["best_n_picks"] = max(
+                e.get("n_picks") or 0,
+                all_experts[slug].get("best_n_picks") or 0,
+            )
 
     experts = list(all_experts.values())
 
@@ -510,7 +570,7 @@ def _fetch_upcoming_picks(
     user_id: int,
     observed_at: datetime,
     debug: bool = False,
-) -> List[RawExpertPickRecord]:
+) -> Tuple[List[RawExpertPickRecord], Dict[str, Any]]:
     """Fetch all upcoming + live picks for a user via intercepted API."""
     picks_store: Dict[str, List[Dict]] = {}
 
@@ -546,23 +606,51 @@ def _fetch_upcoming_picks(
     for picks in picks_store.values():
         raw_picks.extend(picks)
 
-    # Filter to NBA only — drop non-NBA sports before processing
+    # Filter to NBA only — drop non-NBA sports before processing.
     before_sport = len(raw_picks)
     raw_picks = [p for p in raw_picks if (p.get("sport") or "").upper() == "NBA"]
 
-    # Filter to today's games only — drop past unsettled picks (they bloat the file)
+    # Filter to today's games only and not-yet-started only.
     from zoneinfo import ZoneInfo as _ZI
-    _today = datetime.now(_ZI("America/New_York")).strftime("%Y-%m-%d")
+    now_et = datetime.now(_ZI("America/New_York"))
+    _today = now_et.strftime("%Y-%m-%d")
     before_date = len(raw_picks)
     raw_picks = [
         p for p in raw_picks
         if ((p.get("event") or {}).get("scheduled") or p.get("event_time") or "")[:10] == _today
     ]
+    before_future = len(raw_picks)
+    filtered_future: List[Dict] = []
+    for p in raw_picks:
+        scheduled = ((p.get("event") or {}).get("scheduled") or p.get("event_time") or "").strip()
+        if not scheduled:
+            continue
+        try:
+            sched_dt = datetime.fromisoformat(scheduled.replace(" ", "T")).astimezone(_ZI("America/New_York"))
+        except Exception:
+            # Fallback: if parsing fails but the date matched today, keep the row.
+            filtered_future.append(p)
+            continue
+        if sched_dt > now_et:
+            filtered_future.append(p)
+    raw_picks = filtered_future
 
-    if debug and (before_sport > len(raw_picks) or before_date > len(raw_picks)):
-        print(f"    [filter] {before_sport} total → {before_date} NBA → {len(raw_picks)} today({_today})")
+    if debug and (before_sport > len(raw_picks) or before_date > len(raw_picks) or before_future > len(raw_picks)):
+        print(
+            f"    [filter] {before_sport} total → {before_date} NBA "
+            f"→ {before_future} today({_today}) → {len(raw_picks)} future_only"
+        )
 
-    return _process_raw_picks(raw_picks, slug, display, user_id, observed_at, debug=debug)
+    stats = {
+        "upcoming_raw": len(picks_store["upcoming"]),
+        "live_raw": len(picks_store["live"]),
+        "total_raw": len(picks_store["upcoming"]) + len(picks_store["live"]),
+        "nba_raw": before_date,
+        "nba_same_day": before_future,
+        "nba_same_day_future": len(raw_picks),
+    }
+
+    return _process_raw_picks(raw_picks, slug, display, user_id, observed_at, debug=debug), stats
 
 
 def _fetch_scored_history(
@@ -575,7 +663,7 @@ def _fetch_scored_history(
     start_date: str = "2020-01-01",
     debug: bool = False,
     max_pages: int = 0,
-) -> Tuple[List[RawExpertPickRecord], Optional[str]]:
+) -> Tuple[List[RawExpertPickRecord], Optional[str], Dict[str, Any]]:
     """
     Fetch full scored pick history for a user.
     Returns (records, latest_game_date) where latest_game_date is the most recent
@@ -588,6 +676,16 @@ def _fetch_scored_history(
     """
     api_headers: Dict[str, str] = {}
     page1_data: Dict[str, Any] = {}
+    meta: Dict[str, Any] = {
+        "pages_fetched": 0,
+        "total_pages_reported": 0,
+        "total_items_reported": 0,
+        "raw_picks_fetched": 0,
+        "sports_seen": {},
+        "market_types_seen": {},
+        "earliest_game_date": None,
+        "latest_game_date": None,
+    }
 
     def cap_req(req):
         url = req.url
@@ -664,7 +762,7 @@ def _fetch_scored_history(
     if not api_headers:
         if debug:
             print(f"    [warn] no API headers captured for {slug}")
-        return [], None
+        return [], None, meta
 
     # Build the full-history URL (extend start date to get all history)
     today = observed_at.strftime("%Y-%m-%d")
@@ -689,6 +787,9 @@ def _fetch_scored_history(
             picks = data.get("picks") or []
             all_raw_picks.extend(picks)
             total_pages = pg.get("total_pages") or 1
+            meta["pages_fetched"] = 1
+            meta["total_pages_reported"] = total_pages
+            meta["total_items_reported"] = pg.get("total_items") or 0
             next_path = pg.get("next") or ""
             if debug:
                 print(f"    [history] total={pg.get('total_items')} pages={total_pages} page1={len(picks)}")
@@ -707,6 +808,7 @@ def _fetch_scored_history(
                             d = r.json()
                             p = d.get("picks") or []
                             all_raw_picks.extend(p)
+                            meta["pages_fetched"] += 1
                             if debug and pg_num % 10 == 0:
                                 print(f"    [history] page {pg_num}/{total_pages} ({len(all_raw_picks)} total)")
                         else:
@@ -724,16 +826,31 @@ def _fetch_scored_history(
         print(f"    [history] {len(all_raw_picks)} total scored picks fetched")
 
     records = _process_raw_picks(all_raw_picks, slug, display, user_id, observed_at, debug=False)
+    meta["raw_picks_fetched"] = len(all_raw_picks)
 
     # Find most recent game_date for last_scored_at tracking
     latest_date: Optional[str] = None
+    earliest_date: Optional[str] = None
+    sports_seen: Dict[str, int] = {}
+    market_types_seen: Dict[str, int] = {}
     for pick in all_raw_picks:
         sched = (pick.get("event") or {}).get("scheduled") or ""
         gd = sched[:10] if sched else ""
         if gd and (latest_date is None or gd > latest_date):
             latest_date = gd
+        if gd and (earliest_date is None or gd < earliest_date):
+            earliest_date = gd
+        sport = (pick.get("sport") or "UNKNOWN").upper()
+        sports_seen[sport] = sports_seen.get(sport, 0) + 1
+        mt = str(pick.get("market_id") or pick.get("line", {}).get("type") or "unknown")
+        market_types_seen[mt] = market_types_seen.get(mt, 0) + 1
 
-    return records, latest_date
+    meta["sports_seen"] = sports_seen
+    meta["market_types_seen"] = market_types_seen
+    meta["earliest_game_date"] = earliest_date
+    meta["latest_game_date"] = latest_date
+
+    return records, latest_date, meta
 
 
 def ingest_bettingpros_experts(
@@ -841,15 +958,27 @@ def ingest_bettingpros_experts(
                 browser.close()
                 return [], [], dbg
 
+        daily_experts = [e for e in run_experts.values() if (e.get("active_pick_count") or 0) > 0 or e.get("from_whitelist")]
+        history_experts = [
+            e for e in run_experts.values()
+            if e.get("from_whitelist")
+            or not known_experts.get(e["slug"], {}).get("backfilled")
+            or (e.get("n_picks") or 0) >= MIN_N_PICKS
+        ]
+        dbg["discovery"] = {
+            "run_experts_total": len(run_experts),
+            "daily_experts_total": len(daily_experts),
+            "history_experts_total": len(history_experts),
+        }
+
         if debug:
             print(f"[bettingpros_experts] Processing {len(run_experts)} experts")
 
         all_upcoming: List[RawExpertPickRecord] = []
         all_history: List[RawExpertPickRecord] = []
+        other_records: List[RawExpertPickRecord] = []
 
         # Load existing output files to resume from partial runs
-        _upcoming_path = os.path.join(OUT_DIR, "raw_bettingpros_experts_nba.json")
-        _history_path = os.path.join(OUT_DIR, "raw_bettingpros_experts_history_nba.json")
         def _load_existing(path: str) -> List[RawExpertPickRecord]:
             if not os.path.exists(path):
                 return []
@@ -866,10 +995,28 @@ def ingest_bettingpros_experts(
                 return out
             except Exception:
                 return []
-        all_upcoming = _load_existing(_upcoming_path)
-        all_history = _load_existing(_history_path)
+        # Rebuild all non-history buckets from scratch each run so stale upcoming
+        # rows never persist across days. Only history is resumable.
+        existing_paths = [
+            _bucket_file_map()["nba_history"],
+            _bucket_file_map()["non_nba_history"],
+        ]
+        existing_records: List[RawExpertPickRecord] = []
+        for path in existing_paths:
+            existing_records.extend(_load_existing(path))
+
+        for record in existing_records:
+            bucket = _bucket_record(record)
+            if bucket == "nba_upcoming":
+                all_upcoming.append(record)
+            elif bucket == "nba_history":
+                all_history.append(record)
+            else:
+                other_records.append(record)
+
         _seen_upcoming: Set[str] = {r.raw_fingerprint for r in all_upcoming}
         _seen_history: Set[str] = {r.raw_fingerprint for r in all_history}
+        _seen_other: Set[str] = {r.raw_fingerprint for r in other_records}
 
         for slug, expert in run_experts.items():
             display = expert["display_name"]
@@ -923,45 +1070,60 @@ def ingest_bettingpros_experts(
             is_new = slug not in known_experts or not known_experts[slug].get("backfilled")
 
             # Fetch upcoming / live picks
-            upcoming = _fetch_upcoming_picks(page, slug, display, user_id, observed_at, debug=debug)
-            all_upcoming.extend(upcoming)
+            upcoming, upcoming_meta = _fetch_upcoming_picks(page, slug, display, user_id, observed_at, debug=debug)
 
             # Fetch scored history
             history_records: List[RawExpertPickRecord] = []
+            history_meta: Dict[str, Any] = {
+                "pages_fetched": 0,
+                "total_pages_reported": 0,
+                "total_items_reported": 0,
+                "raw_picks_fetched": 0,
+                "sports_seen": {},
+                "market_types_seen": {},
+                "earliest_game_date": None,
+                "latest_game_date": None,
+            }
             latest_scored_date: Optional[str] = None
 
             if is_new:
                 # Full history backfill from 2020-01-01
                 if debug:
                     print(f"  [new expert] fetching full history from 2020-01-01")
-                history_records, latest_scored_date = _fetch_scored_history(
+                history_records, latest_scored_date, history_meta = _fetch_scored_history(
                     context, page, slug, display, user_id, observed_at,
                     start_date="2020-01-01", debug=debug, max_pages=max_history_pages,
                 )
-                # Dedup before adding
-                for r in history_records:
-                    if r.raw_fingerprint not in _seen_history:
-                        _seen_history.add(r.raw_fingerprint)
-                        all_history.append(r)
             else:
                 history_records = []
                 # Incremental: fetch scored picks newer than last_scored_at
                 last_scored = known_experts[slug].get("last_scored_at") or "2020-01-01"
                 if last_scored < today:
-                    history_records, latest_scored_date = _fetch_scored_history(
+                    history_records, latest_scored_date, history_meta = _fetch_scored_history(
                         context, page, slug, display, user_id, observed_at,
                         start_date=last_scored, debug=debug, max_pages=max_history_pages,
                     )
-                    for r in history_records:
-                        if r.raw_fingerprint not in _seen_history:
-                            _seen_history.add(r.raw_fingerprint)
-                            all_history.append(r)
 
-            # Dedup upcoming before adding
+            # Dedup and route records into cleaned buckets.
             for r in upcoming:
-                if r.raw_fingerprint not in _seen_upcoming:
-                    _seen_upcoming.add(r.raw_fingerprint)
-                    all_upcoming.append(r)
+                bucket = _bucket_record(r)
+                if bucket == "nba_upcoming":
+                    if r.raw_fingerprint not in _seen_upcoming:
+                        _seen_upcoming.add(r.raw_fingerprint)
+                        all_upcoming.append(r)
+                elif r.raw_fingerprint not in _seen_other:
+                    _seen_other.add(r.raw_fingerprint)
+                    other_records.append(r)
+
+            for r in history_records:
+                bucket = _bucket_record(r)
+                if bucket == "nba_history":
+                    if r.raw_fingerprint not in _seen_history:
+                        _seen_history.add(r.raw_fingerprint)
+                        all_history.append(r)
+                elif r.raw_fingerprint not in _seen_other:
+                    _seen_other.add(r.raw_fingerprint)
+                    other_records.append(r)
 
             # Update known_experts
             known_experts[slug] = {
@@ -970,27 +1132,37 @@ def ingest_bettingpros_experts(
                 "first_seen": known_experts.get(slug, {}).get("first_seen") or today,
                 "last_active": today,
                 "last_scored_at": latest_scored_date or known_experts.get(slug, {}).get("last_scored_at"),
+                "earliest_scored_at": history_meta.get("earliest_game_date") or known_experts.get(slug, {}).get("earliest_scored_at"),
                 "backfilled": True,
                 "active_pick_count_last_seen": expert.get("active_pick_count", 0),
+                "periods_seen_last": expert.get("periods_seen", []),
+                "best_win_pct_last": expert.get("best_win_pct") or expert.get("win_pct"),
+                "best_n_picks_last": expert.get("best_n_picks") or expert.get("n_picks"),
+                "last_sports_seen": history_meta.get("sports_seen", {}),
             }
 
             dbg["users"].append({
                 "slug": slug,
                 "display_name": display,
                 "user_id": user_id,
+                "periods_seen": expert.get("periods_seen", []),
+                "active_pick_count": expert.get("active_pick_count", 0),
+                "n_picks": expert.get("n_picks"),
+                "win_pct": expert.get("win_pct"),
                 "upcoming_picks": len(upcoming),
+                "upcoming_meta": upcoming_meta,
+                "daily_nba_active": bool(upcoming_meta.get("nba_same_day_future")),
                 "history_picks": len(history_records),
                 "is_new": is_new,
                 "from_whitelist": expert.get("from_whitelist", False),
+                "history_meta": history_meta,
             })
 
             if debug:
                 print(f"  → upcoming={len(upcoming)} history={len(history_records)}")
 
             # Save incrementally after each expert so partial runs preserve progress
-            ensure_out_dir()
-            write_json(_upcoming_path, [asdict(r) for r in all_upcoming])
-            write_json(_history_path, [asdict(r) for r in all_history])
+            dbg["bucket_counts"] = _write_bucketed_records(all_upcoming + all_history + other_records)
             _save_known_experts(known_experts)
 
         context.close()
@@ -998,6 +1170,8 @@ def ingest_bettingpros_experts(
 
     dbg["total_upcoming"] = len(all_upcoming)
     dbg["total_history"] = len(all_history)
+    dbg["bucket_counts"] = _write_bucketed_records(all_upcoming + all_history + other_records)
+    dbg["daily_nba_active_experts"] = sum(1 for u in dbg.get("users", []) if u.get("daily_nba_active"))
     return all_upcoming, all_history, dbg
 
 
@@ -1043,6 +1217,7 @@ def main() -> None:
         return
 
     ensure_out_dir()
+    write_json(RUN_SUMMARY_FILE, dbg)
 
     # Raw files already written incrementally during the run
     raw_upcoming_path = os.path.join(OUT_DIR, "raw_bettingpros_experts_nba.json")
@@ -1062,6 +1237,7 @@ def main() -> None:
     write_json(norm_path, normalized)
     eligible = sum(1 for r in normalized if r.get("eligible_for_consensus"))
     print(f"[bettingpros_experts] Wrote normalized → {norm_path} ({eligible}/{len(normalized)} eligible, date={target_date})")
+    print(f"[bettingpros_experts] Wrote summary → {RUN_SUMMARY_FILE}")
 
 
 if __name__ == "__main__":

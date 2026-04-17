@@ -27,7 +27,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import logging
 
-from store import get_data_store, NBA_SPORT, NCAAB_SPORT
+from store import get_data_store, NBA_SPORT, NCAAB_SPORT, MLB_SPORT
 from src.signal_keys import build_selection_key, build_offer_key
 from src.player_aliases_nba import normalize_player_slug
 
@@ -36,12 +36,16 @@ from src.player_aliases_nba import normalize_player_slug
 def get_runs_dir(sport: str) -> Path:
     if sport == NCAAB_SPORT:
         return Path("data/runs_ncaab")
+    if sport == MLB_SPORT:
+        return Path("data/runs_mlb")
     return Path("data/runs")
 
 
 def get_ledger_dir(sport: str) -> Path:
     if sport == NCAAB_SPORT:
         return Path("data/ledger/ncaab")
+    if sport == MLB_SPORT:
+        return Path("data/ledger/mlb")
     return Path("data/ledger")
 
 
@@ -51,6 +55,10 @@ def get_occurrences_path(sport: str) -> Path:
 
 def get_latest_path(sport: str) -> Path:
     return get_ledger_dir(sport) / "signals_latest.jsonl"
+
+
+def get_checkpoint_path(sport: str) -> Path:
+    return get_ledger_dir(sport) / ".ledger_checkpoint.json"
 
 
 # Default paths for backward compatibility
@@ -63,6 +71,106 @@ logger = logging.getLogger("signal_ledger")
 
 def read_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text())
+
+
+def read_checkpoint(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {
+            "last_processed_run_dirs": [],
+            "last_built_at_utc": None,
+            "history_loaded": False,
+            "history_file_mtimes": {},
+        }
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        data = {}
+    return {
+        "last_processed_run_dirs": list(data.get("last_processed_run_dirs") or []),
+        "last_built_at_utc": data.get("last_built_at_utc"),
+        "history_loaded": bool(data.get("history_loaded")),
+        "history_file_mtimes": dict(data.get("history_file_mtimes") or {}),
+    }
+
+
+def _history_file_mtime(path: Path) -> Optional[float]:
+    """Return the mtime of a history file for checkpoint tracking."""
+    try:
+        return path.stat().st_mtime if path.exists() else None
+    except OSError:
+        return None
+
+
+def _history_input_changed(path: Path, recorded_mtimes: Dict[str, Any]) -> bool:
+    """True if a history file's mtime is newer than what the checkpoint recorded.
+
+    Fail-closed semantics: if the file exists but we have no recorded mtime, or
+    the file exists and its mtime is newer, treat as changed. A missing file
+    is NOT a change (nothing to reload). This prevents the sticky
+    `history_loaded=True` flag from silently skipping updates when a backfill
+    file is refreshed on disk.
+    """
+    current = _history_file_mtime(path)
+    if current is None:
+        return False
+    recorded = recorded_mtimes.get(str(path))
+    if recorded is None:
+        return True
+    try:
+        return float(current) > float(recorded)
+    except (TypeError, ValueError):
+        return True
+
+
+def evict_superseded_and_dedup_by_day(
+    occurrences: List[Dict[str, Any]],
+    latest_run_per_day: Dict[str, str],
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Per-day dedup + supersession eviction.
+
+    For each (signal_key, day) pair keep only the occurrence from the latest
+    run. Occurrences from superseded real-format runs (run_id contains 'Z-')
+    are evicted even when no replacement exists in the new occurrence list.
+    History backfill rows (run_id like "juicereel_history") are kept
+    unconditionally.
+
+    Args:
+        occurrences: merged list of occurrence dicts (existing + new).
+        latest_run_per_day: {YYYY-MM-DD -> latest run_id for that day}.
+
+    Returns:
+        (deduped_occurrences, evicted_stale_count)
+    """
+    day_dedup_map: Dict[str, Dict[str, Any]] = {}
+    evicted_stale = 0
+    for occ in occurrences:
+        sk = occ.get("signal_key") or ""
+        obs = occ.get("observed_at_utc") or ""
+        run_id = occ.get("run_id") or ""
+        day = obs[:10] if len(obs) >= 10 else (run_id[:10] if len(run_id) >= 10 else "")
+        if not sk or not day:
+            day_dedup_map[f"_no_key_{id(occ)}"] = occ
+            continue
+        latest_run_for_day = latest_run_per_day.get(day)
+        if latest_run_for_day and run_id and run_id < latest_run_for_day:
+            if "Z-" in run_id:
+                evicted_stale += 1
+                continue
+        dedup_key = f"{sk}|{day}"
+        existing = day_dedup_map.get(dedup_key)
+        if existing is None:
+            day_dedup_map[dedup_key] = occ
+        else:
+            existing_key = existing.get("run_id") or existing.get("observed_at_utc") or ""
+            occ_key = run_id or obs
+            if occ_key > existing_key:
+                day_dedup_map[dedup_key] = occ
+    return list(day_dedup_map.values()), evicted_stale
+
+
+def write_checkpoint(path: Path, checkpoint: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(checkpoint, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def read_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -127,6 +235,19 @@ def build_signal_key(signal: Dict[str, Any]) -> str:
     else:
         raw = f"{game_key}|{market_type}|{selection}|{direction}|{atomic_stat}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def list_valid_run_dirs(sport: str) -> List[Path]:
+    runs_dir = get_runs_dir(sport)
+    if not runs_dir.exists():
+        return []
+    valid: List[Path] = []
+    for run_dir in sorted(runs_dir.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        if (run_dir / "run_meta.json").exists() and (run_dir / "signals.jsonl").exists():
+            valid.append(run_dir)
+    return valid
 
 
 def is_valid_team_code(value: Optional[str], sport: str = NBA_SPORT) -> bool:
@@ -781,10 +902,11 @@ def collect_occurrences(
     include_bettingpros_experts_history: bool = False,
     bettingpros_experts_history_path: Path | None = None,
     sport: str = NBA_SPORT,
+    run_dirs_override: Optional[List[Path]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int], List[Dict[str, Any]]]:
     occurrences: List[Dict[str, Any]] = []
-    runs_dir = get_runs_dir(sport)
-    if not runs_dir.exists():
+    run_dirs = run_dirs_override if run_dirs_override is not None else list_valid_run_dirs(sport)
+    if not run_dirs:
         return occurrences, {}, []
 
     url_day_cache: Dict[str, str] = _prime_url_day_cache(sport)
@@ -801,14 +923,9 @@ def collect_occurrences(
     spreads_promoted_from_supports = 0
     spreads_multi_line = 0
 
-    for run_dir in sorted(runs_dir.iterdir()):
-        if not run_dir.is_dir():
-            continue
+    for run_dir in run_dirs:
         meta_path = run_dir / "run_meta.json"
         signals_path = run_dir / "signals.jsonl"
-        if not meta_path.exists() or not signals_path.exists():
-            continue
-
         meta = read_json(meta_path)
         run_id = meta.get("run_id") or run_dir.name
         observed_at = meta.get("observed_at_utc") or meta.get("observed_at")
@@ -1526,8 +1643,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build signal ledger")
     parser.add_argument("--debug", action="store_true", help="Enable debug assertions/logging.")
     parser.add_argument(
+        "--force-full-rebuild",
+        action="store_true",
+        help="Ignore checkpoint state and rebuild occurrences/latest from all run dirs and history inputs.",
+    )
+    parser.add_argument(
         "--sport",
-        choices=[NBA_SPORT, NCAAB_SPORT],
+        choices=[NBA_SPORT, NCAAB_SPORT, MLB_SPORT],
         default=NBA_SPORT,
         help=f"Sport to process (default: {NBA_SPORT})",
     )
@@ -1615,50 +1737,113 @@ def main() -> None:
         raise SystemExit("props-history-start and props-history-end are required when --include-betql-game-props-history is set")
     if args.include_oddstrader_history and (not args.oddstrader_history_start or not args.oddstrader_history_end):
         raise SystemExit("oddstrader-history-start and oddstrader-history-end are required when --include-oddstrader-history is set")
+    checkpoint_path = get_checkpoint_path(sport)
+    occurrences_path = get_occurrences_path(sport)
+    latest_path = get_latest_path(sport)
+    checkpoint = read_checkpoint(checkpoint_path)
+    valid_run_dirs = list_valid_run_dirs(sport)
+    processed_run_dirs = set() if args.force_full_rebuild else set(checkpoint.get("last_processed_run_dirs") or [])
+    run_dirs_to_process = valid_run_dirs if args.force_full_rebuild else [p for p in valid_run_dirs if p.name not in processed_run_dirs]
+    existing_occurrences: List[Dict[str, Any]] = []
+    if not args.force_full_rebuild and occurrences_path.exists():
+        existing_occurrences = read_jsonl(occurrences_path)
+
+    # Collect history input paths that the CLI will attempt to load, so we can
+    # detect on-disk changes and escalate to a full history reload. Only paths
+    # for flags the user explicitly set are considered; paths for flags not
+    # requested this run are irrelevant.
+    recorded_mtimes = checkpoint.get("history_file_mtimes") or {}
+    history_input_candidates: List[Path] = []
+    if args.include_action_history:
+        history_input_candidates.append(
+            Path(args.action_history_path) if args.action_history_path else Path(f"out/normalized_action_{sport.lower()}_backfill.jsonl")
+        )
+    if args.include_dimers_history:
+        history_input_candidates.append(
+            Path(args.dimers_history_path) if args.dimers_history_path else Path("data/latest/normalized_dimers_backfill.jsonl")
+        )
+    if args.include_juicereel_history:
+        _sport_suffix = "ncaab" if sport == NCAAB_SPORT else "nba"
+        history_input_candidates.append(
+            Path(args.juicereel_history_path) if args.juicereel_history_path else Path(f"out/normalized_juicereel_backfill_{_sport_suffix}.json")
+        )
+    if args.include_bettingpros_experts_history:
+        history_input_candidates.append(
+            Path(args.bettingpros_experts_history_path) if args.bettingpros_experts_history_path else Path("out/raw_bettingpros_experts_history_nba.json")
+        )
+    for _p in (args.include_normalized_jsonl or []):
+        history_input_candidates.append(Path(_p))
+    changed_history_inputs = [p for p in history_input_candidates if _history_input_changed(p, recorded_mtimes)]
+
+    base_history_should_load = args.force_full_rebuild or not checkpoint.get("history_loaded") or not occurrences_path.exists()
+    history_should_load = base_history_should_load or bool(changed_history_inputs)
+
+    if changed_history_inputs and not base_history_should_load:
+        print(
+            f"[ledger] History inputs changed on disk — reloading ({len(changed_history_inputs)} file(s)): "
+            f"{', '.join(str(p) for p in changed_history_inputs[:5])}"
+            f"{' ...' if len(changed_history_inputs) > 5 else ''}"
+        )
+    print(
+        f"[ledger] Mode={'full' if args.force_full_rebuild else 'incremental'} "
+        f"existing_occurrences={len(existing_occurrences)} new_run_dirs={len(run_dirs_to_process)} "
+        f"history_load={'yes' if history_should_load else 'no'}"
+    )
+    if run_dirs_to_process:
+        print(f"[ledger] Processing run dirs: {', '.join(p.name for p in run_dirs_to_process[:10])}"
+              f"{' ...' if len(run_dirs_to_process) > 10 else ''}")
+    else:
+        print("[ledger] Processing run dirs: none")
     occurrences, counters, bad_examples = collect_occurrences(
         debug=args.debug,
-        include_betql_history=args.include_betql_history,
+        include_betql_history=args.include_betql_history and history_should_load,
         history_root=Path(args.history_root) if args.history_root else None,
         history_start=args.history_start,
         history_end=args.history_end,
-        include_betql_game_props_history=args.include_betql_game_props_history,
+        include_betql_game_props_history=args.include_betql_game_props_history and history_should_load,
         props_history_root=Path(args.props_history_root) if args.props_history_root else None,
         props_history_start=args.props_history_start,
         props_history_end=args.props_history_end,
-        include_action_history=args.include_action_history,
+        include_action_history=args.include_action_history and history_should_load,
         action_history_path=Path(args.action_history_path) if args.action_history_path else None,
-        include_oddstrader_history=args.include_oddstrader_history,
+        include_oddstrader_history=args.include_oddstrader_history and history_should_load,
         oddstrader_history_root=Path(args.oddstrader_history_root) if args.oddstrader_history_root else None,
         oddstrader_history_start=args.oddstrader_history_start,
         oddstrader_history_end=args.oddstrader_history_end,
-        include_bettingpros_experts_history=args.include_bettingpros_experts_history,
+        include_bettingpros_experts_history=args.include_bettingpros_experts_history and history_should_load,
         bettingpros_experts_history_path=Path(args.bettingpros_experts_history_path) if args.bettingpros_experts_history_path else None,
         sport=sport,
+        run_dirs_override=run_dirs_to_process,
     )
+    if existing_occurrences:
+        occurrences = existing_occurrences + occurrences
 
     # Load any additional normalized JSONL files specified via --include-normalized-jsonl
-    for jsonl_path in args.include_normalized_jsonl:
-        path = Path(jsonl_path)
-        if not path.exists():
-            print(f"[WARN] Skipping non-existent file: {jsonl_path}")
-            continue
-        source_tag = path.stem  # Use filename as source tag
-        print(f"Loading normalized history from: {jsonl_path}")
-        loaded = 0
-        for row in read_jsonl(path):
-            try:
-                occ = _history_row_to_occurrence(row, source_tag=source_tag, sport=sport)
-                if occ is not None:
-                    occurrences.append(occ)
-                    loaded += 1
-            except Exception as e:
-                if args.debug:
-                    print(f"[WARN] Failed to convert row: {e}")
+    if history_should_load:
+        for jsonl_path in args.include_normalized_jsonl:
+            path = Path(jsonl_path)
+            if not path.exists():
+                print(f"[WARN] Skipping non-existent file: {jsonl_path}")
                 continue
-        print(f"  Loaded {loaded} records from {jsonl_path}")
+            source_tag = path.stem  # Use filename as source tag
+            print(f"Loading normalized history from: {jsonl_path}")
+            loaded = 0
+            for row in read_jsonl(path):
+                try:
+                    occ = _history_row_to_occurrence(row, source_tag=source_tag, sport=sport)
+                    if occ is not None:
+                        occurrences.append(occ)
+                        loaded += 1
+                except Exception as e:
+                    if args.debug:
+                        print(f"[WARN] Failed to convert row: {e}")
+                    continue
+            print(f"  Loaded {loaded} records from {jsonl_path}")
+    elif args.include_normalized_jsonl:
+        print("[ledger] Skipping normalized history inputs (already loaded; use --force-full-rebuild to replay)")
 
     # Load Action normalized backfill if requested
-    if args.include_action_history:
+    if args.include_action_history and history_should_load:
         default_action_path = f"out/normalized_action_{sport.lower()}_backfill.jsonl"
         path = Path(args.action_history_path) if args.action_history_path else Path(default_action_path)
         if not path.exists():
@@ -1677,8 +1862,11 @@ def main() -> None:
                     continue
             print(f"Loaded {loaded} records from Action history: {path}")
 
+    elif args.include_action_history:
+        print("[ledger] Skipping Action history (already loaded; use --force-full-rebuild to replay)")
+
     # Load Dimers normalized backfill if requested
-    if args.include_dimers_history:
+    if args.include_dimers_history and history_should_load:
         default_dimers_path = "data/latest/normalized_dimers_backfill.jsonl"
         path = Path(args.dimers_history_path) if args.dimers_history_path else Path(default_dimers_path)
         if not path.exists():
@@ -1697,8 +1885,11 @@ def main() -> None:
                     continue
             print(f"Loaded {loaded} records from Dimers history: {path}")
 
+    elif args.include_dimers_history:
+        print("[ledger] Skipping Dimers history (already loaded; use --force-full-rebuild to replay)")
+
     # Load JuiceReel normalized backfill if requested
-    if args.include_juicereel_history:
+    if args.include_juicereel_history and history_should_load:
         sport_suffix = "ncaab" if sport == NCAAB_SPORT else "nba"
         default_jr_path = f"out/normalized_juicereel_backfill_{sport_suffix}.json"
         path = Path(args.juicereel_history_path) if args.juicereel_history_path else Path(default_jr_path)
@@ -1720,7 +1911,10 @@ def main() -> None:
                     continue
             print(f"Loaded {loaded} records from JuiceReel history: {path}")
 
-    if args.include_bettingpros_experts_history:
+    elif args.include_juicereel_history:
+        print("[ledger] Skipping JuiceReel history (already loaded; use --force-full-rebuild to replay)")
+
+    if args.include_bettingpros_experts_history and history_should_load:
         default_bpe_path = "out/raw_bettingpros_experts_history_nba.json"
         path = Path(args.bettingpros_experts_history_path) if args.bettingpros_experts_history_path else Path(default_bpe_path)
         if not path.exists():
@@ -1742,6 +1936,9 @@ def main() -> None:
                         print(f"[WARN] Failed to convert BettingPros experts row: {e}")
                     continue
             print(f"Loaded {loaded} records from BettingPros experts history: {path}")
+
+    elif args.include_bettingpros_experts_history:
+        print("[ledger] Skipping BettingPros experts history (already loaded; use --force-full-rebuild to replay)")
 
     before = len(occurrences)
     deduped_map = {}
@@ -1815,42 +2012,9 @@ def main() -> None:
                 latest_run_per_day[_day] = _run_id
 
     before_day_dedup = len(occurrences)
-    day_dedup_map: Dict[str, Dict[str, Any]] = {}   # (signal_key, date) -> best occ
-    evicted_stale = 0
-    for occ in occurrences:
-        sk = occ.get("signal_key") or ""
-        obs = occ.get("observed_at_utc") or ""
-        run_id = occ.get("run_id") or ""
-        # Extract date from observed_at_utc (ISO) or run_id (YYYY-MM-DD prefix)
-        day = obs[:10] if len(obs) >= 10 else (run_id[:10] if len(run_id) >= 10 else "")
-        if not sk or not day:
-            # Can't dedup — keep it
-            day_dedup_map[f"_no_key_{id(occ)}"] = occ
-            continue
-        # Evict occurrences from superseded runs: if we have a newer run for this day,
-        # skip occurrences from older runs entirely. History backfill records have run_id
-        # set to a source tag (e.g. "juicereel_history") — keep those unconditionally.
-        latest_run_for_day = latest_run_per_day.get(day)
-        if latest_run_for_day and run_id and run_id < latest_run_for_day:
-            # Only evict if run_id looks like a real run (has 'Z-' timestamp format)
-            if "Z-" in run_id:
-                evicted_stale += 1
-                continue
-        dedup_key = f"{sk}|{day}"
-        existing = day_dedup_map.get(dedup_key)
-        if existing is None:
-            day_dedup_map[dedup_key] = occ
-        else:
-            # Prefer the occurrence from the latest run_id (consensus run timestamp).
-            # run_id is "YYYY-MM-DDTHH-MM-SSZ-hash" so lexicographic sort is chronological.
-            # Fall back to observed_at_utc if run_id is missing.
-            existing_key = existing.get("run_id") or existing.get("observed_at_utc") or ""
-            occ_key = run_id or obs
-            if occ_key > existing_key:
-                day_dedup_map[dedup_key] = occ
+    occurrences, evicted_stale = evict_superseded_and_dedup_by_day(occurrences, latest_run_per_day)
     if evicted_stale:
         print(f"[ledger] Evicted {evicted_stale} occurrences from superseded runs")
-    occurrences = list(day_dedup_map.values())
     after_day_dedup = len(occurrences)
     day_removed = before_day_dedup - after_day_dedup
     print(f"Deduped occurrences (per-day by signal_key): before={before_day_dedup} after={after_day_dedup} removed={day_removed}")
@@ -1882,15 +2046,29 @@ def main() -> None:
     if spread_promoted_sources:
         print(f"[ledger] spread_line promoted source tags (top 10): {spread_promoted_sources.most_common(10)}")
 
-    # Use sport-specific output paths
-    occurrences_path = get_occurrences_path(sport)
-    latest_path = get_latest_path(sport)
-
     write_jsonl(occurrences_path, occurrences)
     latest_rows = pick_latest(occurrences)
     write_jsonl(latest_path, latest_rows)
     print(f"Wrote {len(occurrences)} occurrences to {occurrences_path}")
     print(f"Wrote {len(latest_rows)} latest rows to {latest_path}")
+    updated_run_dirs = sorted({p.name for p in valid_run_dirs} if args.force_full_rebuild else (processed_run_dirs | {p.name for p in run_dirs_to_process}))
+    # If we loaded history this run, snapshot each attempted input's current
+    # mtime. On the next run, any input whose mtime exceeds this recorded value
+    # will trigger a history reload (fail-closed).
+    updated_history_mtimes = dict(recorded_mtimes)
+    if history_should_load:
+        for _p in history_input_candidates:
+            _m = _history_file_mtime(_p)
+            if _m is not None:
+                updated_history_mtimes[str(_p)] = _m
+    checkpoint = {
+        "last_processed_run_dirs": updated_run_dirs,
+        "last_built_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "history_loaded": history_should_load or bool(checkpoint.get("history_loaded")),
+        "history_file_mtimes": updated_history_mtimes,
+    }
+    write_checkpoint(checkpoint_path, checkpoint)
+    print(f"Wrote checkpoint to {checkpoint_path}")
     if counters:
         print(f"[DEBUG] prop_prefix_fixes={counters.get('prop_prefix_fixes',0)} prop_prefix_bad={counters.get('prop_prefix_bad',0)}")
     if counters.get("prop_prefix_bad", 0) > 0 and args.debug:

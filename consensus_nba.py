@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from mappings import atomic_stats as mapping_atomic_stats, normalize_stat_key
 from src.player_aliases_nba import normalize_player_key, generate_dynamic_alias_map, alias_cache_info, normalize_player_slug
-from store import append_jsonl, copy_file, ensure_dir, sha256_json, write_json, NBA_SPORT, NCAAB_SPORT
+from store import append_jsonl, copy_file, ensure_dir, sha256_json, write_json, NBA_SPORT, NCAAB_SPORT, MLB_SPORT
 
 # Sport-specific input file patterns
 INPUT_FILES_BY_SPORT = {
@@ -34,6 +34,7 @@ INPUT_FILES_BY_SPORT = {
         "normalized_vegasinsider_nba.json",
         "normalized_juicereel_nba.json",
         "normalized_bettingpros_nba.json",
+        "normalized_bettingpros_prop_bets_nba.json",
         "normalized_bettingpros_experts_nba.json",
         # NOTE: normalized_juicereel_backfill_nba.json and normalized_bettingpros_backfill_nba.json
         # are intentionally excluded here. Backfill records span many past game dates and would
@@ -54,6 +55,15 @@ INPUT_FILES_BY_SPORT = {
         "normalized_oddstrader_prop_ncaab.json",
         "normalized_juicereel_ncaab.json",
         "normalized_vegasinsider_ncaab.json",
+    ],
+    MLB_SPORT: [
+        "normalized_action_mlb.json",
+        "normalized_covers_mlb.json",
+        "normalized_sportsline_mlb.json",
+        "normalized_dimers_mlb.json",
+        "normalized_oddstrader_mlb.json",
+        "normalized_bettingpros_prop_bets_mlb.json",
+        "normalized_vegasinsider_mlb.json",
     ],
 }
 
@@ -84,6 +94,15 @@ RAW_FILES_BY_SPORT = {
         "raw_oddstrader_ncaab.json",
         "raw_oddstrader_prop_ncaab.json",
         "raw_vegasinsider_ncaab.json",
+    ],
+    MLB_SPORT: [
+        "raw_action_mlb.json",
+        "raw_covers_mlb.json",
+        "raw_sportsline_mlb.json",
+        "raw_dimers_mlb.json",
+        "raw_oddstrader_mlb.json",
+        "raw_bettingpros_prop_bets_mlb.json",
+        "raw_vegasinsider_mlb.json",
     ],
 }
 
@@ -148,7 +167,7 @@ def day_key(event_key: str | None) -> str | None:
     if len(parts) < 2:
         return None
     # Extract sport prefix (NBA or NCAAB)
-    sport_prefix = parts[0] if parts[0] in (NBA_SPORT, NCAAB_SPORT) else NBA_SPORT
+    sport_prefix = parts[0] if parts[0] in (NBA_SPORT, NCAAB_SPORT, MLB_SPORT) else NBA_SPORT
     date_part = parts[1]
     # Format 1: YYYYMMDD (e.g., "20260212") - reformat as YYYY:MM:DD
     if len(date_part) == 8 and date_part.isdigit():
@@ -226,23 +245,48 @@ def _normalize_prop_direction(side: Optional[str], selection: Optional[str]) -> 
     return None
 
 
-def _canonical_prop_selection(player_key: Optional[str], stat_key: Optional[str], direction: Optional[str]) -> Optional[str]:
+def _strip_sport_prefix(value: Optional[str]) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return value
+    txt = value.strip()
+    for prefix in (f"{NBA_SPORT}:", f"{NCAAB_SPORT}:", f"{MLB_SPORT}:"):
+        if txt.startswith(prefix):
+            return txt.split(":", 1)[1]
+    return txt
+
+
+def _infer_prop_sport(
+    player_key: Optional[str] = None,
+    event_key: Optional[str] = None,
+    day_key_val: Optional[str] = None,
+    default: str = NBA_SPORT,
+) -> str:
+    for val in (player_key, event_key, day_key_val):
+        if not val or not isinstance(val, str):
+            continue
+        prefix = val.split(":", 1)[0]
+        if prefix in {NBA_SPORT, NCAAB_SPORT, MLB_SPORT}:
+            return prefix
+    return default
+
+
+def _canonical_prop_selection(
+    player_key: Optional[str],
+    stat_key: Optional[str],
+    direction: Optional[str],
+    sport: str = NBA_SPORT,
+) -> Optional[str]:
     if not (player_key and stat_key and direction):
         return None
-    pk_raw = str(player_key).strip()
+    pk_raw = _strip_sport_prefix(str(player_key).strip())
     if not pk_raw:
         return None
-    pk = pk_raw
-    if pk_raw.lower().startswith("nba:"):
-        pk = pk_raw.split(":", 1)[1]
-    if not pk:
-        return None
-    return f"NBA:{pk}::{stat_key}::{direction}"
+    return f"{sport}:{pk_raw}::{stat_key}::{direction}"
 
 
 def canonicalize_prop_row(row: Dict[str, Any], counters: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
     """
-    Mutates and returns row. Ensures NBA: prefix for player_prop selection and related fields,
+    Mutates and returns row. Ensures sport prefix for player_prop selection and related fields,
     including nested supports.
     """
     if not isinstance(row, dict):
@@ -250,13 +294,23 @@ def canonicalize_prop_row(row: Dict[str, Any], counters: Optional[Dict[str, int]
     if row.get("market_type") != "player_prop":
         return row
 
+    event = row.get("event") or {}
+    market = row.get("market") or {}
+    sport_prefix = _infer_prop_sport(
+        player_key=market.get("player_key"),
+        event_key=event.get("event_key"),
+        day_key_val=event.get("day_key"),
+        default=CURRENT_SPORT,
+    )
+
     def _prefix_slug(val: Optional[str]) -> Optional[str]:
         if not val or not isinstance(val, str):
             return val
         txt = val.strip()
-        if txt.lower().startswith("nba:"):
-            return f"NBA:{txt.split(':', 1)[1]}"
-        return f"NBA:{txt}"
+        head = txt.split(":", 1)[0].upper()
+        if head in {NBA_SPORT, NCAAB_SPORT, MLB_SPORT}:
+            return f"{sport_prefix}:{txt.split(':', 1)[1]}"
+        return f"{sport_prefix}:{txt}"
 
     def _bump(key: str) -> None:
         if counters is None:
@@ -267,14 +321,15 @@ def canonicalize_prop_row(row: Dict[str, Any], counters: Optional[Dict[str, int]
         val = row.get(field)
         if not val or not isinstance(val, str):
             return
-        if val.startswith("NBA:"):
+        if val.split(":", 1)[0] == sport_prefix:
             return
         if "::" not in val:
             return
         player_part, remainder = val.split("::", 1)
         if not player_part:
             return
-        row[field] = f"NBA:{player_part}::{remainder}"
+        player_part = _strip_sport_prefix(player_part) or player_part
+        row[field] = f"{sport_prefix}:{player_part}::{remainder}"
         _bump("fixed_missing_nba_prefix_selection")
 
     for key in ("selection", "selection_example", "canonical_selection"):
@@ -282,7 +337,7 @@ def canonicalize_prop_row(row: Dict[str, Any], counters: Optional[Dict[str, int]
 
     if row.get("player_id"):
         pid = row.get("player_id")
-        if isinstance(pid, str) and not pid.lower().startswith("nba:"):
+        if isinstance(pid, str) and pid.split(":", 1)[0].upper() != sport_prefix:
             row["player_id"] = _prefix_slug(pid)
             _bump("fixed_missing_nba_prefix_player_id")
 
@@ -292,13 +347,14 @@ def canonicalize_prop_row(row: Dict[str, Any], counters: Optional[Dict[str, int]
             if not isinstance(sup, dict):
                 continue
             sval = sup.get("selection")
-            if isinstance(sval, str) and not sval.startswith("NBA:") and "::" in sval:
+            if isinstance(sval, str) and sval.split(":", 1)[0] != sport_prefix and "::" in sval:
                 player_part, remainder = sval.split("::", 1)
                 if player_part:
-                    sup["selection"] = f"NBA:{player_part}::{remainder}"
+                    player_part = _strip_sport_prefix(player_part) or player_part
+                    sup["selection"] = f"{sport_prefix}:{player_part}::{remainder}"
                     _bump("fixed_missing_nba_prefix_support_selection")
             dpid = sup.get("display_player_id")
-            if isinstance(dpid, str) and not dpid.lower().startswith("nba:") and dpid.strip():
+            if isinstance(dpid, str) and dpid.strip() and dpid.split(":", 1)[0].upper() != sport_prefix:
                 sup["display_player_id"] = _prefix_slug(dpid.strip())
                 _bump("fixed_missing_nba_prefix_display_player_id")
     return row
@@ -370,7 +426,9 @@ def normalize_player_id(player_id: Optional[str]) -> Optional[str]:
     if not player_id or not isinstance(player_id, str):
         return None
     pid = player_id.lower()
-    if pid.startswith("nba:"):
+    # Strip any sport prefix (nba:, ncaab:, mlb:) — stat normalization is
+    # sport-agnostic below.
+    if ":" in pid and pid.split(":", 1)[0].upper() in {NBA_SPORT, NCAAB_SPORT, MLB_SPORT}:
         pid = pid.split(":", 1)[1]
     # strip punctuation/dots/apostrophes for looser matches (e.g., J.Brunson -> j brunson)
     pid = re.sub(r"[\\.']", " ", pid)
@@ -939,6 +997,7 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
         day = meta.get("day_key") or event.get("day_key") or day_key(event.get("event_key"))
         matchup_key = meta.get("matchup_key") or (event.get("matchup_key") if event.get("away_team") and event.get("home_team") else None) or (_normalize_matchup_key(event) if event.get("away_team") and event.get("home_team") else None)
         event_key = meta.get("event_key") or event.get("event_key")
+        prop_sport = _infer_prop_sport(event_key=event_key, day_key_val=day, default=CURRENT_SPORT)
         prop_groups.setdefault(match_key, []).append(
             {
                 "line": lines_val,
@@ -955,7 +1014,12 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
                 "day_key": day,
                 "matchup_key": matchup_key,
                 "event_key": event_key,
-                "selection": _canonical_prop_selection(f"NBA:{player_id}" if player_id and not str(player_id).startswith("NBA:") else player_id, stat_key, direction),
+                "selection": _canonical_prop_selection(
+                    f"{prop_sport}:{player_id}" if player_id else None,
+                    stat_key,
+                    direction,
+                    sport=prop_sport,
+                ),
                 "rating_stars": prov.get("rating_stars"),
                 "source_surface": prov.get("source_surface"),
                 "expert_name": prov.get("expert_name"),
@@ -1160,8 +1224,13 @@ def group_hard(records: List[Dict[str, Any]], debug: bool = False) -> List[Dict[
     return results
 
 
-ALLOWED_ATOMIC = {"points", "rebounds", "assists", "threes_made", "threes",
-                  "pts_reb", "pts_ast", "reb_ast", "pts_reb_ast"}
+ALLOWED_ATOMIC = {
+    "points", "rebounds", "assists", "threes_made", "threes",
+    "pts_reb", "pts_ast", "reb_ast", "pts_reb_ast",
+    "home_runs", "hits", "runs", "rbi", "runs_hits_rbis",
+    "singles", "doubles", "triples", "total_bases", "strikeouts",
+    "earned_runs_allowed", "hits_allowed", "walks_allowed", "outs_recorded",
+}
 
 COMBO_TO_ATOMIC = {
     "pts_reb": ("points", "rebounds"),
@@ -1179,8 +1248,8 @@ def parse_selection_from_record(rec: Dict[str, Any]) -> Optional[Tuple[str, str,
     stat_key = market.get("stat_key")
     direction = None
 
-    if player_id and isinstance(player_id, str) and player_id.startswith("NBA:"):
-        player_id = player_id.split(":", 1)[1]
+    if player_id and isinstance(player_id, str):
+        player_id = _strip_sport_prefix(player_id)
 
     if selection and "::" in selection:
         parts = selection.split("::")
@@ -2044,10 +2113,17 @@ def build_solo_signals(
             if atomic_stat:
                 atomic_stat = _normalize_prop_stat_key(atomic_stat)
             direction = _normalize_prop_direction(market.get("side"), market.get("selection"))
+            prop_sport = _infer_prop_sport(
+                player_key=market.get("player_key"),
+                event_key=event.get("event_key"),
+                day_key_val=dk,
+                default=CURRENT_SPORT,
+            )
             selection = _canonical_prop_selection(
-                f"NBA:{player_id}" if player_id else None,
+                f"{prop_sport}:{player_id}" if player_id else None,
                 atomic_stat,
-                direction
+                direction,
+                sport=prop_sport,
             ) or market.get("selection")
         else:
             player_id = None
@@ -2906,8 +2982,19 @@ def main(
                     player_key = sel.split("::")[0]
             if player_key:
                 pk_norm = normalize_player_id(player_key)
-                player_key = normalize_player_key(player_key, out_dir=out_dir) or (f"NBA:{pk_norm}" if pk_norm else f"NBA:{player_key}")
-            canonical_sel = _canonical_prop_selection(player_key, stat_norm, direction_norm)
+                prop_sport = _infer_prop_sport(
+                    player_key=player_key,
+                    event_key=(rec.get("event") or {}).get("event_key"),
+                    day_key_val=(rec.get("event") or {}).get("day_key"),
+                    default=CURRENT_SPORT,
+                )
+                if prop_sport == NBA_SPORT:
+                    player_key = normalize_player_key(player_key, out_dir=out_dir) or (f"{prop_sport}:{pk_norm}" if pk_norm else f"{prop_sport}:{_strip_sport_prefix(player_key)}")
+                else:
+                    player_key = f"{prop_sport}:{pk_norm}" if pk_norm else f"{prop_sport}:{_strip_sport_prefix(player_key)}"
+            else:
+                prop_sport = CURRENT_SPORT
+            canonical_sel = _canonical_prop_selection(player_key, stat_norm, direction_norm, sport=prop_sport)
             if canonical_sel:
                 market["selection"] = canonical_sel
             if direction_norm:
@@ -3010,13 +3097,22 @@ def main(
         sel = mk.get("selection")
         stat_norm = _normalize_prop_stat_key(mk.get("stat_key"))
         dir_norm = _normalize_prop_direction(mk.get("side"), sel) or (sel.split("::")[-1].upper() if sel and "::" in sel else None)
-        player_norm = normalize_player_slug(mk.get("player_key") or (sel.split("::")[0] if sel else None))
-        sel_norm = _canonical_prop_selection(f"NBA:{player_norm}" if player_norm else None, stat_norm, dir_norm) or sel
+        prop_sport = _infer_prop_sport(
+            player_key=mk.get("player_key") or (sel.split("::")[0] if sel else None),
+            event_key=ev.get("event_key"),
+            day_key_val=dk,
+            default=CURRENT_SPORT,
+        )
+        if prop_sport == NBA_SPORT:
+            player_norm = normalize_player_slug(mk.get("player_key") or (sel.split("::")[0] if sel else None))
+        else:
+            player_norm = normalize_player_id(mk.get("player_key") or (sel.split("::")[0] if sel else None))
+        sel_norm = _canonical_prop_selection(f"{prop_sport}:{player_norm}" if player_norm else None, stat_norm, dir_norm, sport=prop_sport) or sel
         prop_keys_by_source.setdefault(src, set()).add((dk, player_norm, stat_norm, dir_norm))
         player_val = mk.get("player_key")
         if player_val:
             slug = str(player_val)
-            if slug.lower().startswith("nba:"):
+            if ":" in slug and slug.split(":", 1)[0].upper() in {NBA_SPORT, NCAAB_SPORT, MLB_SPORT}:
                 slug = slug.split(":", 1)[1]
             slug = re.sub(r"\s+", "_", slug)
             player_key_counts.setdefault(src, Counter())[slug] += 1
@@ -3445,10 +3541,11 @@ def main(
             for r in unified_signals
             if r.get("market_type") == "player_prop"
             and isinstance(r.get("selection"), str)
-            and not r["selection"].startswith("NBA:")
+            and "::" in r["selection"]
+            and ":" not in r["selection"].split("::", 1)[0]
         ]
         if bad_rows:
-            print("[DEBUG] missing NBA prefix after canonicalization (first 10):")
+            print("[DEBUG] missing sport prefix after canonicalization (first 10):")
             for br in bad_rows[:10]:
                 sup_sels = [
                     s.get("selection")
@@ -3456,7 +3553,7 @@ def main(
                     if isinstance(s, dict)
                 ]
                 print(f"  sel={br.get('selection')} player_id={br.get('player_id')} supports={sup_sels}")
-            print(f"[WARNING] {len(bad_rows)} player_prop selections missing NBA prefix — these will be filtered downstream")
+            print(f"[WARNING] {len(bad_rows)} player_prop selections missing sport prefix — these may be filtered downstream")
         if track:
             print(f"[DEBUG] prop_prefix_fixes: {prop_prefix_counters}")
 
@@ -3478,7 +3575,12 @@ def main(
     # Tracking writes
     if track:
         rid = run_id or default_run_id()
-        runs_subdir = "runs_ncaab" if sport == NCAAB_SPORT else "runs"
+        if sport == NCAAB_SPORT:
+            runs_subdir = "runs_ncaab"
+        elif sport == MLB_SPORT:
+            runs_subdir = "runs_mlb"
+        else:
+            runs_subdir = "runs"
         run_dir = os.path.join(data_dir, runs_subdir, rid)
         ensure_dir(run_dir)
 
@@ -3595,7 +3697,8 @@ def _format_consensus_selection(sig: Dict[str, Any]) -> str:
     line_val = sig.get("line") or sig.get("line_median")
     if mkt == "player_prop":
         sel_raw = sig.get("selection") or sig.get("canonical_selection") or "?"
-        parts = sel_raw.replace("NBA:", "").split("::")
+        sel_raw = _strip_sport_prefix(sel_raw) or "?"
+        parts = sel_raw.split("::")
         player = parts[0] if parts else "?"
         stat = parts[1] if len(parts) > 1 else "?"
         d = parts[2][0] if len(parts) > 2 else "?"
@@ -3874,7 +3977,7 @@ if __name__ == "__main__":
     parser.add_argument("--out-dir", type=str, default="out", help="Directory for snapshot outputs (default: out).")
     parser.add_argument(
         "--sport",
-        choices=["NBA", "NCAAB"],
+        choices=["NBA", "NCAAB", "MLB"],
         default="NBA",
         help="Sport to compute consensus for (default: NBA)",
     )

@@ -1386,7 +1386,7 @@ def pick_latest_by_signal(grades: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Grade signals (NBA or NCAAB).")
-    ap.add_argument("--sport", choices=["NBA", "NCAAB"], default="NBA", help="Sport to grade (default: NBA)")
+    ap.add_argument("--sport", choices=["NBA", "NCAAB", "nba", "ncaab"], default="NBA", help="Sport to grade (default: NBA)")
     ap.add_argument("--since", type=str, help="Only grade signals with day_key >= YYYY-MM-DD")
     ap.add_argument("--mode", choices=["pending", "grade"], default="grade", help="pending=just enqueue PENDING rows; grade=compute outcomes")
     ap.add_argument("--dry-run", action="store_true", help="Do not write any output files.")
@@ -1404,10 +1404,16 @@ def main() -> None:
         action="store_true",
         help="Bypass already_graded checks and re-grade all signals (useful for fixing grades after provider updates).",
     )
+    ap.add_argument(
+        "--signal-ids",
+        type=str,
+        default=None,
+        help="Comma-separated signal_ids to grade, or a file path / @file with one id per line. Other latest grades are preserved.",
+    )
     args = ap.parse_args()
 
     # Determine sport and load appropriate provider
-    sport = args.sport
+    sport = args.sport.upper()
     if sport == NCAAB_SPORT:
         from src.results import ncaab_provider_espn  # type: ignore
         results_provider = ncaab_provider_espn
@@ -1437,7 +1443,30 @@ def main() -> None:
     # Use explicit signals path or sport-specific default
     signals_path = Path(args.signals) if args.signals else signals_latest_path
     print(f"[grader] Reading {sport} signals from: {signals_path}")
-    signals = read_jsonl(signals_path)
+    all_signals = read_jsonl(signals_path)
+    target_signal_ids: Optional[Set[str]] = None
+    if args.signal_ids:
+        raw_signal_ids = args.signal_ids
+        signal_ids_path = None
+        if raw_signal_ids.startswith("@"):
+            signal_ids_path = Path(raw_signal_ids[1:])
+        else:
+            candidate_path = Path(raw_signal_ids)
+            if candidate_path.exists():
+                signal_ids_path = candidate_path
+        if signal_ids_path is not None:
+            target_signal_ids = {
+                sid.strip()
+                for line in signal_ids_path.read_text().splitlines()
+                for sid in line.split(",")
+                if sid.strip()
+            }
+        else:
+            target_signal_ids = {sid.strip() for sid in raw_signal_ids.split(",") if sid.strip()}
+        print(f"[grader] Restricting to {len(target_signal_ids):,} signal_ids")
+        signals = [row for row in all_signals if row.get("signal_id") in target_signal_ids]
+    else:
+        signals = all_signals
 
     # Build market_line lookup from plays files (score_signals writes market_line there;
     # grader needs it to grade spreads with correct sign)
@@ -1458,7 +1487,7 @@ def main() -> None:
                 pass
     if _market_line_by_sid:
         # Inject market_line into signals so pick_line() can use it
-        for _s in signals:
+        for _s in all_signals:
             _sid = _s.get("signal_id")
             if _sid and _sid in _market_line_by_sid and _s.get("market_type") == "spread":
                 _s["market_line"] = _market_line_by_sid[_sid]
@@ -1478,9 +1507,11 @@ def main() -> None:
         if s.get("matchup"):
             score += 1
         return score
-    for s in signals:
+    for s in all_signals:
         sid = s.get("signal_id")
         if not sid:
+            continue
+        if target_signal_ids and sid not in target_signal_ids:
             continue
         sc = score_sig(s)
         prev = best_by_signal_id.get(sid)
@@ -1700,7 +1731,7 @@ def main() -> None:
                     )
 
     # Prune orphaned grades (signal_ids no longer in the current ledger)
-    current_signal_ids = {s.get("signal_id") for s in signals if s.get("signal_id")}
+    current_signal_ids = {s.get("signal_id") for s in all_signals if s.get("signal_id")}
     pruned = {sid: g for sid, g in latest_by_signal.items() if sid in current_signal_ids}
     orphan_count = len(latest_by_signal) - len(pruned)
     if orphan_count:

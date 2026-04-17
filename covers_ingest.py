@@ -35,7 +35,7 @@ from action_ingest import (
     sha256_digest,
 )
 from event_resolution import SCHEDULE, ScheduledGame, build_event_key, build_canonical_event_key, resolve_event
-from store import NBA_SPORT, NCAAB_SPORT, data_store, get_data_store
+from store import NBA_SPORT, NCAAB_SPORT, MLB_SPORT, data_store, get_data_store
 from utils import normalize_text
 
 OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
@@ -44,16 +44,19 @@ OUT_DIR = os.getenv("NBA_OUT_DIR", "out")
 COVERS_LISTING_URLS = {
     NBA_SPORT: "https://www.covers.com/picks/nba",
     NCAAB_SPORT: "https://www.covers.com/picks/ncaab",
+    MLB_SPORT: "https://www.covers.com/picks/mlb",
 }
 
 COVERS_MATCHUP_PATTERNS = {
     NBA_SPORT: re.compile(r"/sport/basketball/nba/matchup/(\d+)/picks", re.IGNORECASE),
     NCAAB_SPORT: re.compile(r"/sport/basketball/ncaab/matchup/(\d+)/picks", re.IGNORECASE),
+    MLB_SPORT: re.compile(r"/sport/baseball/mlb/matchup/(\d+)/picks", re.IGNORECASE),
 }
 
 COVERS_MATCHUP_URL_TEMPLATES = {
     NBA_SPORT: "https://www.covers.com/sport/basketball/nba/matchup/{matchup_id}/picks",
     NCAAB_SPORT: "https://www.covers.com/sport/basketball/ncaab/matchup/{matchup_id}/picks",
+    MLB_SPORT: "https://www.covers.com/sport/baseball/mlb/matchup/{matchup_id}/picks",
 }
 
 SESSION = requests.Session()
@@ -100,6 +103,18 @@ EXPERT_NAME_CLASSES = [
 ]
 EXCLUDE_TOKENS = {"computer pick", "consensus", "model rating", "best odds"}
 PICK_LABEL_PATTERNS = [re.compile(r"pick made", re.IGNORECASE)]
+
+
+def extract_rating_stars(text: str) -> Optional[int]:
+    if not text:
+        return None
+    match = re.search(r"rating:\s*([1-5])\s*out\s+of\s+5", text, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"\b([1-5])\s*[- ]?star\b", text, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
 
 
 def discover_matchup_pick_urls(listing_url: str = None, sport: str = NBA_SPORT) -> list[str]:
@@ -385,6 +400,7 @@ def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: date
             mark_excluded("empty_card")
             continue
         expert_name = extract_expert_from_card(card)
+        rating_stars = extract_rating_stars(text_all)
         pick_texts = extract_pick_texts(card)
         if not pick_texts:
             mark_excluded("no_pick_text")
@@ -410,6 +426,7 @@ def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: date
                 raw_block=text_all,
                 raw_fingerprint=sha256_digest(f"covers|{source_surface}|{canonical_url}|{normalized_pick}"),
                 expert_name=expert_name,
+                rating_stars=rating_stars,
             )
             records.append(record)
             if len(candidate_samples) < 10:
@@ -422,6 +439,7 @@ def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: date
             start = max(0, m.start() - 2000)
             end = min(len(html), m.end() + 2000)
             window = BeautifulSoup(html[start:end], "html.parser").get_text(" ", strip=True)
+            rating_stars = extract_rating_stars(window)
             for token in window.split("."):
                 validated = validate_pick(token)
                 if not validated:
@@ -443,6 +461,7 @@ def extract_picks_from_html(html: str, canonical_url: str, observed_at_utc: date
                     raw_block=token.strip(),
                     raw_fingerprint=sha256_digest(f"covers|{source_surface}|{canonical_url}|{normalized_pick}"),
                     expert_name=None,
+                    rating_stars=rating_stars,
                 )
                 records.append(record)
 
@@ -480,8 +499,8 @@ def normalize_covers_pick(raw_pick: RawPickRecord, home_team: str, away_team: st
     else:
         # Coverage pages may lack schedule alignment; fallback keeps consensus intact.
         event = {
-            "event_key": build_event_key(event_time, away_team=away_team, home_team=home_team),
-            "canonical_event_key": build_canonical_event_key(event_time, away_team=away_team, home_team=home_team),
+            "event_key": build_event_key(event_time, away_team=away_team, home_team=home_team, sport=sport),
+            "canonical_event_key": build_canonical_event_key(event_time, away_team=away_team, home_team=home_team, sport=sport),
             "event_start_time_utc": event_time if isinstance(event_time, str) else event_time.isoformat(),
             "home_team": home_team,
             "away_team": away_team,
@@ -527,6 +546,7 @@ def normalize_covers_pick(raw_pick: RawPickRecord, home_team: str, away_team: st
             "expert_handle": getattr(raw_pick, "expert_handle", None),
             "expert_profile": getattr(raw_pick, "expert_profile", None),
             "expert_slug": getattr(raw_pick, "expert_slug", None),
+            "rating_stars": getattr(raw_pick, "rating_stars", None),
             "matchup_hint": getattr(raw_pick, "matchup_hint", None),
         },
         "event": event,
@@ -727,7 +747,7 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     parser.add_argument(
         "--sport",
-        choices=["NBA", "NCAAB"],
+        choices=["NBA", "NCAAB", "MLB"],
         default="NBA",
         help="Sport to ingest (default: NBA)",
     )

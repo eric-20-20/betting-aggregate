@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 from datetime import datetime, date, timezone
 from pathlib import Path
@@ -25,6 +26,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 REPORTS_DIR = Path("data/reports")
 SIGNALS_PATH = Path("data/ledger/signals_latest.jsonl")
 PLAYS_DIR = Path("data/plays")
+PATTERN_CANDIDATES_PATH = REPORTS_DIR / "pattern_registry_active.json"
 
 CURRENT_LINES_PATH = Path("data/cache/current_lines.json")
 CACHE_DIR = Path("data/cache/results")
@@ -42,6 +44,120 @@ def get_sport_paths(sport: str) -> Tuple[Path, Path, Path]:
         Path("data/ledger/signals_latest.jsonl"),
         Path("data/plays"),
     )
+
+
+DYNAMIC_PATTERNS_ENV = "ENABLE_DYNAMIC_PATTERNS"
+
+
+def _dynamic_patterns_enabled() -> bool:
+    """Dynamic pattern registry is OFF by default (Q6).
+
+    Must be explicitly enabled by setting ENABLE_DYNAMIC_PATTERNS to a
+    truthy value (1/true/yes/on, case-insensitive). When disabled, only
+    the hardcoded PATTERN_REGISTRY / PATTERN_REGISTRY_NCAAB is used.
+    """
+    raw = os.environ.get(DYNAMIC_PATTERNS_ENV, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Core shape check for a dynamic pattern row. Unknown keys are allowed
+# (forward-compat); only the critical shape is enforced.
+_PATTERN_ROW_REQUIRED_KEYS = {"pattern_type", "tier_eligible"}
+_PATTERN_TIER_VALUES = {"A", "B"}
+
+
+def validate_dynamic_pattern_registry(data: Any) -> Tuple[bool, List[str], List[Dict[str, Any]]]:
+    """Validate a loaded pattern_registry_active.json payload.
+
+    Returns (valid, errors, rows). On any error valid is False, rows is []
+    — the caller must fall back to the hardcoded registry.
+    """
+    errors: List[str] = []
+    if not isinstance(data, dict):
+        return False, ["top-level JSON is not an object"], []
+    if "rows" not in data:
+        return False, ["missing 'rows' key"], []
+    rows = data.get("rows")
+    if not isinstance(rows, list):
+        return False, ["'rows' is not a list"], []
+
+    clean_rows: List[Dict[str, Any]] = []
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            errors.append(f"row[{idx}] is not an object")
+            continue
+        missing = _PATTERN_ROW_REQUIRED_KEYS - set(row.keys())
+        if missing:
+            errors.append(f"row[{idx}] missing required keys: {sorted(missing)}")
+            continue
+        tier = row.get("tier_eligible")
+        if tier not in _PATTERN_TIER_VALUES:
+            errors.append(f"row[{idx}] invalid tier_eligible={tier!r}")
+            continue
+        hist = row.get("hist")
+        if hist is not None and not isinstance(hist, dict):
+            errors.append(f"row[{idx}] 'hist' is not an object")
+            continue
+        if isinstance(hist, dict):
+            n = hist.get("n")
+            if n is not None and not isinstance(n, (int, float)):
+                errors.append(f"row[{idx}] 'hist.n' must be numeric, got {type(n).__name__}")
+                continue
+        clean_rows.append(row)
+
+    valid = len(errors) == 0
+    return valid, errors, clean_rows
+
+
+def load_dynamic_pattern_registry(sport: str, reports_dir: Path) -> List[Dict[str, Any]]:
+    """Load dynamic NBA pattern candidates, gated by ENABLE_DYNAMIC_PATTERNS (Q6).
+
+    Default (env unset or falsy): disabled. Returns [] with a log line.
+    Enabled (env truthy): load + validate + return rows; fail-closed on
+    any validation/parse error (hardcoded registry stays authoritative).
+    """
+    if sport != "NBA":
+        return []
+    if not _dynamic_patterns_enabled():
+        print(
+            f"  [patterns] Dynamic registry disabled ({DYNAMIC_PATTERNS_ENV} unset or falsy). "
+            f"Using hardcoded PATTERN_REGISTRY only."
+        )
+        return []
+    path = reports_dir / PATTERN_CANDIDATES_PATH.name
+    if not path.exists():
+        print(f"  [patterns] Dynamic registry enabled but file not found: {path}")
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except Exception as exc:
+        print(f"  [patterns] Dynamic registry {path} failed to parse: {exc}. Using hardcoded only.")
+        return []
+    valid, errors, rows = validate_dynamic_pattern_registry(data)
+    if not valid:
+        print(f"  [patterns] Dynamic registry {path} failed schema validation; using hardcoded only.")
+        for err in errors[:5]:
+            print(f"    - {err}")
+        if len(errors) > 5:
+            print(f"    ... (+{len(errors) - 5} more errors)")
+        return []
+    return rows
+
+
+def _pattern_specificity(pattern: Dict[str, Any]) -> Tuple[int, int]:
+    keys = ("experts_all", "expert", "exact_combo", "source_pair", "source_contains", "market_type", "stat_type", "direction", "team")
+    score = sum(1 for key in keys if pattern.get(key))
+    if pattern.get("experts_all"):
+        score += len(pattern.get("experts_all") or [])
+    return score, int(pattern.get("hist", {}).get("n", 0) or 0)
+
+
+def merge_pattern_registries(base: List[Dict[str, Any]], dynamic: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not dynamic:
+        return base
+    merged = list(dynamic) + list(base)
+    merged.sort(key=_pattern_specificity, reverse=True)
+    return merged
 
 EXCLUDED_SIGNAL_TYPES = {"avoid_conflict"}
 
@@ -1581,9 +1697,8 @@ def load_game_schedule(date_str: str, sport: str = "NBA") -> Optional[Set[Tuple[
                 home = _canon_team(raw_home)
                 if away and home:
                     matchups.add((away, home))
-            if matchups:
-                return matchups
-            # LGF had no NBA games — fall through to scoreboard
+            # LGF only contains FINAL games — always also check the scoreboard
+            # to pick up scheduled/in-progress games not yet in LGF.
         except (json.JSONDecodeError, KeyError):
             pass
 
@@ -2133,6 +2248,14 @@ def _match_patterns(
         # Stat type filter (atomic_stat for player props)
         if pat.get("stat_type") and pat["stat_type"] != stat:
             continue
+
+        # Agreement filter: all listed experts must be present on the signal
+        if pat.get("experts_all"):
+            signal_experts = set(signal.get("experts") or [])
+            signal_experts_stripped = {strip_expert_prefix(e) for e in signal_experts}
+            required_experts = set(pat["experts_all"])
+            if not all(e in signal_experts or e in signal_experts_stripped for e in required_experts):
+                continue
 
         # Expert filter: at least one of the named experts must be on the signal
         if pat.get("expert"):
@@ -3728,8 +3851,14 @@ def main() -> None:
         active_pattern_registry = PATTERN_REGISTRY_NCAAB
         active_excluded_combos = EXCLUDED_COMBOS_BY_MARKET_NCAAB
     else:
-        active_pattern_registry = PATTERN_REGISTRY
+        dynamic_pattern_registry = load_dynamic_pattern_registry(sport, reports_dir)
+        active_pattern_registry = merge_pattern_registries(PATTERN_REGISTRY, dynamic_pattern_registry)
         active_excluded_combos = EXCLUDED_COMBOS_BY_MARKET
+        # Q6: log merged registry composition at startup for audit.
+        print(
+            f"  [patterns] NBA pattern registry — hardcoded={len(PATTERN_REGISTRY)}  "
+            f"dynamic={len(dynamic_pattern_registry)}  total_merged={len(active_pattern_registry)}"
+        )
 
     date_str = args.date or date.today().strftime("%Y-%m-%d")
     try:

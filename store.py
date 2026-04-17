@@ -12,6 +12,7 @@ from typing import Dict, Iterable, List, Optional, Set
 # Sport constants
 NBA_SPORT = "NBA"
 NCAAB_SPORT = "NCAAB"
+MLB_SPORT = "MLB"
 SPORT = NBA_SPORT  # Default for backward compatibility
 
 from models import Player, PlayerAlias, PropStatAlias, Team, TeamAlias
@@ -34,6 +35,15 @@ class DataStore:
             team_seed = NCAAB_TEAM_SEED
             team_aliases_func = build_ncaab_team_aliases
             prop_stat_aliases_func = build_ncaab_prop_stat_aliases
+        elif self.sport == MLB_SPORT:
+            from data_mlb import (
+                MLB_TEAM_SEED,
+                build_mlb_prop_stat_aliases,
+                build_mlb_team_aliases,
+            )
+            team_seed = MLB_TEAM_SEED
+            team_aliases_func = build_mlb_team_aliases
+            prop_stat_aliases_func = build_mlb_prop_stat_aliases
         else:
             from data import TEAM_SEED, build_prop_stat_aliases, build_team_aliases
             team_seed = TEAM_SEED
@@ -110,7 +120,7 @@ def get_data_store(sport: str = NBA_SPORT) -> DataStore:
     """Get or create a DataStore for the specified sport.
 
     Args:
-        sport: Sport identifier (NBA_SPORT or NCAAB_SPORT)
+        sport: Sport identifier (NBA_SPORT, NCAAB_SPORT, or MLB_SPORT)
 
     Returns:
         DataStore configured for the specified sport

@@ -27,18 +27,20 @@ except ImportError:
 
 from event_resolution import SCHEDULE, build_event_key, build_canonical_event_key, resolve_event
 from mappings import map_player, map_prop_stat
-from store import NBA_SPORT, NCAAB_SPORT, data_store, get_data_store
+from store import NBA_SPORT, NCAAB_SPORT, MLB_SPORT, data_store, get_data_store
 from utils import normalize_text
 
 # Sport-specific URL patterns
 ACTION_LISTING_URLS = {
-    NBA_SPORT: "https://www.actionnetwork.com/picks/game",
+    NBA_SPORT: "https://www.actionnetwork.com/nba/picks/game",
     NCAAB_SPORT: "https://www.actionnetwork.com/ncaab/picks/game",
+    MLB_SPORT: "https://www.actionnetwork.com/mlb/picks/game",
 }
 
 ACTION_GAME_PATTERNS = {
     NBA_SPORT: re.compile(r"/nba-game/[^/]+/\d+"),
     NCAAB_SPORT: re.compile(r"/ncaab-game/[^/]+/\d+"),
+    MLB_SPORT: re.compile(r"/mlb-game/[^/]+/\d+"),
 }
 
 
@@ -52,6 +54,24 @@ SESSION.headers.update(
         "Connection": "keep-alive",
     }
 )
+
+
+def infer_market_family(raw_pick_text: str, sport: str = NBA_SPORT) -> str:
+    if sport == MLB_SPORT:
+        standard = parse_standard_market(raw_pick_text, sport=sport)
+        if standard.get("market_type"):
+            return "standard"
+        if map_prop_stat(raw_pick_text, sport=sport):
+            return "player_prop"
+        if re.search(r"^[A-Za-z][A-Za-z\.\-']+\s+[A-Za-z][A-Za-z\.\-']+\s+(over|under|o|u)\b", raw_pick_text, re.IGNORECASE):
+            return "player_prop"
+        if re.search(r"\b(over|under|o|u)\b", raw_pick_text, re.IGNORECASE) and re.search(r"\d+(?:\.\d+)?", raw_pick_text):
+            return "player_prop"
+        return "standard"
+
+    if map_prop_stat(raw_pick_text, sport=sport):
+        return "player_prop"
+    return "standard"
 
 
 def fetch_html(url: str) -> str:
@@ -240,6 +260,7 @@ class RawPickRecord:
     expert_slug: Optional[str] = None
     tailing_handle: Optional[str] = None
     stake_hint: Optional[str] = None
+    rating_stars: Optional[int] = None
 
 
 def sha256_digest(text: str) -> str:
@@ -335,6 +356,7 @@ def extract_picks_from_html(
     html: str,
     canonical_url: str,
     observed_at_utc: datetime,
+    event_start_time_utc: Optional[datetime] = None,
     debug: bool = False,
     sport: str = NBA_SPORT,
 ) -> Tuple[List[RawPickRecord], List[dict]]:
@@ -549,7 +571,7 @@ def extract_picks_from_html(
 
             context = pick.get("context") or pick_text
 
-            market_family = "player_prop" if map_prop_stat(normalized_pick) else "standard"
+            market_family = infer_market_family(normalized_pick, sport=sport)
             source_surface = f"{sport.lower()}_game_expert_picks"
             fingerprint_source = f"action|{source_surface}|{canonical_url}|{normalized_pick}"
             record = RawPickRecord(
@@ -558,6 +580,7 @@ def extract_picks_from_html(
                 sport=sport,
                 market_family=market_family,
                 observed_at_utc=observed_at_utc.isoformat(),
+                event_start_time_utc=event_start_time_utc,
                 canonical_url=canonical_url,
                 raw_pick_text=normalized_pick,
                 raw_block=context,
@@ -601,7 +624,7 @@ def map_team_text_to_code(text: str, store=None) -> Optional[str]:
 
 def parse_teams_from_slug(url: str, sport: str = NBA_SPORT, store=None) -> Tuple[Optional[str], Optional[str]]:
     # Match both NBA and NCAAB game URL patterns
-    match = re.search(r"/(?:nba-game|ncaab-game)/([^/]+)/\d+", url)
+    match = re.search(r"/(?:nba-game|ncaab-game|mlb-game)/([^/]+)/\d+", url)
     if not match:
         return None, None
     slug = match.group(1)
@@ -641,34 +664,26 @@ def parse_teams_from_page(soup: BeautifulSoup, sport: str = NBA_SPORT, store=Non
     return None, None
 
 
-def parse_standard_market(raw_pick_text: str) -> dict:
+def parse_standard_market(raw_pick_text: str, sport: str = NBA_SPORT) -> dict:
     lower = raw_pick_text.lower()
     first_float_match = re.search(r"([+-]?\d+(?:\.\d+)?)", raw_pick_text)
     odds_match = re.search(r"([+-]\d{3,})", raw_pick_text)
-    team_code_match = re.search(r"\b([A-Z]{3})\b", raw_pick_text)
+    team_code_match = re.search(r"\b([A-Z]{2,5})\b", raw_pick_text)
     team_code = team_code_match.group(1) if team_code_match else None
     signed_numbers = re.findall(r"[+-]\d+(?:\.\d+)?", raw_pick_text)
 
-    if ("over" in lower or "under" in lower) and first_float_match:
-        side = "over" if "over" in lower else "under" if "under" in lower else None
-        return {
-            "market_type": "total",
-            "side": side,
-            "selection": "game_total",
-            "line": float(first_float_match.group(1)) if first_float_match else None,
-            "odds": odds_match.group(1) if odds_match else None,
-            "eligible_for_consensus": True,
-            "ineligibility_reason": None,
-            "team_code": None,
-        }
-
     if team_code:
-        # Check for team total first (e.g., "OKC u114.5 -115" or "MIL over 115.5 -110")
-        team_total_match = re.search(rf"{team_code}\s+([ouOU])(\d+(?:\.\d+)?)", raw_pick_text)
+        # Check for team total first (e.g. "OKC u114.5 -115", "MIL over 3.5 Team Total -110").
+        team_total_match = re.search(
+            rf"{team_code}\s+(?:(?P<short>[ouOU])(?P<short_line>\d+(?:\.\d+)?)|(?P<long>over|under)\s+(?P<long_line>\d+(?:\.\d+)?))",
+            raw_pick_text,
+            re.IGNORECASE,
+        )
         if team_total_match:
-            ou_char = team_total_match.group(1).lower()
-            side = "over" if ou_char == "o" else "under"
-            line_val = float(team_total_match.group(2))
+            ou_char = (team_total_match.group("short") or team_total_match.group("long") or "").lower()
+            side = "over" if ou_char in {"o", "over"} else "under"
+            line_raw = team_total_match.group("short_line") or team_total_match.group("long_line")
+            line_val = float(line_raw) if line_raw is not None else None
             return {
                 "market_type": "team_total",
                 "side": side,
@@ -718,6 +733,27 @@ def parse_standard_market(raw_pick_text: str) -> dict:
                 "team_code": team_code,
             }
 
+    looks_like_mlb_player_prop = (
+        sport == MLB_SPORT
+        and (
+            re.match(r"^[A-Z]\.[A-Za-z]", raw_pick_text)
+            or re.match(r"^[A-Za-z][A-Za-z\.\-']+\s+[A-Za-z][A-Za-z\.\-']+\s+(over|under|o|u)\b", raw_pick_text, re.IGNORECASE)
+        )
+    )
+
+    if ("over" in lower or "under" in lower) and first_float_match and not looks_like_mlb_player_prop:
+        side = "over" if "over" in lower else "under" if "under" in lower else None
+        return {
+            "market_type": "total",
+            "side": side,
+            "selection": "game_total",
+            "line": float(first_float_match.group(1)) if first_float_match else None,
+            "odds": odds_match.group(1) if odds_match else None,
+            "eligible_for_consensus": True,
+            "ineligibility_reason": None,
+            "team_code": None,
+        }
+
     return {
         "market_type": None,
         "side": None,
@@ -731,7 +767,7 @@ def parse_standard_market(raw_pick_text: str) -> dict:
 
 
 def parse_player_prop(raw_pick_text: str, sport: str = NBA_SPORT) -> dict:
-    stat_key = map_prop_stat(raw_pick_text)
+    stat_key = map_prop_stat(raw_pick_text, sport=sport)
     odds_match = re.search(r"([+-]\d{3,})", raw_pick_text)
     odds_val = odds_match.group(1) if odds_match else None
 
@@ -808,9 +844,15 @@ def normalize_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, stat
         event = event_copy
     else:
         # Schedule drift or new-day runs can miss resolve_event; construct a stable event payload so consensus stays intact.
+        if isinstance(event_time, datetime):
+            day_key = f"{sport}:{event_time.year:04d}:{event_time.month:02d}:{event_time.day:02d}"
+        else:
+            event_dt = datetime.fromisoformat(str(event_time).replace("Z", "+00:00"))
+            day_key = f"{sport}:{event_dt.year:04d}:{event_dt.month:02d}:{event_dt.day:02d}"
         event = {
-            "event_key": build_event_key(event_time, away_team=away_team, home_team=home_team),
-            "canonical_event_key": build_canonical_event_key(event_time, away_team=away_team, home_team=home_team),
+            "event_key": build_event_key(event_time, away_team=away_team, home_team=home_team, sport=sport),
+            "canonical_event_key": build_canonical_event_key(event_time, away_team=away_team, home_team=home_team, sport=sport),
+            "day_key": day_key,
             "event_start_time_utc": event_time if isinstance(event_time, str) else event_time.isoformat(),
             "home_team": home_team,
             "away_team": away_team,
@@ -818,7 +860,7 @@ def normalize_pick(raw_pick: RawPickRecord, home_team: str, away_team: str, stat
     market_details = (
         parse_player_prop(raw_pick.raw_pick_text, sport=raw_pick.sport)
         if raw_pick.market_family == "player_prop"
-        else parse_standard_market(raw_pick.raw_pick_text)
+        else parse_standard_market(raw_pick.raw_pick_text, sport=raw_pick.sport)
     )
 
     eligible = True
@@ -1055,6 +1097,7 @@ def ingest_action_games(schedule=None, sport: str = NBA_SPORT, debug: bool = Fal
                 html,
                 canonical_url=url,
                 observed_at_utc=observed_at,
+                event_start_time_utc=event_start_time_utc,
                 debug=debug or bool(os.environ.get("ACTION_DEBUG")),
                 sport=sport,
             )
@@ -1104,7 +1147,7 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     parser.add_argument(
         "--sport",
-        choices=["NBA", "NCAAB"],
+        choices=["NBA", "NCAAB", "MLB"],
         default="NBA",
         help="Sport to ingest (default: NBA)",
     )

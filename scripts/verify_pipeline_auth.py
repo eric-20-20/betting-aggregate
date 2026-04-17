@@ -18,6 +18,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def _juicereel_enabled() -> bool:
+    return os.getenv("ENABLE_JUICEREEL", "false") in {"1", "true", "TRUE", "yes", "YES", "on", "ON"}
+
 # Service definitions: (name, storage_state_path, auth_cookie_names, re-login command)
 SERVICES = [
     {
@@ -129,11 +133,17 @@ STATUS_SYMBOLS = {
 
 
 def main():
-    results = [check_service(svc) for svc in SERVICES]
+    services = list(SERVICES)
+    if not _juicereel_enabled():
+        services = [svc for svc in services if svc["name"] != "JuiceReel"]
+
+    results = [check_service(svc) for svc in services]
 
     print()
     print("  Pipeline Auth Status")
     print("  " + "=" * 60)
+    if not _juicereel_enabled():
+        print("  • JuiceReel auth check skipped (disabled via ENABLE_JUICEREEL)")
 
     any_expired = False
 

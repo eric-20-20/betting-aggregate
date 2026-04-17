@@ -21,6 +21,7 @@ import datetime
 import json
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -234,6 +235,23 @@ def main() -> None:
             grades_total,
             occurrences_total,
         )
+
+        # ── Trusted NBA expert pattern tables ────────────────────────────────
+        # Bounded subprocess so a stuck child doesn't extend the push
+        # indefinitely. Failure is logged but non-fatal — the main push
+        # above already committed signals/grades/plays/occurrences.
+        try:
+            logger.info("Refreshing trusted NBA expert_records / expert_pair_records in Supabase")
+            subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "build_pattern_analysis.py")],
+                check=True,
+                cwd=str(REPO_ROOT),
+                timeout=300,  # 5 minutes; child should complete in seconds
+            )
+        except subprocess.TimeoutExpired as e:
+            logger.warning("Trusted NBA pattern table refresh timed out after %ss", e.timeout)
+        except Exception as e:
+            logger.warning("Trusted NBA pattern table refresh failed: %s", e)
 
         logger.info("Supabase push complete for %s", date_str)
 

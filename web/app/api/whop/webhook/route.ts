@@ -14,6 +14,17 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 const WEBHOOK_KEY = process.env.WHOP_WEBHOOK_KEY || "";
 const limiter = rateLimit({ interval: 60_000, limit: 60 });
 
+// TEMP DEBUG: remove after verifying deployed env wiring.
+function logWebhookEnvDiagnostics() {
+  console.warn("[whop-webhook] env diagnostics", {
+    hasWebhookKey: Boolean(process.env.WHOP_WEBHOOK_KEY),
+    hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
+    hasServiceRole: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+    nodeEnv: process.env.NODE_ENV || null,
+    vercelEnv: process.env.VERCEL_ENV || null,
+  });
+}
+
 export async function GET() {
   return NextResponse.json({ ok: true, endpoint: "whop-webhook", method: "GET" });
 }
@@ -32,19 +43,51 @@ export async function OPTIONS() {
 }
 
 function verifySignature(
+  webhookId: string,
   body: string,
   signature: string,
   timestamp: string
 ): boolean {
-  if (!WEBHOOK_KEY) return false;
+  if (!WEBHOOK_KEY || !webhookId || !timestamp || !signature) return false;
 
-  const signedContent = `${timestamp}.${body}`;
+  const signedContent = `${webhookId}.${timestamp}.${body}`;
   const expected = crypto
     .createHmac("sha256", WEBHOOK_KEY)
     .update(signedContent)
     .digest("base64");
 
-  return signature === `v1,${expected}`;
+  const expectedSignature = `v1,${expected}`;
+  const receivedSignatures = signature.split(" ").filter(Boolean);
+
+  return receivedSignatures.some((candidate) => {
+    const expectedBuffer = Buffer.from(expectedSignature);
+    const candidateBuffer = Buffer.from(candidate);
+
+    if (expectedBuffer.length !== candidateBuffer.length) return false;
+    return crypto.timingSafeEqual(expectedBuffer, candidateBuffer);
+  });
+}
+
+// TEMP DEBUG: remove after verifying deployed signature handling.
+function logSignatureDiagnostics(request: NextRequest, body: string, verified: boolean) {
+  const relatedHeaders = Array.from(request.headers.keys())
+    .filter((name) => {
+      const key = name.toLowerCase();
+      return key.includes("whop") || key.includes("webhook") || key.includes("signature");
+    })
+    .sort();
+
+  console.warn("[whop-webhook] signature diagnostics", {
+    hasWebhookIdHeader: Boolean(request.headers.get("webhook-id")),
+    hasWebhookSignatureHeader: Boolean(request.headers.get("webhook-signature")),
+    hasWebhookTimestampHeader: Boolean(request.headers.get("webhook-timestamp")),
+    relatedHeaders,
+    contentType: request.headers.get("content-type") || null,
+    rawBodyLength: body.length,
+    signatureVerified: verified,
+    nodeEnv: process.env.NODE_ENV || null,
+    vercelEnv: process.env.VERCEL_ENV || null,
+  });
 }
 
 /**
@@ -101,6 +144,7 @@ function extractIds(event: WhopEventBody): {
 
 export async function POST(request: NextRequest) {
   if (!WEBHOOK_KEY) {
+    logWebhookEnvDiagnostics();
     return NextResponse.json({ error: "Webhook not configured" }, { status: 500 });
   }
 
@@ -115,11 +159,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const webhookId = request.headers.get("webhook-id") || "";
   const signature = request.headers.get("webhook-signature") || "";
   const timestamp = request.headers.get("webhook-timestamp") || "";
   const body = await request.text();
 
-  const signatureVerified = verifySignature(body, signature, timestamp);
+  const signatureVerified = verifySignature(webhookId, body, signature, timestamp);
+  logSignatureDiagnostics(request, body, signatureVerified);
   if (!signatureVerified) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }

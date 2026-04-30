@@ -271,7 +271,7 @@ def run_raw_sql(sql: str) -> List[Dict[str, Any]]:
     """Execute arbitrary SQL via the Supabase REST API using postgrest."""
     import os
     url = os.environ.get("SUPABASE_URL") or ""
-    key = os.environ.get("SUPABASE_KEY") or ""
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or ""
     if not url or not key:
         env_file = REPO_ROOT / ".env"
         if env_file.exists():
@@ -280,10 +280,10 @@ def run_raw_sql(sql: str) -> List[Dict[str, Any]]:
                     k, _, v = line.partition("=")
                     os.environ.setdefault(k.strip(), v.strip())
         url = os.environ.get("SUPABASE_URL", "")
-        key = os.environ.get("SUPABASE_KEY", "")
+        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
     if not url or not key:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY not set")
+        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY not set")
 
     import urllib.request
     import json as _json

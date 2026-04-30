@@ -33,7 +33,7 @@ def get_client():
         raise RuntimeError("supabase package not installed. Run: pip install supabase")
 
     url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
     if not url or not key:
         env_file = REPO_ROOT / ".env"
@@ -43,10 +43,10 @@ def get_client():
                     k, _, v = line.partition("=")
                     os.environ.setdefault(k.strip(), v.strip())
             url = os.environ.get("SUPABASE_URL")
-            key = os.environ.get("SUPABASE_KEY")
+            key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
     if not url or not key:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_KEY not found in env or .env")
+        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY not found in env or .env")
 
     _client = create_client(url, key)
     return _client

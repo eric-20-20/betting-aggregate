@@ -47,6 +47,25 @@ LEAGUE_IDS = {
 # Minimum star rating to be eligible for consensus (0-5 scale).
 MIN_STARS = 3
 
+# OddsTrader uses short/alternate MLB team codes that differ from the canonical
+# codes in data_mlb.py (DataStore).  Map them so cross-source merging works.
+_MLB_TEAM_CANON: Dict[str, str] = {
+    "TB": "TBR",
+    "CWS": "CHW",
+    "SF": "SFG",
+    "SD": "SDP",
+    "KC": "KCR",
+    "WSH": "WSN",
+    "ATH": "OAK",
+}
+
+
+def _canonicalize_mlb_team(code: Optional[str]) -> Optional[str]:
+    """Map OddsTrader short MLB codes to canonical data_mlb.py codes."""
+    if not code:
+        return code
+    return _MLB_TEAM_CANON.get(code.upper(), code.upper())
+
 # Minimum EV% for prop picks to be scraped (green bar threshold).
 MIN_PROP_EV = 15.0
 
@@ -627,17 +646,27 @@ def normalize_pick(
     """Normalize a raw OddsTrader pick to the standard schema."""
     home_team = raw.get("home_team", "")
     away_team = raw.get("away_team", "")
-    home_code = home_team
-    away_code = away_team
+    # Canonicalize MLB team codes so OddsTrader merges with other sources
+    if sport == MLB_SPORT:
+        home_code = _canonicalize_mlb_team(home_team)
+        away_code = _canonicalize_mlb_team(away_team)
+    else:
+        home_code = home_team
+        away_code = away_team
 
     # Build event key
     event_time = raw.get("event_time_utc")
     canonical_event_key = None
+    day_key_val = None
+    matchup_key_val = None
     if event_time and home_code and away_code:
         try:
             dt = datetime.fromisoformat(event_time)
             date_str = dt.strftime("%Y:%m:%d")
             canonical_event_key = f"{sport}:{date_str}:{away_code}@{home_code}"
+            day_key_val = f"{sport}:{date_str}"
+            t1, t2 = sorted([away_code.upper(), home_code.upper()])
+            matchup_key_val = f"{day_key_val}:{t1}-{t2}"
         except (ValueError, TypeError):
             pass
 
@@ -648,6 +677,13 @@ def normalize_pick(
     market_type = raw.get("market_type")
     side = raw.get("side")
     selection = raw.get("selection")
+
+    # Canonicalize team codes in side/selection for spread/moneyline picks
+    if sport == MLB_SPORT and market_type in ("spread", "moneyline"):
+        if side:
+            side = _canonicalize_mlb_team(side)
+        if selection:
+            selection = _canonicalize_mlb_team(selection)
 
     # For totals: side is "over"/"under"; normalize both to uppercase and use as selection.
     # "game_total" is not a valid selection in the rest of the pipeline.
@@ -693,6 +729,8 @@ def normalize_pick(
         "event": {
             "event_key": event_key,
             "canonical_event_key": canonical_event_key,
+            "day_key": day_key_val,
+            "matchup_key": matchup_key_val,
             "event_start_time_utc": raw.get("event_time_utc"),
             "home_team": home_code,
             "away_team": away_code,

@@ -397,9 +397,9 @@ def load_env() -> None:
 def run_supabase_sql(sql: str) -> List[Dict[str, Any]]:
     load_env()
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    key = os.environ.get("SUPABASE_KEY", "")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
     if not url or not key:
-        raise RuntimeError("SUPABASE_URL / SUPABASE_KEY not configured")
+        raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured")
 
     import urllib.error
     import urllib.request

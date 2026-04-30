@@ -58,9 +58,10 @@ def build_selection_key(
         if selection and "::" in selection and not all([player_id, atomic_stat, direction]):
             parts = selection.split("::")
             if len(parts) >= 3:
-                # Handle NBA:player_id::stat::direction
+                # Handle SPORT:player_id::stat::direction (NBA:, MLB:, NCAAB:)
                 player_part = parts[0]
-                if player_part.upper().startswith("NBA:"):
+                _upper = player_part.upper()
+                if _upper.startswith(("NBA:", "MLB:", "NCAAB:")):
                     player_id = player_id or player_part.split(":", 1)[1]
                 else:
                     player_id = player_id or player_part

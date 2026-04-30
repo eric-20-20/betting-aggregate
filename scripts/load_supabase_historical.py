@@ -43,14 +43,14 @@ IN_BATCH_SIZE = 50   # for .in_() filters — SHA256 IDs are 64 chars, keep URL 
 # ──────────────────────────────────────────────
 
 def get_client():
-    """Return a Supabase client. Reads SUPABASE_URL and SUPABASE_KEY from env."""
+    """Return a Supabase client. Reads SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY from env."""
     try:
         from supabase import create_client
     except ImportError:
         raise RuntimeError("supabase package not installed. Run: pip install supabase")
 
     url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     if not url or not key:
         # Try loading from .env in repo root
         env_file = REPO_ROOT / ".env"
@@ -60,12 +60,12 @@ def get_client():
                     k, _, v = line.partition("=")
                     os.environ.setdefault(k.strip(), v.strip())
             url = os.environ.get("SUPABASE_URL")
-            key = os.environ.get("SUPABASE_KEY")
+            key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
     if not url or not key:
         raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_KEY must be set in environment or .env file.\n"
-            "Example .env:\n  SUPABASE_URL=https://xxxx.supabase.co\n  SUPABASE_KEY=eyJ..."
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in environment or .env file.\n"
+            "Example .env:\n  SUPABASE_URL=https://xxxx.supabase.co\n  SUPABASE_SERVICE_ROLE_KEY=eyJ..."
         )
     return create_client(url, key)
 

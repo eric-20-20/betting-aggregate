@@ -772,12 +772,8 @@ def ingest_sportsline_nba(
             #   appears to hydrate with less XHR activity, and networkidle can
             #   time out. Keep MLB separate until the legacy strategy is tested
             #   against MLB and shown equivalent.
-            if sport == "MLB":
-                page.goto(picks_url, wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(5000)
-            else:
-                page.goto(picks_url, wait_until="networkidle", timeout=30000)
-                page.wait_for_timeout(3000)
+            page.goto(picks_url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(5000)
 
             # Extract all expert picks from the page
             records = extract_expert_picks(

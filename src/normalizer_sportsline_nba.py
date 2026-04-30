@@ -192,9 +192,9 @@ def normalize_sportsline_record(raw: Dict[str, Any], sport: str = "NBA") -> Dict
             away_team = away_team or _map_team(parts[0], store=store, sport=sport)
             home_team = home_team or _map_team(parts[1], store=store, sport=sport)
 
-    # For NCAAB expert-page picks, try to extract nicknames from raw_block
+    # For expert-page picks (NCAAB and MLB), try to extract nicknames from raw_block
     # Format: "{Date}\n{AwayNickname}\n{Score?}\n@ {HomeNickname}\n{Score?}|..."
-    if sport == "NCAAB" and not (away_team and home_team):
+    if sport in ("NCAAB", "MLB") and not (away_team and home_team):
         raw_block = raw.get("raw_block") or ""
         matchup_section = raw_block.split("|")[0] if "|" in raw_block else raw_block
         lines = [l.strip() for l in matchup_section.split("\n") if l.strip()]

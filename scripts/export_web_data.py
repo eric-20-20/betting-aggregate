@@ -21,9 +21,13 @@ from datetime import datetime
 from pathlib import Path
 
 PLAYS_DIR = Path("data/plays")
+REVIEW_DIR = Path("data/review")
 REPORTS_DIR = Path("data/reports")
 WEB_PUBLIC_DIR = Path("web/public/data")
 WEB_PRIVATE_DIR = Path("web/data/private")
+
+# Sport name used for review_paths lookups (set in main() based on --sport)
+_SPORT = "NBA"
 
 NUM_TEASER_PICKS = 3
 
@@ -219,7 +223,64 @@ def find_latest_plays_date() -> str:
     return plays_files[0].stem.replace("plays_", "")
 
 
-def export_picks(date: str) -> None:
+def _find_approved_path(date: str) -> Path | None:
+    """Find the approved slate for a date, checking dated dir then flat fallback."""
+    # Dated directory layout: data/review/{sport}/{date}/approved_slate.json
+    dated = REVIEW_DIR / _SPORT.lower() / date / "approved_slate.json"
+    if dated.exists():
+        return dated
+    # Legacy flat layout: data/review/approved_{date}.json (or ncaab/)
+    flat = REVIEW_DIR / f"approved_{date}.json"
+    if flat.exists():
+        return flat
+    return None
+
+
+def _apply_approved_overlay(plays: list, filtered: list, date: str) -> list:
+    """Apply approved slate tier/inclusion decisions on top of plays.
+
+    Returns the filtered list of plays with tiers potentially overridden.
+    Near-miss D-tier picks promoted via override are injected from the
+    approved slate's _play_data.
+    """
+    ap = _find_approved_path(date)
+    if ap is None:
+        print(f"[export] No approved slate for {date}, using raw plays")
+        return [p for p in plays if p["tier"] in ("A", "B", "C")]
+
+    with open(ap) as f:
+        approved = json.load(f)
+
+    approved_map = {c["pick_id"]: c for c in approved["candidates"]}
+    plays_by_id = {p["signal"]["signal_id"]: p for p in plays}
+
+    final_plays = []
+    for c in approved["candidates"]:
+        if not c.get("published_included", False):
+            continue
+        pid = c["pick_id"]
+        tier = c.get("published_tier", c.get("auto_tier", "D"))
+
+        if pid in plays_by_id:
+            # Play exists in pipeline output — use it with overridden tier
+            p = copy.deepcopy(plays_by_id[pid])
+            p["tier"] = tier
+            final_plays.append(p)
+        elif "_play_data" in c:
+            # Near-miss promoted via override — use re-scored play data
+            p = copy.deepcopy(c["_play_data"])
+            p["tier"] = tier
+            final_plays.append(p)
+
+    override_count = sum(1 for c in approved["candidates"]
+                         if c.get("override_note") is not None)
+    if override_count:
+        print(f"[export] Applied {override_count} editorial override(s)")
+
+    return final_plays
+
+
+def export_picks(date: str, use_approved: bool = False) -> None:
     """Split plays into public teaser + locked summaries and private full data."""
     plays_path = PLAYS_DIR / f"plays_{date}.json"
     if not plays_path.exists():
@@ -231,16 +292,22 @@ def export_picks(date: str) -> None:
 
     meta = data["meta"]
     plays = data["plays"]
+    filtered = data.get("filtered", [])
+
+    if use_approved:
+        export_plays = _apply_approved_overlay(plays, filtered, date)
+    else:
+        export_plays = [p for p in plays if p["tier"] in ("A", "B", "C")]
 
     # Sort by tier (A first) then Wilson score descending
     tier_order = {"A": 0, "B": 1, "C": 2, "D": 3}
-    plays.sort(key=lambda p: (
+    export_plays.sort(key=lambda p: (
         tier_order.get(p["tier"], 9),
         -(p.get("wilson_score", p.get("composite_score", 0))),
     ))
 
-    # Sanitize all exported plays (A, B, and C tiers)
-    sanitized_plays = [sanitize_play(p) for p in plays if p["tier"] in ("A", "B", "C")]
+    # Sanitize all exported plays
+    sanitized_plays = [sanitize_play(p) for p in export_plays]
 
     # Teaser picks: top N A-tier picks with full details
     teaser_picks = []
@@ -582,21 +649,28 @@ def main():
                     help="Date to export (default: latest)")
     ap.add_argument("--sport", type=str, default="NBA", choices=["NBA", "NCAAB"],
                     help="Sport to export (default: NBA)")
+    ap.add_argument("--approved", action="store_true",
+                    help="Use approved slate for tier/inclusion decisions")
     args = ap.parse_args()
 
     # Re-bind module-level path constants based on sport so all export functions
     # automatically use the correct directories without needing individual changes.
-    global PLAYS_DIR, REPORTS_DIR, WEB_PUBLIC_DIR, WEB_PRIVATE_DIR
+    global PLAYS_DIR, REVIEW_DIR, REPORTS_DIR, WEB_PUBLIC_DIR, WEB_PRIVATE_DIR, _SPORT
+    _SPORT = args.sport
     if args.sport == "NCAAB":
         PLAYS_DIR = Path("data/plays/ncaab")
+        REVIEW_DIR = Path("data/review")
         REPORTS_DIR = Path("data/reports/ncaab")
         WEB_PUBLIC_DIR = Path("web/public/data/ncaab")
         WEB_PRIVATE_DIR = Path("web/data/private/ncaab")
+    else:
+        REVIEW_DIR = Path("data/review")
 
     date = args.date or find_latest_plays_date()
-    print(f"[export] Exporting data for {date} ({args.sport})")
+    print(f"[export] Exporting data for {date} ({args.sport})"
+          + (" [approved]" if args.approved else ""))
 
-    export_picks(date)
+    export_picks(date, use_approved=args.approved)
     export_history()
     export_reports()
     export_tier_performance()

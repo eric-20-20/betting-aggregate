@@ -1999,9 +1999,9 @@ def main() -> None:
     # IMPORTANT: For any day that has a consensus run, we only keep occurrences from the
     # LATEST run for that day. This evicts stale occurrences from superseded runs even when
     # the new run doesn't produce a replacement (e.g. a bad consensus merge got removed).
-    # Build latest_run_per_day from the runs directory.
+    # Build latest_run_per_day from the runs directory (sport-specific).
     latest_run_per_day: Dict[str, str] = {}  # calendar_date -> latest run_id
-    _runs_dir = Path("data/runs")
+    _runs_dir = get_runs_dir(sport)
     if _runs_dir.exists():
         for _run_dir in sorted(_runs_dir.iterdir()):
             if not _run_dir.is_dir():

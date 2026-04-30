@@ -2966,13 +2966,14 @@ def main(
         src = prov.get("source_id") or prov.get("source_surface")
         market = rec.get("market") or {}
         if market.get("market_type") == "player_prop":
-            # normalize player identity across sources
+            # normalize player identity across sources (NBA only — normalize_player_key hardcodes NBA: prefix)
             original_pk = market.get("player_key")
-            pk_normed = normalize_player_key(original_pk, out_dir=out_dir)
-            if pk_normed:
-                market["player_key"] = pk_normed
-                if original_pk and pk_normed != original_pk:
-                    alias_sub_counts[src or "unknown"] = alias_sub_counts.get(src or "unknown", 0) + 1
+            if CURRENT_SPORT == NBA_SPORT:
+                pk_normed = normalize_player_key(original_pk, out_dir=out_dir)
+                if pk_normed:
+                    market["player_key"] = pk_normed
+                    if original_pk and pk_normed != original_pk:
+                        alias_sub_counts[src or "unknown"] = alias_sub_counts.get(src or "unknown", 0) + 1
             direction_norm = _normalize_prop_direction(market.get("side"), market.get("selection"))
             stat_norm = _normalize_prop_stat_key(market.get("stat_key"))
             player_key = market.get("player_key")

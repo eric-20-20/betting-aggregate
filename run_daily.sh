@@ -357,8 +357,20 @@ echo "── NBA Step 9: Scoring today's signals ──"
 python3 scripts/score_signals.py 2>&1 | tail -20
 
 echo ""
+echo "── NBA Step 10: Generating review slate ──"
+python3 scripts/generate_review_slate.py 2>&1 | tail -5
+
+echo ""
+echo "── NBA Step 10b: Applying overrides ──"
+python3 scripts/apply_overrides.py 2>&1 | tail -5
+
+echo ""
 echo "── NBA Step 11: Exporting web data ──"
-python3 scripts/export_web_data.py 2>&1 | tail -5
+python3 scripts/export_web_data.py --approved 2>&1 | tail -5
+
+echo ""
+echo "── NBA Step 11b: Reconciliation check ──"
+python3 scripts/reconcile_export.py 2>&1 | tail -5 || echo "  (reconciliation mismatch — review before deploy)"
 
 fi  # end RUN_NBA
 
@@ -493,8 +505,20 @@ echo "── NCAAB Step 6: Scoring today's signals ──"
 python3 scripts/score_signals.py --sport NCAAB $DEBUG 2>&1 | tail -20
 
 echo ""
+echo "── NCAAB Step 6b: Generating review slate ──"
+python3 scripts/generate_review_slate.py --sport NCAAB 2>&1 | tail -5
+
+echo ""
+echo "── NCAAB Step 6c: Applying overrides ──"
+python3 scripts/apply_overrides.py --sport NCAAB 2>&1 | tail -5
+
+echo ""
 echo "── NCAAB Step 7: Exporting web data ──"
-python3 scripts/export_web_data.py --sport NCAAB 2>&1 | tail -5
+python3 scripts/export_web_data.py --sport NCAAB --approved 2>&1 | tail -5
+
+echo ""
+echo "── NCAAB Step 7b: Reconciliation check ──"
+python3 scripts/reconcile_export.py --sport NCAAB 2>&1 | tail -5 || echo "  (reconciliation mismatch — review before deploy)"
 
 fi  # end RUN_NCAAB
 

@@ -40,23 +40,30 @@ from src.signal_keys import (
 # Sport constants
 NBA_SPORT = "NBA"
 NCAAB_SPORT = "NCAAB"
+MLB_SPORT = "MLB"
 
 
 def get_signals_latest_path(sport: str) -> Path:
     if sport == NCAAB_SPORT:
         return Path("data/ledger/ncaab/signals_latest.jsonl")
+    if sport == MLB_SPORT:
+        return Path("data/ledger/mlb/signals_latest.jsonl")
     return Path("data/ledger/signals_latest.jsonl")
 
 
 def get_grades_occ_path(sport: str) -> Path:
     if sport == NCAAB_SPORT:
         return Path("data/ledger/ncaab/grades_occurrences.jsonl")
+    if sport == MLB_SPORT:
+        return Path("data/ledger/mlb/grades_occurrences.jsonl")
     return Path("data/ledger/grades_occurrences.jsonl")
 
 
 def get_grades_latest_path(sport: str) -> Path:
     if sport == NCAAB_SPORT:
         return Path("data/ledger/ncaab/grades_latest.jsonl")
+    if sport == MLB_SPORT:
+        return Path("data/ledger/mlb/grades_latest.jsonl")
     return Path("data/ledger/grades_latest.jsonl")
 
 
@@ -276,8 +283,8 @@ def pick_odds(signal: Dict[str, Any]) -> Optional[float]:
 def day_key_to_date_str(day_key: Optional[str]) -> Optional[str]:
     if not isinstance(day_key, str):
         return None
-    # Handle both NBA: and NCAAB: prefixes
-    if day_key.startswith("NBA:") or day_key.startswith("NCAAB:"):
+    # Handle sport-prefixed day keys: NBA:YYYY:MM:DD, NCAAB:YYYY:MM:DD, MLB:YYYY:MM:DD
+    if day_key.startswith(("NBA:", "NCAAB:", "MLB:")):
         parts = day_key.split(":")
         if len(parts) >= 4 and all(p.isdigit() for p in parts[1:4]):
             return f"{parts[1]}-{parts[2]}-{parts[3]}"
@@ -290,13 +297,13 @@ def day_key_to_date_str(day_key: Optional[str]) -> Optional[str]:
 def event_key_to_date_str(event_key: Optional[str]) -> Optional[str]:
     if not isinstance(event_key, str):
         return None
-    # Handle both NBA: and NCAAB: prefixes
-    if event_key.startswith("NBA:") or event_key.startswith("NCAAB:"):
+    # Handle sport-prefixed event keys: NBA:, NCAAB:, MLB:
+    if event_key.startswith(("NBA:", "NCAAB:", "MLB:")):
         parts = event_key.split(":")
         # Format 1: SPORT:YYYY:MM:DD:... (e.g., "NBA:2026:02:06:MIA@BOS")
         if len(parts) >= 4 and all(p.isdigit() for p in parts[1:4]):
             return f"{parts[1]}-{parts[2]}-{parts[3]}"
-        # Format 2: SPORT:YYYYMMDD:... (e.g., "NBA:20260206:MIA@BOS:2130")
+        # Format 2: SPORT:YYYYMMDD:... (e.g., "MLB:20260427:CHC@SDP:2240")
         if len(parts) >= 2 and len(parts[1]) == 8 and parts[1].isdigit():
             y, m, d = parts[1][:4], parts[1][4:6], parts[1][6:8]
             return f"{y}-{m}-{d}"
@@ -386,7 +393,7 @@ def check_eligibility(signal: Dict[str, Any], date_str: Optional[str], sport: st
     elif market == "total":
         if line is None:
             return False, "missing_line", ["line"]
-        min_total = 100 if sport == "NCAAB" else 150
+        min_total = 3.0 if sport == MLB_SPORT else (100 if sport == NCAAB_SPORT else 150)
         if line < min_total:
             return False, "implausible_total_line", ["line"]
         if not direction:
@@ -1385,8 +1392,8 @@ def pick_latest_by_signal(grades: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Grade signals (NBA or NCAAB).")
-    ap.add_argument("--sport", choices=["NBA", "NCAAB", "nba", "ncaab"], default="NBA", help="Sport to grade (default: NBA)")
+    ap = argparse.ArgumentParser(description="Grade signals (NBA, NCAAB, or MLB).")
+    ap.add_argument("--sport", choices=["NBA", "NCAAB", "MLB", "nba", "ncaab", "mlb"], default="NBA", help="Sport to grade (default: NBA)")
     ap.add_argument("--since", type=str, help="Only grade signals with day_key >= YYYY-MM-DD")
     ap.add_argument("--mode", choices=["pending", "grade"], default="grade", help="pending=just enqueue PENDING rows; grade=compute outcomes")
     ap.add_argument("--dry-run", action="store_true", help="Do not write any output files.")
@@ -1417,6 +1424,9 @@ def main() -> None:
     if sport == NCAAB_SPORT:
         from src.results import ncaab_provider_espn  # type: ignore
         results_provider = ncaab_provider_espn
+    elif sport == MLB_SPORT:
+        from src.results import mlb_provider_espn  # type: ignore
+        results_provider = mlb_provider_espn
     else:
         results_provider = nba_provider
 

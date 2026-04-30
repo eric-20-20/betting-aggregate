@@ -1,39 +1,21 @@
 import "server-only";
 
 import { getSupabase } from "./supabase";
+import {
+  buildAdminOverrideEntitlement,
+  classifyMembershipStatus,
+  coerceSource,
+  deriveSubscriptionEntitlement,
+  materializeEffectiveEntitlement,
+  type AdminActionSnapshot,
+  type AdminActionType,
+  type EntitlementRecord,
+  type EntitlementSource,
+  type SubscriptionSnapshot,
+} from "./entitlements-core";
 
-/**
- * Entitlement layer.
- *
- * Source of runtime truth is the Supabase `user_entitlements` table.
- * Webhook events update `subscriptions` -> derive `user_entitlements`.
- * Access checks read `user_entitlements`. Whop's REST is only used for
- * admin/recovery flows (see `refreshEntitlementFromWhop`).
- *
- * Fail-closed posture:
- * - If Supabase is unavailable, `readEntitlement` returns
- *   `{ hasAccess: false, source: "unavailable" }`. Callers treat this
- *   as "no access" (the product degrades to free tier).
- * - `user_entitlements.source` defaults to 'none'. A row must be
- *   explicitly flipped to 'subscription' / 'owner' / 'admin_grant' by
- *   the webhook pipeline or a manual admin action.
- */
-
-export type EntitlementSource =
-  | "subscription"
-  | "owner"
-  | "admin_grant"
-  | "none"
-  | "unavailable";
-
-export interface EntitlementRecord {
-  whopUserId: string;
-  hasAccess: boolean;
-  source: EntitlementSource;
-  expiresAt: string | null;
-  lastEventId: string | null;
-  lastUpdatedAt: string | null;
-}
+export type { AdminActionType, EntitlementRecord, EntitlementSource };
+export { classifyMembershipStatus };
 
 interface SubscriptionRow {
   whop_membership_id: string;
@@ -58,40 +40,69 @@ interface EntitlementRow {
   last_updated_at: string | null;
 }
 
-const OWNER_USER_ID = process.env.WHOP_OWNER_USER_ID || "";
-
-// Sources that can actually be stored in user_entitlements.source.
-// `unavailable` is a synthetic read-side value, never written.
-const STORABLE_SOURCES = ["subscription", "owner", "admin_grant", "none"] as const;
-
-function coerceSource(raw: unknown): EntitlementSource {
-  if (typeof raw !== "string") return "none";
-  return (STORABLE_SOURCES as readonly string[]).includes(raw)
-    ? (raw as EntitlementSource)
-    : "none";
+interface AdminActionRow {
+  id: number;
+  whop_user_id: string;
+  action: AdminActionType;
+  reason: string;
+  actor_identifier: string;
+  created_at: string;
+  entitlement_source_before: string | null;
+  entitlement_source_after: string | null;
+  had_access_before: boolean | null;
+  has_access_after: boolean | null;
+  metadata: unknown;
 }
 
-// ---------------------------------------------------------------------------
-// Read path: hot path for `hasAccess()`
-// ---------------------------------------------------------------------------
+export interface AdminActionSummary {
+  id: number;
+  whopUserId: string;
+  action: AdminActionType;
+  reason: string;
+  actorIdentifier: string;
+  createdAt: string;
+  entitlementSourceBefore: string | null;
+  entitlementSourceAfter: string | null;
+  hadAccessBefore: boolean | null;
+  hasAccessAfter: boolean | null;
+  metadata: unknown;
+}
 
-/**
- * Look up the current entitlement for a whop_user_id.
- * Returns a synthetic "unavailable" record when Supabase isn't configured —
- * callers must treat that as no-access.
- */
+const OWNER_USER_ID = process.env.WHOP_OWNER_USER_ID || "";
+
+function mapEntitlementRow(row: EntitlementRow): EntitlementRecord {
+  return materializeEffectiveEntitlement({
+    whopUserId: row.whop_user_id,
+    ownerUserId: OWNER_USER_ID,
+    stored: {
+      whopUserId: row.whop_user_id,
+      hasAccess: Boolean(row.has_access),
+      source: coerceSource(row.source),
+      expiresAt: row.expires_at,
+      lastEventId: row.last_event_id,
+      lastUpdatedAt: row.last_updated_at,
+    },
+  });
+}
+
+function mapSubscriptionRow(row: SubscriptionRow): SubscriptionSnapshot {
+  return {
+    whopMembershipId: row.whop_membership_id,
+    whopUserId: row.whop_user_id,
+    whopProductId: row.whop_product_id,
+    status: row.status,
+    isActive: Boolean(row.is_active),
+    currentPeriodStart: row.current_period_start,
+    currentPeriodEnd: row.current_period_end,
+    canceledAt: row.canceled_at,
+    lastEventId: row.last_event_id,
+    lastEventAt: row.last_event_at,
+  };
+}
+
 export async function readEntitlement(whopUserId: string): Promise<EntitlementRecord> {
-  // Owner bypass: always granted regardless of DB state. Recorded so admin
-  // surfaces see a consistent row.
   if (OWNER_USER_ID && whopUserId === OWNER_USER_ID) {
-    return {
-      whopUserId,
-      hasAccess: true,
-      source: "owner",
-      expiresAt: null,
-      lastEventId: null,
-      lastUpdatedAt: null,
-    };
+    return materializeEffectiveEntitlement({ whopUserId, ownerUserId: OWNER_USER_ID });
   }
 
   const supabase = getSupabase();
@@ -125,8 +136,6 @@ export async function readEntitlement(whopUserId: string): Promise<EntitlementRe
   }
 
   if (!data) {
-    // No row means we've never seen this user in the entitlement pipeline.
-    // Fail closed: no access until a webhook or admin action creates a row.
     return {
       whopUserId,
       hasAccess: false,
@@ -137,43 +146,7 @@ export async function readEntitlement(whopUserId: string): Promise<EntitlementRe
     };
   }
 
-  // Honor expires_at even if has_access is true (defense in depth).
-  let hasAccess = Boolean(data.has_access);
-  if (hasAccess && data.expires_at) {
-    const expires = Date.parse(data.expires_at);
-    if (!Number.isNaN(expires) && expires < Date.now()) {
-      hasAccess = false;
-    }
-  }
-
-  return {
-    whopUserId: data.whop_user_id,
-    hasAccess,
-    source: coerceSource(data.source),
-    expiresAt: data.expires_at,
-    lastEventId: data.last_event_id,
-    lastUpdatedAt: data.last_updated_at,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Write path: called by the webhook handler after a verified event
-// ---------------------------------------------------------------------------
-
-/**
- * Normalize a Whop membership status string into (status, is_active).
- * Treats the values Whop has historically sent in webhooks; anything
- * else is recorded but defaults to inactive.
- */
-export function classifyMembershipStatus(raw: string | null | undefined): {
-  status: string;
-  isActive: boolean;
-} {
-  const status = (raw || "").toLowerCase();
-  const activeStates = new Set(["active", "trialing", "valid", "completed"]);
-  // "completed" in Whop means a lifetime membership that's still granting
-  // access. "canceled"/"expired"/"past_due"/"failed" do not grant.
-  return { status, isActive: activeStates.has(status) };
+  return mapEntitlementRow(data);
 }
 
 export interface WebhookPersistInput {
@@ -185,12 +158,6 @@ export interface WebhookPersistInput {
   rawPayload: unknown;
 }
 
-/**
- * Insert the raw webhook into `webhook_events`, with ON CONFLICT DO NOTHING
- * so Whop re-delivery of the same event_id is a cheap no-op.
- * Returns `true` if the row was newly inserted, `false` if it was a
- * duplicate (caller should skip processing).
- */
 export async function persistWebhookEvent(input: WebhookPersistInput): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase) return false;
@@ -211,7 +178,6 @@ export async function persistWebhookEvent(input: WebhookPersistInput): Promise<b
     .maybeSingle();
 
   if (error) {
-    // 23505 = unique_violation. Duplicate delivery — not an error.
     if ((error as { code?: string }).code === "23505") return false;
     console.error("[entitlements] persistWebhookEvent error:", error);
     throw error;
@@ -247,9 +213,6 @@ export async function markWebhookFailed(eventId: string, err: string): Promise<v
   if (error) console.error("[entitlements] markWebhookFailed error:", error);
 }
 
-/**
- * Upsert a subscription row from the Whop webhook payload.
- */
 export interface SubscriptionUpsertInput {
   whopMembershipId: string;
   whopUserId: string;
@@ -266,6 +229,7 @@ export interface SubscriptionUpsertInput {
 export async function upsertSubscription(input: SubscriptionUpsertInput): Promise<void> {
   const supabase = getSupabase();
   if (!supabase) return;
+
   const { status, isActive } = classifyMembershipStatus(input.status);
   const row: Omit<SubscriptionRow, "raw_membership"> & { raw_membership: unknown } = {
     whop_membership_id: input.whopMembershipId,
@@ -280,29 +244,36 @@ export async function upsertSubscription(input: SubscriptionUpsertInput): Promis
     last_event_at: input.lastEventAt,
     raw_membership: input.rawMembership,
   };
+
   const { error } = await supabase
     .from("subscriptions")
     .upsert(row, { onConflict: "whop_membership_id" });
+
   if (error) {
     console.error("[entitlements] upsertSubscription error:", error);
     throw error;
   }
 }
 
-/**
- * Re-derive `user_entitlements` for a single whop_user_id from
- * `subscriptions`. Idempotent — safe to call repeatedly.
- *
- * Algorithm:
- * - Pick the "best" subscription for this user (any active row; tie-break
- *   by latest current_period_end).
- * - If any active sub exists: set has_access=true, source='subscription',
- *   expires_at = current_period_end.
- * - Otherwise: has_access=false, source='none', expires_at=null.
- *
- * Owner / admin_grant overrides are NOT touched here — those source
- * values are preserved if the existing row already has them.
- */
+async function listSubscriptionsForUser(whopUserId: string): Promise<SubscriptionSnapshot[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from("subscriptions")
+    .select(
+      "whop_membership_id, whop_user_id, whop_product_id, status, is_active, current_period_start, current_period_end, canceled_at, last_event_id, last_event_at"
+    )
+    .eq("whop_user_id", whopUserId);
+
+  if (error) {
+    console.error("[entitlements] listSubscriptionsForUser error:", error);
+    throw error;
+  }
+
+  return (data || []).map((row) => mapSubscriptionRow(row as SubscriptionRow));
+}
+
 export async function recomputeUserEntitlement(
   whopUserId: string,
   lastEventId: string | null
@@ -319,48 +290,34 @@ export async function recomputeUserEntitlement(
     };
   }
 
-  // Preserve any existing owner/admin_grant source.
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("user_entitlements")
-    .select("source")
+    .select("whop_user_id, has_access, source, expires_at, last_event_id, last_updated_at")
     .eq("whop_user_id", whopUserId)
-    .maybeSingle<{ source: EntitlementSource | string }>();
+    .maybeSingle<EntitlementRow>();
 
-  if (existing?.source === "owner" || existing?.source === "admin_grant") {
-    // Leave as-is; admin/owner overrides are not subject to sub changes.
-    const fresh = await readEntitlement(whopUserId);
-    return fresh;
+  if (existingError) {
+    console.error("[entitlements] recompute existing error:", existingError);
+    throw existingError;
   }
 
-  const { data: subs, error } = await supabase
-    .from("subscriptions")
-    .select("is_active, current_period_end, last_event_at")
-    .eq("whop_user_id", whopUserId);
-
-  if (error) {
-    console.error("[entitlements] recomputeUserEntitlement subs error:", error);
-    throw error;
+  const existingSource = coerceSource(existing?.source);
+  if (existingSource === "owner" || existingSource === "admin_grant" || existingSource === "admin_revoke") {
+    return existing ? mapEntitlementRow(existing) : readEntitlement(whopUserId);
   }
 
-  const activeSubs = (subs || []).filter((s) => s.is_active);
-  const chosen = activeSubs.sort((a, b) => {
-    const ae = a.current_period_end ? Date.parse(a.current_period_end) : 0;
-    const be = b.current_period_end ? Date.parse(b.current_period_end) : 0;
-    return be - ae;
-  })[0];
-
-  const hasAccess = Boolean(chosen);
-  const expiresAt = chosen?.current_period_end ?? null;
-  const source: EntitlementSource = hasAccess ? "subscription" : "none";
+  const subscriptions = await listSubscriptionsForUser(whopUserId);
+  const projection = deriveSubscriptionEntitlement(whopUserId, subscriptions, lastEventId);
+  const nowIso = new Date().toISOString();
 
   const { error: upsertErr } = await supabase.from("user_entitlements").upsert(
     {
       whop_user_id: whopUserId,
-      has_access: hasAccess,
-      source,
-      expires_at: expiresAt,
+      has_access: projection.hasAccess,
+      source: projection.source,
+      expires_at: projection.expiresAt,
       last_event_id: lastEventId,
-      last_updated_at: new Date().toISOString(),
+      last_updated_at: nowIso,
     },
     { onConflict: "whop_user_id" }
   );
@@ -371,18 +328,29 @@ export async function recomputeUserEntitlement(
   }
 
   return {
-    whopUserId,
-    hasAccess,
-    source,
-    expiresAt,
-    lastEventId,
-    lastUpdatedAt: new Date().toISOString(),
+    ...projection,
+    lastUpdatedAt: nowIso,
   };
 }
 
-// ---------------------------------------------------------------------------
-// Admin surfaces: listings
-// ---------------------------------------------------------------------------
+export async function listAllSubscriptions(): Promise<SubscriptionSnapshot[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from("subscriptions")
+    .select(
+      "whop_membership_id, whop_user_id, whop_product_id, status, is_active, current_period_start, current_period_end, canceled_at, last_event_id, last_event_at"
+    )
+    .order("last_event_at", { ascending: false });
+
+  if (error) {
+    console.error("[entitlements] listAllSubscriptions error:", error);
+    return [];
+  }
+
+  return (data || []).map((row) => mapSubscriptionRow(row as SubscriptionRow));
+}
 
 export interface WebhookEventSummary {
   id: string;
@@ -399,6 +367,7 @@ export interface WebhookEventSummary {
 export async function listRecentWebhookEvents(limit = 50): Promise<WebhookEventSummary[]> {
   const supabase = getSupabase();
   if (!supabase) return [];
+
   const { data, error } = await supabase
     .from("webhook_events")
     .select(
@@ -406,57 +375,170 @@ export async function listRecentWebhookEvents(limit = 50): Promise<WebhookEventS
     )
     .order("received_at", { ascending: false })
     .limit(limit);
+
   if (error) {
     console.error("[entitlements] listRecentWebhookEvents error:", error);
     return [];
   }
-  return (data || []).map((r) => ({
-    id: r.id,
-    eventType: r.event_type,
-    status: r.status,
-    signatureVerified: Boolean(r.signature_verified),
-    whopUserId: r.whop_user_id,
-    whopMembershipId: r.whop_membership_id,
-    receivedAt: r.received_at,
-    processedAt: r.processed_at,
-    processingError: r.processing_error,
+
+  return (data || []).map((row) => ({
+    id: row.id,
+    eventType: row.event_type,
+    status: row.status,
+    signatureVerified: Boolean(row.signature_verified),
+    whopUserId: row.whop_user_id,
+    whopMembershipId: row.whop_membership_id,
+    receivedAt: row.received_at,
+    processedAt: row.processed_at,
+    processingError: row.processing_error,
   }));
 }
 
-export async function listEntitlements(
-  limit = 100
-): Promise<EntitlementRecord[]> {
+export async function listEntitlements(limit = 100): Promise<EntitlementRecord[]> {
   const supabase = getSupabase();
   if (!supabase) return [];
+
   const { data, error } = await supabase
     .from("user_entitlements")
     .select("whop_user_id, has_access, source, expires_at, last_event_id, last_updated_at")
     .order("last_updated_at", { ascending: false })
     .limit(limit);
+
   if (error) {
     console.error("[entitlements] listEntitlements error:", error);
     return [];
   }
-  return (data || []).map((d) => ({
-    whopUserId: d.whop_user_id,
-    hasAccess: Boolean(d.has_access),
-    source: coerceSource(d.source),
-    expiresAt: d.expires_at,
-    lastEventId: d.last_event_id,
-    lastUpdatedAt: d.last_updated_at,
+
+  return (data || []).map((row) => mapEntitlementRow(row as EntitlementRow));
+}
+
+export async function listAllEntitlements(): Promise<EntitlementRecord[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from("user_entitlements")
+    .select("whop_user_id, has_access, source, expires_at, last_event_id, last_updated_at");
+
+  if (error) {
+    console.error("[entitlements] listAllEntitlements error:", error);
+    return [];
+  }
+
+  return (data || []).map((row) => mapEntitlementRow(row as EntitlementRow));
+}
+
+export async function listRecentAdminActions(limit = 100): Promise<AdminActionSummary[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from("entitlement_admin_actions")
+    .select(
+      "id, whop_user_id, action, reason, actor_identifier, created_at, entitlement_source_before, entitlement_source_after, had_access_before, has_access_after, metadata"
+    )
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("[entitlements] listRecentAdminActions error:", error);
+    return [];
+  }
+
+  return (data || []).map((row) => ({
+    id: row.id,
+    whopUserId: row.whop_user_id,
+    action: row.action,
+    reason: row.reason,
+    actorIdentifier: row.actor_identifier,
+    createdAt: row.created_at,
+    entitlementSourceBefore: row.entitlement_source_before,
+    entitlementSourceAfter: row.entitlement_source_after,
+    hadAccessBefore: row.had_access_before,
+    hasAccessAfter: row.has_access_after,
+    metadata: row.metadata,
   }));
 }
 
-// ---------------------------------------------------------------------------
-// Admin/recovery: Whop API fallback
-// ---------------------------------------------------------------------------
+export async function applyAdminEntitlementAction(input: {
+  whopUserId: string;
+  action: AdminActionType;
+  reason: string;
+  actorIdentifier: string;
+  metadata?: Record<string, unknown>;
+}): Promise<EntitlementRecord> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    throw new Error("Supabase not configured");
+  }
 
-/**
- * Directly query Whop for a user's memberships and re-derive the
- * subscription + entitlement rows. NOT used on the hot path — only
- * invoked from admin flows (e.g. "Refresh from Whop") when the DB is
- * suspected to be stale.
- */
+  if (!input.whopUserId.trim()) {
+    throw new Error("whopUserId is required");
+  }
+
+  if (!input.reason.trim()) {
+    throw new Error("reason is required");
+  }
+
+  if (OWNER_USER_ID && input.whopUserId === OWNER_USER_ID) {
+    throw new Error("Owner entitlement cannot be overridden");
+  }
+
+  const before = await readEntitlement(input.whopUserId);
+  const nowIso = new Date().toISOString();
+
+  const actionInsert = {
+    whop_user_id: input.whopUserId,
+    action: input.action,
+    reason: input.reason.trim(),
+    actor_identifier: input.actorIdentifier,
+    entitlement_source_before: before.source,
+    entitlement_source_after: input.action === "grant" ? "admin_grant" : "admin_revoke",
+    had_access_before: before.hasAccess,
+    has_access_after: input.action === "grant",
+    metadata: input.metadata ?? {},
+  };
+
+  const { data: actionRow, error: actionError } = await supabase
+    .from("entitlement_admin_actions")
+    .insert(actionInsert)
+    .select(
+      "id, whop_user_id, action, reason, actor_identifier, created_at, entitlement_source_before, entitlement_source_after, had_access_before, has_access_after, metadata"
+    )
+    .single<AdminActionRow>();
+
+  if (actionError) {
+    console.error("[entitlements] applyAdminEntitlementAction insert error:", actionError);
+    throw actionError;
+  }
+
+  const next = buildAdminOverrideEntitlement({
+    whopUserId: input.whopUserId,
+    action: input.action,
+    nowIso,
+    lastEventId: `admin_action:${actionRow.id}`,
+  });
+
+  const { error: entitlementError } = await supabase.from("user_entitlements").upsert(
+    {
+      whop_user_id: next.whopUserId,
+      has_access: next.hasAccess,
+      source: next.source,
+      expires_at: next.expiresAt,
+      last_event_id: next.lastEventId,
+      last_updated_at: next.lastUpdatedAt,
+    },
+    { onConflict: "whop_user_id" }
+  );
+
+  if (entitlementError) {
+    console.error("[entitlements] applyAdminEntitlementAction upsert error:", entitlementError);
+    throw entitlementError;
+  }
+
+  return next;
+}
+
 export async function refreshEntitlementFromWhop(whopUserId: string): Promise<EntitlementRecord> {
   const apiKey = process.env.WHOP_API_KEY || "";
   const productId = process.env.WHOP_PRODUCT_ID || "";
@@ -467,10 +549,12 @@ export async function refreshEntitlementFromWhop(whopUserId: string): Promise<En
   const url = `https://api.whop.com/api/v1/memberships?user_ids=${encodeURIComponent(
     whopUserId
   )}&product_ids=${encodeURIComponent(productId)}`;
+
   let memberships: Array<Record<string, unknown>> = [];
   try {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
+      cache: "no-store",
     });
     if (!res.ok) {
       console.error("[entitlements] refresh: whop fetch failed", res.status);
@@ -484,23 +568,33 @@ export async function refreshEntitlementFromWhop(whopUserId: string): Promise<En
   }
 
   const nowIso = new Date().toISOString();
-  for (const m of memberships) {
-    const id = String(m.id ?? "");
+  for (const membership of memberships) {
+    const id = String(membership.id ?? "");
     if (!id) continue;
     await upsertSubscription({
       whopMembershipId: id,
       whopUserId,
-      whopProductId: (m.product_id as string) ?? (m.product as string) ?? null,
-      status: String(m.status ?? "unknown"),
-      currentPeriodStart: (m.current_period_start as string) ?? null,
+      whopProductId: (membership.product_id as string) ?? (membership.product as string) ?? null,
+      status: String(membership.status ?? "unknown"),
+      currentPeriodStart: (membership.current_period_start as string) ?? null,
       currentPeriodEnd:
-        (m.current_period_end as string) ?? (m.expires_at as string) ?? null,
-      canceledAt: (m.canceled_at as string) ?? null,
+        (membership.current_period_end as string) ?? (membership.expires_at as string) ?? null,
+      canceledAt: (membership.canceled_at as string) ?? null,
       lastEventId: "admin_refresh",
       lastEventAt: nowIso,
-      rawMembership: m,
+      rawMembership: membership,
     });
   }
 
   return recomputeUserEntitlement(whopUserId, "admin_refresh");
+}
+
+export function toAdminActionSnapshot(action: AdminActionSummary): AdminActionSnapshot {
+  return {
+    id: action.id,
+    whopUserId: action.whopUserId,
+    action: action.action,
+    reason: action.reason,
+    createdAt: action.createdAt,
+  };
 }

@@ -14,17 +14,6 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 const WEBHOOK_KEY = process.env.WHOP_WEBHOOK_KEY || "";
 const limiter = rateLimit({ interval: 60_000, limit: 60 });
 
-// TEMP DEBUG: remove after verifying deployed env wiring.
-function logWebhookEnvDiagnostics() {
-  console.warn("[whop-webhook] env diagnostics", {
-    hasWebhookKey: Boolean(process.env.WHOP_WEBHOOK_KEY),
-    hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
-    hasServiceRole: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
-    nodeEnv: process.env.NODE_ENV || null,
-    vercelEnv: process.env.VERCEL_ENV || null,
-  });
-}
-
 export async function GET() {
   return NextResponse.json({ ok: true, endpoint: "whop-webhook", method: "GET" });
 }
@@ -68,27 +57,6 @@ function verifySignature(
   });
 }
 
-// TEMP DEBUG: remove after verifying deployed signature handling.
-function logSignatureDiagnostics(request: NextRequest, body: string, verified: boolean) {
-  const relatedHeaders = Array.from(request.headers.keys())
-    .filter((name) => {
-      const key = name.toLowerCase();
-      return key.includes("whop") || key.includes("webhook") || key.includes("signature");
-    })
-    .sort();
-
-  console.warn("[whop-webhook] signature diagnostics", {
-    hasWebhookIdHeader: Boolean(request.headers.get("webhook-id")),
-    hasWebhookSignatureHeader: Boolean(request.headers.get("webhook-signature")),
-    hasWebhookTimestampHeader: Boolean(request.headers.get("webhook-timestamp")),
-    relatedHeaders,
-    contentType: request.headers.get("content-type") || null,
-    rawBodyLength: body.length,
-    signatureVerified: verified,
-    nodeEnv: process.env.NODE_ENV || null,
-    vercelEnv: process.env.VERCEL_ENV || null,
-  });
-}
 
 /**
  * Membership event types we process end-to-end (persist + upsert +
@@ -144,7 +112,6 @@ function extractIds(event: WhopEventBody): {
 
 export async function POST(request: NextRequest) {
   if (!WEBHOOK_KEY) {
-    logWebhookEnvDiagnostics();
     return NextResponse.json({ error: "Webhook not configured" }, { status: 500 });
   }
 
@@ -165,7 +132,6 @@ export async function POST(request: NextRequest) {
   const body = await request.text();
 
   const signatureVerified = verifySignature(webhookId, body, signature, timestamp);
-  logSignatureDiagnostics(request, body, signatureVerified);
   if (!signatureVerified) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }

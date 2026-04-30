@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { isAdminRequest } from "@/lib/admin";
+import AdminNav from "@/components/admin/AdminNav";
 import AdminLoginForm from "./AdminLoginForm";
 
 export const dynamic = "force-dynamic";
@@ -18,10 +19,15 @@ export default async function AdminIndexPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-10">
-      <h1 className="text-2xl font-bold text-white mb-6">Admin</h1>
-      <p className="text-gray-400 mb-8 text-sm">
-        Signed in. Operational surfaces:
-      </p>
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Admin</h1>
+          <p className="text-gray-400 mt-2 text-sm">
+            Signed in. Operational surfaces:
+          </p>
+        </div>
+        <AdminNav current="/admin" />
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Link
           href="/admin/entitlements"
@@ -41,6 +47,15 @@ export default async function AdminIndexPage() {
           <p className="text-gray-400 text-sm mt-1">
             Last 100 Whop webhook events — status, signature check, any
             processing errors.
+          </p>
+        </Link>
+        <Link
+          href="/admin/reconciliation"
+          className="block rounded-lg border border-gray-800 bg-gray-900 hover:border-emerald-500/40 hover:bg-gray-900/80 transition-colors p-5"
+        >
+          <div className="text-lg font-semibold text-white">Reconciliation</div>
+          <p className="text-gray-400 text-sm mt-1">
+            Compare Whop memberships, local subscriptions, and runtime entitlements to surface drift.
           </p>
         </Link>
       </div>
